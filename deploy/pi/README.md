@@ -13,8 +13,9 @@
 - **Cold-boot Wi-Fi must be 2.4 GHz (or a non-DFS 5 GHz channel).** A fresh Pi 5 starts with regulatory domain `00`
   and can't join a DFS 5 GHz channel (52–144) until an AP's country IE sets it. Switch to 5 GHz over SSH afterwards.
 - **SSIDs must match exactly**, e.g. `Name-5G` versus `Name 5G`.
-- **cloud-init runs once per instance.** If the card has already booted, change `instance_id` in `meta-data`, or the
-  new `user-data` / `network-config` is ignored.
+- **Never patch a card that has already booted; re-flash it.** cloud-init runs once per instance, and bumping
+  `instance_id` in `meta-data` did not reliably re-apply `user-data` / `network-config` (2026-10-17: no diagnostics
+  file was ever written).
 - **Make failures diagnosable:** have `user-data` write network state (`ip -br addr`, `wpa_cli status`, netplan files,
   `netplan-wpa*` logs) to `/boot/firmware/`, which the Mac can read.
 - Validate the YAML before ejecting.
