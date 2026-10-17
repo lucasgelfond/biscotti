@@ -78,7 +78,7 @@ host gets set up and which sandbox runtime it can use.
 |---|---|---|
 | **Raspberry Pi 5** (first) | flashable image | docker, gvisor (Ubuntu kernel), firecracker / microsandbox (KVM, to be tested) |
 | Generic Linux / Hetzner dedicated | install script on Ubuntu | all |
-| Mac mini | Docker via OrbStack/colima | docker only (no KVM in the Linux VM); a remote sandbox provider later |
+| Mac (M3+) | Lima VM with nested virtualization (`deploy/mac/lima.yaml`) | **firecracker (stock, GICv3)**, docker, gvisor |
 | Hetzner Cloud (CX…) | install script | docker, gvisor (no KVM) |
 
 ## First-boot / onboarding flow (for the Pi image)

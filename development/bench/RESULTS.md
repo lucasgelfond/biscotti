@@ -51,6 +51,11 @@ slower under syscall interception). Firecracker cold boot 4.6 s.
 `docker checkpoint create` works (15.9 s); `docker start --checkpoint` fails (`bind-mount /proc/0/ns/net …
 no such file`). gVisor's docs call Docker C/R support partial; using `runsc` directly would be needed.
 
+### Mac (M5, macOS 26) via Lima nested virtualization
+`deploy/mac/lima.yaml` (vz, `nestedVirtualization: true`, Ubuntu 24.04, 4 CPU / 6 GiB / 20 GiB) gives `/dev/kvm`
+inside the VM with a **GICv3** vGIC. Stock Firecracker 1.17.0 **passes** the restore repro there (ticks continue;
+CI kernel 6.18.54). So the GICv2 bug is Pi-specific and the Mac is a viable Firecracker target without the patch.
+
 ## Beliefs (updated as we go)
 
 - **Firecracker is the runtime.** Firefox in a 2-vCPU VM is as fast as plain Docker and 2–4× faster than gVisor
