@@ -64,11 +64,12 @@ no such file`). gVisor's docs call Docker C/R support partial; using `runsc` dir
   screenshot ~0.7 s, but the guest gets no timer interrupts afterwards (a 2 s console heartbeat stops), so
   anything that sleeps (XFCE panel, Firefox) freezes while I/O-driven code (network, Xvnc, websockify) still
   answers. Cause: the GICv2 banked-register bug above (1 vCPU behaves the same; it's the per-CPU PPI state, not IPIs).
-- **The black Firefox page in the VM is a missing kernel feature:** Firecracker's CI guest kernel has no seccomp
-  (`/proc/self/status` has no Seccomp line), so Firefox's content sandbox can't start its renderer. With
-  `MOZ_DISABLE_CONTENT_SANDBOX=1` Wikipedia renders fine (verified by screenshot). The real fix is a guest kernel
-  built from Firecracker's CI config plus `CONFIG_SECCOMP`/`CONFIG_SECCOMP_FILTER`, in `cua-vm/`; don't ship
-  with the sandbox disabled.
+- **The black Firefox page in the VM comes from Firefox's user-namespace sandbox.** Guest user namespaces are on
+  (`max_user_namespaces=3935`), so Firefox uses its namespace sandbox and content renders black. Docker's default
+  seccomp profile blocks namespaces, so there Firefox uses the seccomp-only sandbox. Setting
+  `user.max_user_namespaces=0` in the VM init renders Wikipedia **with the sandbox on** (no warning banner,
+  verified by screenshot). Seccomp itself is fine (the CI kernel has `CONFIG_SECCOMP_FILTER=y`; my earlier
+  "no seccomp" read was a case-sensitive grep bug). Why the namespace path fails here is still unexplained.
 - **`debugfs` writes into a VM disk need `e2fsck -fy` first** (the VM leaves the journal dirty); otherwise
   the injected files come out corrupted.
 - **A restored VM wakes up with the snapshot's wall clock.** It must be resynced

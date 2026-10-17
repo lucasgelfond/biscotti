@@ -20,6 +20,9 @@ mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
 mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts; mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run; mount -t tmpfs -o mode=1777 tmpfs /tmp
 install -d -o cua -g cua -m 0700 /run/cua
+# Like Docker's default seccomp profile: no user namespaces. With them, Firefox picks its namespace sandbox,
+# which leaves content black in this guest kernel; without, it uses the seccomp sandbox and renders.
+sysctl -qw user.max_user_namespaces=0
 echo nameserver 1.1.1.1 > /etc/resolv.conf
 cat /proc/net/route /etc/resolv.conf > /dev/console
 hostname sandbox; printf '127.0.0.1 localhost sandbox\n' > /etc/hosts
