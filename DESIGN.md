@@ -81,8 +81,19 @@ host gets set up and which sandbox runtime it can use.
 
 ## First-boot / onboarding flow (for the Pi image)
 
-1. Plug in the Pi. If it has no network, it starts a setup Wi-Fi hotspot
-   (an off-the-shelf tool such as comitup) to pick a network.
+0. **Boot splash:** "Biscotti" with an SVG biscotti, and the boot/setup log lines
+   scrolling underneath. Likely a Plymouth theme; the splash itself is a design
+   asset, not code.
+1. **Wi-Fi comes from the computer that flashes the card, with nothing typed and
+   nothing baked into the image.** Ship biscotti as a custom OS entry for
+   **Raspberry Pi Imager** (a repository JSON passed with `--repo`, or "Use
+   custom"). Imager already pre-fills the computer's current Wi-Fi network and
+   password and writes them, plus hostname and SSH settings, into the card's
+   cloud-init. No flasher app of our own; we only publish the image and the JSON.
+   - Rejected: Wi-Fi over Bluetooth via QR code (iOS Safari has no Web
+     Bluetooth, and it needs a provisioning daemon).
+   - Fallback with no flashing computer: a setup hotspot (comitup). Later.
+   - Later: once online, the Pi could suggest a better network.
 2. Once online, it runs `tailscale up` and shows a **QR code on HDMI** (and on
    the hotspot page as a fallback).
    - The Pi doesn't know a tailnet until someone logs in, so there are two QR
@@ -159,3 +170,13 @@ Each step ends with something you can check.
 - Base OS of the Pi image: Ubuntu (needed if gVisor wins) vs Raspberry Pi OS (rpi-image-gen).
 - Where `site/` is hosted (Cloudflare Pages / GitHub Pages).
 - A headless Pi (no HDMI): is the hotspot page the only place the QR shows?
+- Confirm Imager's customisation writes cloud-init for our Ubuntu-based image
+  (Imager supports `init_format: cloudinit` in repository JSON).
+
+## Field notes
+
+- The Pi 5 joins 5 GHz on a DFS channel (52) fine: ~5 MB/s versus ~0.15–0.7 MB/s
+  on congested 2.4 GHz. The original failure was an SSID typo ("5G" vs "-5G").
+  With both bands configured, wpa_supplicant sticks to whichever it joined first,
+  so configure only the 5 GHz network. Imager copying the exact SSID avoids typos.
+- Unattended-upgrades runs on first boot and competes for bandwidth.

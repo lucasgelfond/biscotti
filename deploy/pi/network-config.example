@@ -1,0 +1,15 @@
+version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+    optional: true
+wifis:
+  wlan0:
+    dhcp4: true
+    optional: true
+    regulatory-domain: US
+    access-points:
+      "WIFI_NAME":
+        password: "WIFI_PASSWORD"
+      "WIFI_NAME_FALLBACK":
+        password: "WIFI_PASSWORD"
