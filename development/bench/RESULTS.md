@@ -18,7 +18,8 @@ is ready ~5 s sooner. Firefox = cold `firefox-esr --headless --screenshot <url>`
 | Docker (runc) | 7.3 s | 145 MB | 2.5 s | 3.0 s | 175 MB |
 | gVisor (runsc, systrap) | 8.0 s | 195 MB | 3.2 s | 4.3 s | 258 MB |
 | Firecracker (raw), cold boot | 7.3 s | (1 GB VM) | — | — | — |
-| **Firecracker, snapshot restore** | **0.27–0.31 s warm cache, 0.45 s cold** | — | — | — | — |
+| Firecracker, snapshot restore (stock v1.17.0) | 0.27–0.31 s warm cache, 0.45 s cold, **but guest timers dead** | — | — | — | — |
+| **Firecracker, snapshot restore (patched)** | **0.25–0.27 s; timers, XFCE clock, Firefox navigation all work (1/2/4 vCPU)** | — | — | — | — |
 | microsandbox | — | — | — | — | — |
 
 Firecracker details: 2 vCPU, 1024 MiB, tap networking, rootfs = `docker export` of
@@ -56,9 +57,18 @@ no such file`). gVisor's docs call Docker C/R support partial; using `runsc` dir
   on file-heavy work. Plus a hardware isolation boundary and (once restore is fixed) ~0.3 s clean resets.
 - **gVisor's cost is file I/O and syscalls**, not just startup: 8–15 s fresh-profile Firefox versus 3.5–5.8 s.
   It's the portable fallback (no KVM), not the default.
+- **Patched Firecracker fixes restore** (`development/firecracker-gicv2/`, verified at 1, 2 and 4 vCPUs). Two bugs:
+  (1) banked SGI/PPI distributor state (ISENABLER0/ISPENDR0/ISACTIVER0/IPRIORITYR0-7) was never saved;
+  (2) the GICv2 CPU-interface code shifted the vCPU id twice, so every vCPU's GICC state went to vCPU 0.
+  Stock: 0 ticks after restore; patched: ticks continue, restore 0.25–0.27 s. Binary: `/usr/local/bin/firecracker-patched`.
 - **The restore freeze is a Firecracker GICv2 bug:** banked SGI/PPI distributor state (IRQs 0–31, incl. the
   timer PPI 27) isn't saved, so restored guests get no timer interrupts (heartbeat stops). Patch in
   `development/firecracker-gicv2/`. microsandbox refusing GICv2 snapshots corroborates it.
+- **cua-spacesd already exposes the control surface over MCP** (`/mcp`, streamable HTTP, bearer token from
+  `/run/cua/env-token`): ~60 tools including click/type_text/press_key/scroll/drag, get_desktop_state,
+  get_accessibility_tree, browser_navigate/click/type, clipboard, launch_app, plus a gRPC `Process` service to run
+  commands. pi's built-in MCP can drive the desktop with no glue code; the same channel can resync the clock
+  after a restore.
 - 2 vCPUs is the right VM size on the 4-core Pi; 4 vCPUs doesn't help.
 - **Firecracker snapshot restore (stock v1.17.0) is fast but broken on the Pi:** a booted VM in ~0.3 s, first
   screenshot ~0.7 s, but the guest gets no timer interrupts afterwards (a 2 s console heartbeat stops), so
