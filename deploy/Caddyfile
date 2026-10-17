@@ -1,0 +1,23 @@
+# The sandbox bridge: task VMs reach the model and connectors through here without holding any keys.
+{
+	admin localhost:2019
+}
+
+http://172.16.0.1:80 {
+	bind 172.16.0.1
+
+	handle_path /llm/* {
+		reverse_proxy https://ai-gateway.vercel.sh {
+			header_up Authorization "Bearer {env.AI_GATEWAY_API_KEY}"
+			header_up Host {upstream_hostport}
+		}
+	}
+
+	handle_path /tools/* {
+		reverse_proxy 127.0.0.1:4788 {
+			header_up Authorization "Bearer {env.EXECUTOR_API_KEY}"
+		}
+	}
+
+	respond 404
+}

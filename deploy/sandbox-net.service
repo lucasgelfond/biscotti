@@ -1,0 +1,12 @@
+[Unit]
+Description=biscotti sandbox network
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/biscotti/sandbox-net.sh
+
+[Install]
+WantedBy=multi-user.target

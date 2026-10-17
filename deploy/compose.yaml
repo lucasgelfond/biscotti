@@ -1,0 +1,55 @@
+# Platform services. Everything listens on 127.0.0.1 only; `tailscale serve` exposes the UIs on the
+# tailnet, and the Caddy bridge listens only on the sandbox bridge (172.16.0.1).
+name: biscotti
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    environment:
+      POSTGRES_USER: biscotti
+      POSTGRES_DB: biscotti
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+    ports: ["127.0.0.1:5432:5432"]
+    restart: unless-stopped
+
+  embeddings:
+    build: ./embeddings
+    image: biscotti/embeddings
+    ports: ["127.0.0.1:8090:8080"]
+    restart: unless-stopped
+
+  executor:
+    image: ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.24@sha256:39d8ce360adf86df46e953f43551dad4440d04d7246d30fc7b0d6f3f5cfed3f7
+    environment:
+      EXECUTOR_WEB_BASE_URL: https://${TAILNET_HOST:?}:8443
+      DO_NOT_TRACK: "1"
+      EXECUTOR_DISABLE_ANALYTICS: "1"
+    volumes: [executor:/data]
+    ports: ["127.0.0.1:4788:4400"]
+    restart: unless-stopped
+
+  vaultwarden:
+    image: vaultwarden/server:1.37.4@sha256:efb3cde962015fcc036b2ea625242248611943b27212ebf4392841fb30fad055
+    environment:
+      DOMAIN: https://${TAILNET_HOST:?}:9443
+      SIGNUPS_ALLOWED: ${VAULTWARDEN_SIGNUPS:-true}
+    volumes: [vaultwarden:/data]
+    ports: ["127.0.0.1:8081:80"]
+    restart: unless-stopped
+
+  bridge:
+    image: caddy:2.11.6@sha256:3422ce6de165df66534f9b9ba50efaf457114ec961763cc52f5dbdaac2972d73
+    network_mode: host
+    environment:
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      EXECUTOR_API_KEY: ${EXECUTOR_API_KEY:-}
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]
+    restart: unless-stopped
+
+volumes:
+  postgres:
+  executor:
+  vaultwarden:

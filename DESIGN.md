@@ -57,8 +57,8 @@ code of our own.
 | Connectors | **Executor**, self-hosted, `elicitation_mode=browser`; reads allowed, writes need approval, admin blocked; one connection per Gmail account; only the Google access you're comfortable with | pi MCP config | decided |
 | Vault | **Vaultwarden**, plus one `vault_fill(item, field)` tool that types values into the desktop without returning them to the model | the `vault_fill` implementation | decided |
 | Browser sessions | one Firefox profile per site account, encrypted with `age`, restored at sandbox start and saved back afterwards | — | decided |
-| Memory | **Postgres + pgvector**: one `observations(id, content, source, created_at, embedding vector(768), tsv)` table; `remember` / `recall` (hybrid vector + full-text, reciprocal rank fusion, top 10) / `forget(source)` as pi tools in an extension, talking to Postgres directly; embeddings computed on write; no bulk indexing in v1 | — | decided |
-| Embeddings | **On device: EmbeddingGemma (~300M, CPU) via Ollama**, 768-dim; nothing leaves the box | Ollama model name | decided |
+| Memory | **Postgres + pgvector**: one `observations(id, content, source, created_at, embedding vector(384), tsv)` table; `remember` / `recall` (hybrid vector + full-text, reciprocal rank fusion, top 10) / `forget(source)` as pi tools in an extension, talking to Postgres directly; embeddings computed on write; no bulk indexing in v1 | — | decided |
+| Embeddings | **On device: bge-small-en-v1.5** (MIT, ~33M, 384-dim) on the **llama.cpp server** (release binary in `deploy/embeddings`), model baked into the image at a pinned revision + SHA-256; nothing downloads or leaves the box. (EmbeddingGemma was rejected: Gemma license terms pass to every user.) | GGUF model ref | decided |
 | Sandbox contents | **the task agent and the desktop in the same sandbox** (Instinct's layout) | — | decided |
 | Bridge | **Caddy** adds the keys for Vercel and Executor; sandbox network access is limited to the bridge | — | decided |
 | Sandbox runtime | to be chosen by the bake-off (below) | `SandboxProvider`: create / exec / screenshot / snapshot / destroy | **open** |
@@ -129,7 +129,8 @@ short-lived, and no secrets ever go in query parameters.
 
 ### Installer (later, after the core works)
 
-The goal is a **small native macOS app (Swift)** that does the whole card setup, so nobody edits boot files:
+The goal is a **small native macOS app (Swift)** that does the whole card setup, so nobody edits boot files. It should
+look and feel like Raspberry Pi Imager and stay tiny (**about 5 Swift files at most**):
 1. Lists removable devices and detects an inserted SD card.
 2. Flashes the biscotti image for the chosen target. **Pi 5 only** for now; other targets later.
 3. With one click, writes the installer's **Wi-Fi** (the Mac's current network, its password from the keychain
