@@ -213,6 +213,9 @@ Each step ends with something you can check.
 - A headless Pi (no HDMI): is the hotspot page the only place the QR shows?
 - Confirm Imager's customisation writes cloud-init for our Ubuntu-based image
   (Imager supports `init_format: cloudinit` in repository JSON).
+- Owner setup without editing `.env`: pairing (setup shows a one-time code; the first sender to text it
+  becomes the owner, stored in SQLite), as OpenClaw does. Today `OWNER` is set by hand from the sender ID
+  the agent logs.
 
 - From the Open Instinct review (`docs/lit-review/open-instinct.md`):
   - Hash-bind approvals to the exact call (tool + args, TTL, single use, owner 1:1 thread only).
