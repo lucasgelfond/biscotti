@@ -197,6 +197,9 @@ Each step ends with something you can check.
 
 - The Pi 5 joins 5 GHz on a DFS channel (52) fine: ~5 MB/s versus ~0.15–0.7 MB/s
   on congested 2.4 GHz. The original failure was an SSID typo ("5G" vs "-5G").
-  With both bands configured, wpa_supplicant sticks to whichever it joined first,
-  so configure only the 5 GHz network. Imager copying the exact SSID avoids typos.
+  But on a cold boot the Wi-Fi regulatory domain is "world" (00), and the Pi can't
+  join a DFS channel until an AP's country IE sets it to US. Configuring only the
+  5 GHz DFS network leaves a fresh Pi offline. Always keep a 2.4 GHz (or non-DFS)
+  fallback; once online, move to 5 GHz. Product image: set the regulatory domain
+  before Wi-Fi comes up (open question). Imager copying the exact SSID avoids typos.
 - Unattended-upgrades runs on first boot and competes for bandwidth.
