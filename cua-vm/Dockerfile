@@ -27,7 +27,12 @@ RUN case "$TARGETARCH" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; esac && \
     curl -fsSL "https://github.com/trycua/cua/releases/download/cua-spacesd-v${CUA_SPACESD_VERSION}/cua-spacesd-${a}-unknown-linux-gnu.tar.gz" \
       | tar -xz -C /usr/local/bin cua-spacesd
 
-ADD https://github.com/trycua/cua.git#${CUA_COMMIT}:libs/xfce/src /tmp/cua
+ARG CUA_SRC=https://raw.githubusercontent.com/trycua/cua/${CUA_COMMIT}/libs/xfce/src
+ADD ${CUA_SRC}/scripts/start-vnc.sh ${CUA_SRC}/scripts/start-novnc.sh ${CUA_SRC}/scripts/start-spacesd.sh \
+    ${CUA_SRC}/scripts/xstartup.sh ${CUA_SRC}/scripts/resize-display.sh /tmp/cua/scripts/
+ADD ${CUA_SRC}/supervisor/supervisord.conf /tmp/cua/supervisor/
+ADD ${CUA_SRC}/xfce-config/helpers.rc ${CUA_SRC}/xfce-config/xfce4-session.xml \
+    ${CUA_SRC}/xfce-config/xfce4-power-manager.xml /tmp/cua/xfce-config/
 
 RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     cp /tmp/cua/supervisor/* /etc/supervisor/conf.d/ && \

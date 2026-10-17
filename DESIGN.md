@@ -150,6 +150,15 @@ Each step ends with something you can check.
 4. **Main agent + bot.** pi with Vercel and ZDR, Photon echo → pi, system prompt including the approval policy. *Check:* text it, get an answer.
 5. **Task sandbox.** The spawn tool, task pi inside the sandbox via the bridge, browser profile restore/save, `vault_fill`. *Check:* "log into X and tell me Y".
 6. **Memory.** `remember` / `recall` on pgvector. *Check:* recalls a fact across conversations.
+6b. **Dev-only E2E harness** in `development/e2e/` (built alongside steps 4–6):
+   - **Fakes:** a local text channel instead of Photon; a mock approver
+     (approve / deny / timeout); a fake Google MCP server registered in Executor
+     and backed by fixture inbox and calendar data; Vaultwarden seeded with fake
+     items; public practice sites plus local fixture sites.
+   - **Real:** the model, via the AI Gateway.
+   - **Assertions:** pi's tool-call log, the sandbox's final URL/DOM/screenshot,
+     fake-server state, and grounding (every quoted number appears in a source).
+   - Covers the v1 smoke suite in `docs/should-be-supported-tasks.md`.
 7. **Control panel** (Svelte) with the setup checklist and env editor.
 8. **Onboarding site** `site/index.html` + first-boot QR service.
 9. **Pi image build**, only after steps 1–8 work. *Check:* you flash it on a fresh card and onboard from scratch.
@@ -167,7 +176,10 @@ Each step ends with something you can check.
 ## Open questions
 
 - Sandbox runtime (decided by the bake-off).
-- Base OS of the Pi image: Ubuntu (needed if gVisor wins) vs Raspberry Pi OS (rpi-image-gen).
+- Base OS for the image: not tied to Ubuntu. Candidates: NixOS (one declarative
+  config for Pi + x86/Hetzner images), Raspberry Pi OS via rpi-image-gen, Arch
+  Linux ARM, Alpine, DietPi. Constraint: gVisor needs a 48-bit-VA kernel
+  (Raspberry Pi OS's is 39-bit); Firecracker and runc don't care.
 - Where `site/` is hosted (Cloudflare Pages / GitHub Pages).
 - A headless Pi (no HDMI): is the hotspot page the only place the QR shows?
 - Confirm Imager's customisation writes cloud-init for our Ubuntu-based image

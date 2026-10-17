@@ -1,0 +1,21 @@
+# Shows the sandbox desktop full-screen on the Pi's HDMI output (cage kiosk + VNC viewer).
+[Unit]
+Description=biscotti screen
+After=systemd-user-sessions.service docker.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=lucas
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty-fail
+UtmpIdentifier=tty1
+UtmpMode=user
+ExecStart=/usr/bin/cage -d -- xtigervncviewer -FullScreen -RemoteResize=0 127.0.0.1:5901
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
