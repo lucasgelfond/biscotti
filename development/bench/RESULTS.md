@@ -62,13 +62,13 @@ CI kernel 6.18.54). So the GICv2 bug is Pi-specific and the Mac is a viable Fire
   on file-heavy work. Plus a hardware isolation boundary and (once restore is fixed) ~0.3 s clean resets.
 - **gVisor's cost is file I/O and syscalls**, not just startup: 8–15 s fresh-profile Firefox versus 3.5–5.8 s.
   It's the portable fallback (no KVM), not the default.
-- **Patched Firecracker fixes restore** (`development/firecracker-gicv2/`, verified at 1, 2 and 4 vCPUs). Two bugs:
+- **Patched Firecracker fixes restore** ([`lucasgelfond/firecracker@biscotti-gicv2`](https://github.com/lucasgelfond/firecracker/tree/biscotti-gicv2) (upstream PRs [#6300](https://github.com/firecracker-microvm/firecracker/pull/6300) + [#6301](https://github.com/firecracker-microvm/firecracker/pull/6301)), verified at 1, 2 and 4 vCPUs). Two bugs:
   (1) banked SGI/PPI distributor state (ISENABLER0/ISPENDR0/ISACTIVER0/IPRIORITYR0-7) was never saved;
   (2) the GICv2 CPU-interface code shifted the vCPU id twice, so every vCPU's GICC state went to vCPU 0.
   Stock: 0 ticks after restore; patched: ticks continue, restore 0.25–0.27 s. Binary: `/usr/local/bin/firecracker-patched`.
 - **The restore freeze is a Firecracker GICv2 bug:** banked SGI/PPI distributor state (IRQs 0–31, incl. the
-  timer PPI 27) isn't saved, so restored guests get no timer interrupts (heartbeat stops). Patch in
-  `development/firecracker-gicv2/`. microsandbox refusing GICv2 snapshots corroborates it.
+  timer PPI 27) isn't saved, so restored guests get no timer interrupts (heartbeat stops). Fixed on the
+  fork branch above. microsandbox refusing GICv2 snapshots corroborates it.
 - **cua-spacesd already exposes the control surface over MCP** (`/mcp`, streamable HTTP, bearer token from
   `/run/cua/env-token`): ~60 tools including click/type_text/press_key/scroll/drag, get_desktop_state,
   get_accessibility_tree, browser_navigate/click/type, clipboard, launch_app, plus a gRPC `Process` service to run

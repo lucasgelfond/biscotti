@@ -152,7 +152,7 @@ biscotti/
   panel/           Svelte control panel
   site/index.html  public onboarding page (biscotti.lucasgelfond.online)
   cua-vm/          desktop image build toolchain only (Dockerfile fork, rootfs/VM-disk build)
-  development/     bake-off scripts + results, Firecracker GICv2 patches
+  development/     bake-off scripts + results (patched Firecracker: lucasgelfond/firecracker@biscotti-gicv2)
   deploy/          compose.yaml, Caddyfile, install.sh, pi-image/ recipe
 ```
 
