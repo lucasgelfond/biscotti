@@ -4,12 +4,10 @@
   networking.hostName = "biscotti";
   time.timeZone = "UTC";
 
-  users.users.lucas = {
+  # A generic user: each installer provides their own SSH key (see the target files).
+  users.users.biscotti = {
     isNormalUser = true;
     extraGroups = [ "wheel" "kvm" "docker" ];
-    openssh.authorizedKeys.keys = [
-      "ssh-ed25519 AAAA...your-public-key"
-    ];
   };
   security.sudo.wheelNeedsPassword = false;
   services.openssh = {

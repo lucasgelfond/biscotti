@@ -8,8 +8,10 @@
 
   boot.loader.raspberry-pi.bootloader = "kernel";
 
-  # Wi-Fi credentials never live in the image: wpa_supplicant reads them from the boot partition,
-  # so anyone can drop their own `wpa_supplicant.conf` there before first boot.
+  # Nothing personal lives in the image: SSH keys and Wi-Fi credentials are read from the boot
+  # partition, so anyone can drop their own `authorized_keys` and `wpa_supplicant.conf` there.
+  services.openssh.authorizedKeysFiles = [ "/boot/firmware/authorized_keys" ];
+
   networking.wireless = {
     enable = true;
     allowAuxiliaryImperativeNetworks = true;
