@@ -52,9 +52,9 @@ code of our own.
 |---|---|---|---|
 | Harness | **pi** (main agent + task agents) | — | decided |
 | Messaging | **Photon Spectrum**, cloud iMessage, shared line | `bot/` is the only code that touches it | decided |
-| Models | **Vercel AI Gateway** (Pro plan), team-wide ZDR, Opus 5.5 for the main agent / Sonnet 5.5 for tasks, no Fable (no ZDR) | pi provider config | decided |
+| Models | **Vercel AI Gateway** (Pro plan), team-wide ZDR. Now: `anthropic/claude-opus-5.5`; planned switch to `deepseek/deepseek-v4.1-flash-1017` (reasoning model, ~1 s; **confirm it's ZDR-covered first**). No Fable (no ZDR). Key lives only in the host's `deploy/.env`; sandboxes reach the gateway through the bridge | pi provider config | decided |
 | Local models | only the embedding model; chat and computer-use models stay on the AI Gateway | — | decided |
-| Connectors | **Executor**, self-hosted, `elicitation_mode=browser`; reads allowed, writes need approval, admin blocked; one connection per Gmail account; only the Google access you're comfortable with | pi MCP config | decided |
+| Connectors | **Executor**, self-hosted (heavy: ~490 MB idle on the Pi, ~2 min start, beta churn; acceptable). **Swap point:** the agent knows one MCP URL via the bridge's `/tools`, so replacing it is one Compose service + one Caddy route + re-adding connectors (alternatives: Obot, Nango + a thin MCP layer), `elicitation_mode=browser`; reads allowed, writes need approval, admin blocked; one connection per Gmail account; only the Google access you're comfortable with | pi MCP config | decided |
 | Vault | **Vaultwarden**, plus one `vault_fill(item, field)` tool that types values into the desktop without returning them to the model | the `vault_fill` implementation | decided |
 | Browser sessions | one Firefox profile per site account, encrypted with `age`, restored at sandbox start and saved back afterwards | — | decided |
 | Memory | **Postgres + pgvector**: one `observations(id, content, source, created_at, embedding vector(384), tsv)` table; `remember` / `recall` (hybrid vector + full-text, reciprocal rank fusion, top 10) / `forget(source)` as pi tools in an extension, talking to Postgres directly; embeddings computed on write; no bulk indexing in v1 | — | decided |
