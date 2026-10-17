@@ -203,3 +203,5 @@ Each step ends with something you can check.
   fallback; once online, move to 5 GHz. Product image: set the regulatory domain
   before Wi-Fi comes up (open question). Imager copying the exact SSID avoids typos.
 - Unattended-upgrades runs on first boot and competes for bandwidth.
+- Preparing a Pi SD card: follow the one-trip checklist in `deploy/pi/README.md` (cold-boot Wi-Fi, exact SSIDs,
+  cloud-init `instance_id`, a diagnostics dump to `/boot/firmware/`).
