@@ -1,5 +1,5 @@
-# On-device embeddings: llama.cpp's server with bge-small-en-v1.5 (MIT, 384-dim), baked into the image
-# at a pinned revision and checksum, so nothing is downloaded at run time.
+# llama.cpp's server with one model baked in at a pinned revision and checksum, so nothing is downloaded
+# at run time. Defaults to bge-small-en-v1.5 (MIT, 384-dim) for embeddings.
 FROM ubuntu:24.04
 
 ARG LLAMA_BUILD=b11539

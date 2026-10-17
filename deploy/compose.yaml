@@ -3,20 +3,21 @@
 name: biscotti
 
 services:
-  postgres:
-    image: pgvector/pgvector:0.8.7-pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+  agent:
+    build: ../agent
+    image: biscotti/agent
     environment:
-      POSTGRES_USER: biscotti
-      POSTGRES_DB: biscotti
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
-    volumes:
-      - postgres:/var/lib/postgresql/data
-      - ./db:/docker-entrypoint-initdb.d:ro
-    ports: ["127.0.0.1:5432:5432"]
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:?}
+      SPECTRUM_PROJECT_ID: ${SPECTRUM_PROJECT_ID:?}
+      SPECTRUM_PROJECT_SECRET: ${SPECTRUM_PROJECT_SECRET:?}
+      OWNER: ${OWNER:?}
+      EMBEDDINGS_URL: http://embeddings:8080
+      TZ: ${TZ:-America/New_York}
+    volumes: [agent:/data]
     restart: unless-stopped
 
   embeddings:
-    build: ./embeddings
+    build: ./llama
     image: biscotti/embeddings
     ports: ["127.0.0.1:8090:8080"]
     restart: unless-stopped
@@ -50,6 +51,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres:
+  agent:
   executor:
   vaultwarden:

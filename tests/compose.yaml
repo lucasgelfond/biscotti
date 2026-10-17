@@ -1,0 +1,12 @@
+# The on-device embeddings model for the end-to-end tests (chat goes to the AI Gateway, as in production).
+name: biscotti-tests
+
+services:
+  embeddings:
+    build: ../deploy/llama
+    image: biscotti/embeddings
+    ports: ["127.0.0.1:8092:8080"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 2s
+      retries: 60

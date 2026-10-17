@@ -34,7 +34,7 @@ code of our own.
 │  sandbox provider ── docker | gvisor | firecracker | microsandbox     │
 │                                                                       │
 │  Executor (connectors, per-tool allow/approve/block, multi-account)   │
-│  Vaultwarden (logins, cards, PII)   Postgres+pgvector (memory)        │
+│  Vaultwarden (logins, cards, PII)   SQLite (memories, transcripts)    │
 │  Caddy bridge (adds keys to requests; the only host the sandbox sees) │
 │  control panel (Svelte)             tailscale serve (HTTPS on ts.net) │
 └───────────────────────────────────────────────────────────────────────┘
@@ -57,8 +57,8 @@ code of our own.
 | Connectors | **Executor**, self-hosted (heavy: ~490 MB idle on the Pi, ~2 min start, beta churn; acceptable). **Swap point:** the agent knows one MCP URL via the bridge's `/tools`, so replacing it is one Compose service + one Caddy route + re-adding connectors (alternatives: Obot, Nango + a thin MCP layer), `elicitation_mode=browser`; reads allowed, writes need approval, admin blocked; one connection per Gmail account; only the Google access you're comfortable with | pi MCP config | decided |
 | Vault | **Vaultwarden**, plus one `vault_fill(item, field)` tool that types values into the desktop without returning them to the model | the `vault_fill` implementation | decided |
 | Browser sessions | one Firefox profile per site account, encrypted with `age`, restored at sandbox start and saved back afterwards | — | decided |
-| Memory | **Postgres + pgvector**: one `observations(id, content, source, created_at, embedding vector(384), tsv)` table; `remember` / `recall` (hybrid vector + full-text, reciprocal rank fusion, top 10) / `forget(source)` as pi tools in an extension, talking to Postgres directly; embeddings computed on write; no bulk indexing in v1 | — | decided |
-| Embeddings | **On device: bge-small-en-v1.5** (MIT, ~33M, 384-dim) on the **llama.cpp server** (release binary in `deploy/embeddings`), model baked into the image at a pinned revision + SHA-256; nothing downloads or leaves the box. (EmbeddingGemma was rejected: Gemma license terms pass to every user.) | GGUF model ref | decided |
+| Memory | **SQLite** (one file in the agent's volume, Drizzle migrations). **One continuous conversation**, compacted by pi. `transcripts`: every pi session entry, kept after compaction; the session is rebuilt from it at startup; FTS5 over message text behind `search_transcript`. `memories`: facts saved with `remember`; `recall` fuses FTS5 bm25 and brute-force cosine over bge-small embeddings by reciprocal rank; `forget(id)`. Our own ~150 lines: the pi memory packages are per-project coding memory, and mem0 has telemetry on by default, OpenAI defaults and no pi integration (review: Hermes's capped MEMORY.md/USER.md snapshot and a pre-compaction save nudge are candidates for later) | — | decided |
+| Embeddings | **On device: bge-small-en-v1.5** (MIT, ~33M, 384-dim) on the **llama.cpp server** (release binary in `deploy/llama`), model baked into the image at a pinned revision + SHA-256; nothing downloads or leaves the box. (EmbeddingGemma was rejected: Gemma license terms pass to every user.) | GGUF model ref | decided |
 | Sandbox contents | **the task agent and the desktop in the same sandbox** (Instinct's layout) | — | decided |
 | Bridge | **Caddy** adds the keys for Vercel and Executor; sandbox network access is limited to the bridge | — | decided |
 | Sandbox runtime | to be chosen by the bake-off (below) | `SandboxProvider`: create / exec / screenshot / snapshot / destroy | **open** |
@@ -147,12 +147,12 @@ Every installer must get their own SSH key and Wi-Fi in; nothing personal is bak
 ```
 biscotti/
   DESIGN.md        this file
-  agent/           pi config, system prompt, extensions (sandbox, memory, vault_fill)
-  bot/             Photon Spectrum entrypoint (bun)
+  agent/           the bot: Photon Spectrum → pi, system prompt, tools (memory; sandbox, vault_fill next); Node + pnpm
+  tests/           end-to-end tests and their fakes
   panel/           Svelte control panel
   site/index.html  public onboarding page (biscotti.lucasgelfond.online)
   cua-vm/          desktop image build toolchain only (Dockerfile fork, rootfs/VM-disk build)
-  bench/           sandbox runtime bake-off scripts + results
+  development/     bake-off scripts + results, Firecracker GICv2 patches
   deploy/          compose.yaml, Caddyfile, install.sh, pi-image/ recipe
 ```
 
@@ -171,19 +171,20 @@ Each step ends with something you can check.
    - pi inside the sandbox working
    
    SD-card numbers are flagged. *Check:* results table, then pick the runtime here.
-3. **Platform services** in `deploy/compose.yaml`: Postgres, Executor (pinned), Vaultwarden, Caddy bridge, tailscale serve. *Check:* each UI is reachable on ts.net.
+3. **Platform services** in `deploy/compose.yaml`: embeddings, Executor (pinned), Vaultwarden, Caddy bridge, tailscale serve. *Check:* each UI is reachable on ts.net.
 4. **Main agent + bot.** pi with Vercel and ZDR, Photon echo → pi, system prompt including the approval policy. *Check:* text it, get an answer.
 5. **Task sandbox.** The spawn tool, task pi inside the sandbox via the bridge, browser profile restore/save, `vault_fill`. *Check:* "log into X and tell me Y".
-6. **Memory.** `remember` / `recall` on pgvector. *Check:* recalls a fact across conversations.
+6. **Memory.** `remember` / `recall` / `search_transcript` on SQLite. *Check:* recalls a fact across conversations.
 6a. **Testing approach:** features are tested **end to end only**, through the real agent; no unit tests for our
    glue code. Tests live in `tests/` (not next to the code). Exception: upstream patches follow the upstream
    project's convention (e.g. Firecracker's in-file unit tests).
-6b. **Dev-only E2E harness** in `development/e2e/` (built alongside steps 4–6):
+6b. **E2E harness** in `tests/` (built alongside steps 4–6):
    - **Fakes:** a local text channel instead of Photon; a mock approver
      (approve / deny / timeout); a fake Google MCP server registered in Executor
      and backed by fixture inbox and calendar data; Vaultwarden seeded with fake
      items; public practice sites plus local fixture sites.
-   - **Real:** the model, via the AI Gateway.
+   - **Real:** the agent, its tools, SQLite, the on-device embeddings, and the model via the AI Gateway
+     (production's by default; `MODEL=` picks another).
    - **Assertions:** pi's tool-call log, the sandbox's final URL/DOM/screenshot,
      fake-server state, and grounding (every quoted number appears in a source).
    - Covers the v1 smoke suite in `docs/should-be-supported-tasks.md`.
