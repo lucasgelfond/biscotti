@@ -53,12 +53,12 @@ code of our own.
 | Harness | **pi** (main agent + task agents) | — | decided |
 | Messaging | **Photon Spectrum**, cloud iMessage, shared line | `bot/` is the only code that touches it | decided |
 | Models | **Vercel AI Gateway** (Pro plan), team-wide ZDR, Opus 5.5 for the main agent / Sonnet 5.5 for tasks, no Fable (no ZDR) | pi provider config | decided |
-| Local models | none for now | — | decided |
+| Local models | only the embedding model; chat and computer-use models stay on the AI Gateway | — | decided |
 | Connectors | **Executor**, self-hosted, `elicitation_mode=browser`; reads allowed, writes need approval, admin blocked; one connection per Gmail account; only the Google access you're comfortable with | pi MCP config | decided |
 | Vault | **Vaultwarden**, plus one `vault_fill(item, field)` tool that types values into the desktop without returning them to the model | the `vault_fill` implementation | decided |
 | Browser sessions | one Firefox profile per site account, encrypted with `age`, restored at sandbox start and saved back afterwards | — | decided |
-| Memory | **Postgres + pgvector**, a single `observations` table plus full-text search; `remember` / `recall` tools; no bulk indexing in v1 | — | decided |
-| Embeddings | via the AI Gateway (no local models) | — | decided |
+| Memory | **Postgres + pgvector**: one `observations(id, content, source, created_at, embedding vector(768), tsv)` table; `remember` / `recall` (hybrid vector + full-text, reciprocal rank fusion, top 10) / `forget(source)` as pi tools in an extension, talking to Postgres directly; embeddings computed on write; no bulk indexing in v1 | — | decided |
+| Embeddings | **On device: EmbeddingGemma (~300M, CPU) via Ollama**, 768-dim; nothing leaves the box | Ollama model name | decided |
 | Sandbox contents | **the task agent and the desktop in the same sandbox** (Instinct's layout) | — | decided |
 | Bridge | **Caddy** adds the keys for Vercel and Executor; sandbox network access is limited to the bridge | — | decided |
 | Sandbox runtime | to be chosen by the bake-off (below) | `SandboxProvider`: create / exec / screenshot / snapshot / destroy | **open** |
@@ -79,7 +79,15 @@ host gets set up and which sandbox runtime it can use.
 | **Raspberry Pi 5** (first) | flashable image | docker, gvisor (Ubuntu kernel), firecracker / microsandbox (KVM, to be tested) |
 | Generic Linux / Hetzner dedicated | install script on Ubuntu | all |
 | Mac (M3+) | Lima VM with nested virtualization (`deploy/mac/lima.yaml`) | **firecracker (stock, GICv3)**, docker, gvisor |
-| Hetzner Cloud (CX…) | install script | docker, gvisor (no KVM) |
+| ~~Hetzner Cloud (CX…)~~ | not supported: no KVM | — |
+
+**biscotti requires KVM** (decided 2026-10-17): Pi 5, Mac M3+ (via Lima nested virtualization), Hetzner
+dedicated or any Linux box with KVM. No gVisor fallback and no cloud VPS without KVM; the sandbox interface stays
+small enough to add one later if that changes.
+
+**Host OS: NixOS** (`flake.nix`, `deploy/nixos/`): one shared module (`biscotti.nix`), small per-target files
+(`pi5.nix` via nvmd/nixos-raspberrypi, `vm.nix` for local testing; Lima and server targets to come). Nothing personal
+in the image: SSH keys and Wi-Fi come from the boot partition (Wi-Fi country too: open item).
 
 ## First-boot / onboarding flow (for the Pi image)
 
@@ -152,6 +160,9 @@ Each step ends with something you can check.
 4. **Main agent + bot.** pi with Vercel and ZDR, Photon echo → pi, system prompt including the approval policy. *Check:* text it, get an answer.
 5. **Task sandbox.** The spawn tool, task pi inside the sandbox via the bridge, browser profile restore/save, `vault_fill`. *Check:* "log into X and tell me Y".
 6. **Memory.** `remember` / `recall` on pgvector. *Check:* recalls a fact across conversations.
+6a. **Testing approach:** features are tested **end to end only**, through the real agent; no unit tests for our
+   glue code. Tests live in `tests/` (not next to the code). Exception: upstream patches follow the upstream
+   project's convention (e.g. Firecracker's in-file unit tests).
 6b. **Dev-only E2E harness** in `development/e2e/` (built alongside steps 4–6):
    - **Fakes:** a local text channel instead of Photon; a mock approver
      (approve / deny / timeout); a fake Google MCP server registered in Executor
