@@ -115,9 +115,9 @@ in the image: SSH keys and Wi-Fi come from the boot partition (Wi-Fi country too
    - install Tailscale (App Store / Play / desktop links)
    - "Authorize this Pi": the login link, so nothing has to be typed
    - "Open your control panel": `https://biscotti.<tailnet>.ts.net`
-4. The control panel, which only works over Tailscale, is the **one front door**: it lists connected accounts
-   and vault items (revealing a secret on request) and links into Executor and Vaultwarden to add or edit them.
-   It walks through the setup steps:
+4. The control panel, which only works over Tailscale, is the **one front door** but stays **thin**: Executor's
+   UI is where connectors, accounts and tool policies are managed, and Vaultwarden's is where secrets are added
+   and viewed. The panel is a setup checklist, status, and links into both. It walks through the setup steps:
    1. Tailscale ✓
    2. Photon: paste the project ID and secret
    3. Vercel AI Gateway key, plus a ZDR reminder
