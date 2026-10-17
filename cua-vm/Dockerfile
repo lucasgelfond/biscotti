@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tigervnc-standalone-server tigervnc-tools \
       firefox-esr fonts-dejavu \
       supervisor sudo isc-dhcp-client python3 git ca-certificates curl \
-      xdotool xclip wmctrl \
+      xdotool xclip wmctrl chrony \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 https://github.com/trycua/noVNC.git /opt/noVNC && \

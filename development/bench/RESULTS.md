@@ -82,8 +82,11 @@ no such file`). gVisor's docs call Docker C/R support partial; using `runsc` dir
   "no seccomp" read was a case-sensitive grep bug). Why the namespace path fails here is still unexplained.
 - **`debugfs` writes into a VM disk need `e2fsck -fy` first** (the VM leaves the journal dirty); otherwise
   the injected files come out corrupted.
-- **A restored VM wakes up with the snapshot's wall clock.** It must be resynced
-  after each restore (or HTTPS certificate checks break).
+- **Restored-VM clock: solved off the shelf.** The guest wakes at snapshot time; `chronyd` with
+  `refclock PHC /dev/ptp0` (KVM PTP, `CONFIG_PTP_1588_CLOCK_KVM=y` in the CI kernel) and `makestep 0.5 -1`
+  steps it back to the host within ~2 s (test: 90 s-stale snapshot, first heartbeat 17:51:00, next 17:52:52,
+  host 17:52:49 + 3 s). Started from the VM init only when `/dev/ptp0` exists.
+- Firecracker cold boot with sleeps removed and a warm page cache: **2.8 s**.
 - **Cold-booted Firecracker works** (7.3 s, same as Docker), including outbound
   networking once FORWARD rules allow the tap (Docker sets FORWARD to DROP).
 

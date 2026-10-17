@@ -25,9 +25,11 @@ install -d -o cua -g cua -m 0700 /run/cua
 sysctl -qw user.max_user_namespaces=0
 echo nameserver 1.1.1.1 > /etc/resolv.conf
 cat /proc/net/route /etc/resolv.conf > /dev/console
+# Track the host clock through KVM's PTP device, stepping on any jump (e.g. after a snapshot restore).
+[ -e /dev/ptp0 ] && printf 'refclock PHC /dev/ptp0 poll -2 dpoll -2\nmakestep 0.5 -1\n' > /etc/chrony/chrony.conf && chronyd
 hostname sandbox; printf '127.0.0.1 localhost sandbox\n' > /etc/hosts
 # Mirror Cua's service logs to the serial console so the host can see them.
-(while :; do echo "heartbeat $(cut -d" " -f1 /proc/uptime)"; sleep 2; done) > /dev/console &
+(while :; do echo "heartbeat $(cut -d" " -f1 /proc/uptime) $(date +%T)"; sleep 2; done) > /dev/console &
 (sleep 3; tail -qF /var/log/supervisor/*.log) > /dev/console 2>&1 &
 # Optional warm-up: `biscotti.url=<url>` on the kernel cmdline opens Firefox once X is up.
 url=$(sed -n 's/.*biscotti\.url=\([^ ]*\).*/\1/p' /proc/cmdline)
