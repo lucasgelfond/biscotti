@@ -54,8 +54,8 @@ code of our own.
 | Messaging | **Photon Spectrum**, cloud iMessage, shared line | `bot/` is the only code that touches it | decided |
 | Models | **Vercel AI Gateway** (Pro plan), team-wide ZDR. Now: `anthropic/claude-opus-5.5`; planned switch to `deepseek/deepseek-v4.1-flash-1017` (reasoning model, ~1 s; **confirm it's ZDR-covered first**). No Fable (no ZDR). Key lives only in the host's `deploy/.env`; sandboxes reach the gateway through the bridge | pi provider config | decided |
 | Local models | only the embedding model; chat and computer-use models stay on the AI Gateway | — | decided |
-| Connectors | **Executor**, self-hosted (heavy: ~490 MB idle on the Pi, ~2 min start, beta churn; acceptable). **Swap point:** the agent knows one MCP URL via the bridge's `/tools`, so replacing it is one Compose service + one Caddy route + re-adding connectors (alternatives: Obot, Nango + a thin MCP layer), `elicitation_mode=browser`; reads allowed, writes need approval, admin blocked; one connection per Gmail account; only the Google access you're comfortable with | pi MCP config | decided |
-| Vault | **Vaultwarden**, plus one `vault_fill(item, field)` tool that types values into the desktop without returning them to the model | the `vault_fill` implementation | decided |
+| Connectors | **Executor**, self-hosted (heavy: ~490 MB idle on the Pi, ~2 min start, beta churn; acceptable). **Swap point:** the agent knows one MCP URL via the bridge's `/tools`, so replacing it is one Compose service + one Caddy route + re-adding connectors (alternatives: Obot, Nango + a thin MCP layer), reads allowed, writes need approval, admin blocked; approvals arrive as Executor elicitations and are **asked by text** ("reply yes") rather than on a web page; first connectors **GitHub** (PAT) and **Google** (Gmail, Calendar; your own OAuth client); one connection per Gmail account; only the Google access you're comfortable with | pi MCP config | decided |
+| Vault | **Vaultwarden**. The agent logs in as its own `biscotti` account and sees **only the items you share with it** through a shared collection. One `vault_fill(item, field)` tool types values into the desktop without returning them to the model. You can view any secret in Vaultwarden itself | the `vault_fill` implementation | decided |
 | Browser sessions | one Firefox profile per site account, encrypted with `age`, restored at sandbox start and saved back afterwards | — | decided |
 | Memory | **SQLite** (one file in the agent's volume, Drizzle migrations). **One continuous conversation**, compacted by pi. `transcripts`: every pi session entry, kept after compaction; the session is rebuilt from it at startup; FTS5 over message text behind `search_transcript`. `memories`: facts saved with `remember`; `recall` fuses FTS5 bm25 and brute-force cosine over bge-small embeddings by reciprocal rank; `forget(id)`. Our own ~150 lines: the pi memory packages are per-project coding memory, and mem0 has telemetry on by default, OpenAI defaults and no pi integration (review: Hermes's capped MEMORY.md/USER.md snapshot and a pre-compaction save nudge are candidates for later) | — | decided |
 | Embeddings | **On device: bge-small-en-v1.5** (MIT, ~33M, 384-dim) on the **llama.cpp server** (release binary in `deploy/llama`), model baked into the image at a pinned revision + SHA-256; nothing downloads or leaves the box. (EmbeddingGemma was rejected: Gemma license terms pass to every user.) | GGUF model ref | decided |
@@ -115,7 +115,9 @@ in the image: SSH keys and Wi-Fi come from the boot partition (Wi-Fi country too
    - install Tailscale (App Store / Play / desktop links)
    - "Authorize this Pi": the login link, so nothing has to be typed
    - "Open your control panel": `https://biscotti.<tailnet>.ts.net`
-4. The control panel, which only works over Tailscale, walks through the setup steps:
+4. The control panel, which only works over Tailscale, is the **one front door**: it lists connected accounts
+   and vault items (revealing a secret on request) and links into Executor and Vaultwarden to add or edit them.
+   It walks through the setup steps:
    1. Tailscale ✓
    2. Photon: paste the project ID and secret
    3. Vercel AI Gateway key, plus a ZDR reminder
@@ -137,7 +139,9 @@ look and feel like Raspberry Pi Imager and stay tiny (**about 5 Swift files at m
    with the user's permission, and the Wi-Fi **country**) and their **SSH public key** (`~/.ssh/*.pub`) onto the
    card's boot partition. The NixOS image reads `wpa_supplicant.conf` and `authorized_keys` from there, so the
    image itself stays generic.
-4. Optionally a Tailscale auth key, so the device joins the tailnet on first boot.
+4. **Owner pairing:** asks for the owner's phone number (or iMessage email) and writes it to the boot partition, so
+   the agent answers only them from the first text.
+5. Optionally a Tailscale auth key, so the device joins the tailnet on first boot.
 
 Until it exists: Raspberry Pi Imager to flash, then copy those boot-partition files by hand (see `deploy/pi/README.md`).
 Every installer must get their own SSH key and Wi-Fi in; nothing personal is baked into the image.
@@ -213,9 +217,8 @@ Each step ends with something you can check.
 - A headless Pi (no HDMI): is the hotspot page the only place the QR shows?
 - Confirm Imager's customisation writes cloud-init for our Ubuntu-based image
   (Imager supports `init_format: cloudinit` in repository JSON).
-- Owner setup without editing `.env`: pairing (setup shows a one-time code; the first sender to text it
-  becomes the owner, stored in SQLite), as OpenClaw does. Today `OWNER` is set by hand from the sender ID
-  the agent logs.
+- Owner pairing is the installer's job (above). Until then `OWNER` is set by hand from the sender ID the
+  agent logs.
 
 - From the Open Instinct review (`docs/lit-review/open-instinct.md`):
   - Hash-bind approvals to the exact call (tool + args, TTL, single use, owner 1:1 thread only).
