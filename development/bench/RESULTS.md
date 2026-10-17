@@ -60,19 +60,17 @@ no such file`). gVisor's docs call Docker C/R support partial; using `runsc` dir
   timer PPI 27) isn't saved, so restored guests get no timer interrupts (heartbeat stops). Patch in
   `development/firecracker-gicv2/`. microsandbox refusing GICv2 snapshots corroborates it.
 - 2 vCPUs is the right VM size on the 4-core Pi; 4 vCPUs doesn't help.
-
-
-- **Firecracker snapshot restore is fast but not yet usable on the Pi.** It gives a
-  booted VM in ~0.3 s and a first screenshot in ~0.7 s, but after restore the **GUI
-  apps freeze**: the XFCE panel clock and Firefox stop updating and ignore input.
-  The kernel, networking, Xvnc (serves frames) and websockify (HTTP 200 in ~10–20 ms
-  after one ~5 s stall) keep working. Same with 1 vCPU, so it isn't SMP/GICv2 IPIs.
-  Suspects: the guest clock jumping across the restore (timers / CLOCK_REALTIME),
-  D-Bus, or the CI guest kernel's config. Needs a deeper dig.
-- **Firefox renders a black page inside the Firecracker VM** even on a fresh boot
-  (input and navigation work, so the title changes). Fine in Docker/gVisor.
-  Probably the graphics path (WebRender / SHM); try `MOZ_WEBRENDER=0` or
-  software GL.
+- **Firecracker snapshot restore (stock v1.17.0) is fast but broken on the Pi:** a booted VM in ~0.3 s, first
+  screenshot ~0.7 s, but the guest gets no timer interrupts afterwards (a 2 s console heartbeat stops), so
+  anything that sleeps (XFCE panel, Firefox) freezes while I/O-driven code (network, Xvnc, websockify) still
+  answers. Cause: the GICv2 banked-register bug above (1 vCPU behaves the same; it's the per-CPU PPI state, not IPIs).
+- **The black Firefox page in the VM is a missing kernel feature:** Firecracker's CI guest kernel has no seccomp
+  (`/proc/self/status` has no Seccomp line), so Firefox's content sandbox can't start its renderer. With
+  `MOZ_DISABLE_CONTENT_SANDBOX=1` Wikipedia renders fine (verified by screenshot). The real fix is a guest kernel
+  built from Firecracker's CI config plus `CONFIG_SECCOMP`/`CONFIG_SECCOMP_FILTER`, in `cua-vm/`; don't ship
+  with the sandbox disabled.
+- **`debugfs` writes into a VM disk need `e2fsck -fy` first** (the VM leaves the journal dirty); otherwise
+  the injected files come out corrupted.
 - **A restored VM wakes up with the snapshot's wall clock.** It must be resynced
   after each restore (or HTTPS certificate checks break).
 - **Cold-booted Firecracker works** (7.3 s, same as Docker), including outbound

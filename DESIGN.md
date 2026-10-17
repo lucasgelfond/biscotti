@@ -187,6 +187,12 @@ Each step ends with something you can check.
 - Confirm Imager's customisation writes cloud-init for our Ubuntu-based image
   (Imager supports `init_format: cloudinit` in repository JSON).
 
+- From the Open Instinct review (`docs/lit-review/open-instinct.md`):
+  - Hash-bind approvals to the exact call (tool + args, TTL, single use, owner 1:1 thread only).
+  - Filter which tools agents can see, in addition to gating calls.
+  - Trust tiers for non-owners; `<untrusted>` wrapping.
+  - An owner-readable audit log; single-use cards instead of stored cards; a live-desktop takeover view.
+
 ## Field notes
 
 - The Pi 5 joins 5 GHz on a DFS channel (52) fine: ~5 MB/s versus ~0.15–0.7 MB/s
