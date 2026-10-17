@@ -127,6 +127,20 @@ Security note: the login-URL QR code lets whoever scans it first add the Pi to
 their tailnet. That's acceptable for a device in your hands. The URL is
 short-lived, and no secrets ever go in query parameters.
 
+### Installer (later, after the core works)
+
+The goal is a **small native macOS app (Swift)** that does the whole card setup, so nobody edits boot files:
+1. Lists removable devices and detects an inserted SD card.
+2. Flashes the biscotti image for the chosen target. **Pi 5 only** for now; other targets later.
+3. With one click, writes the installer's **Wi-Fi** (the Mac's current network, its password from the keychain
+   with the user's permission, and the Wi-Fi **country**) and their **SSH public key** (`~/.ssh/*.pub`) onto the
+   card's boot partition. The NixOS image reads `wpa_supplicant.conf` and `authorized_keys` from there, so the
+   image itself stays generic.
+4. Optionally a Tailscale auth key, so the device joins the tailnet on first boot.
+
+Until it exists: Raspberry Pi Imager to flash, then copy those boot-partition files by hand (see `deploy/pi/README.md`).
+Every installer must get their own SSH key and Wi-Fi in; nothing personal is baked into the image.
+
 ## Repo layout (planned)
 
 ```
