@@ -43,7 +43,10 @@ RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> 
     install -o cua -g cua /tmp/cua/xfce-config/xfce4-*.xml $HOME/.config/xfce4/xfconf/xfce-perchannel-xml/ && \
     for a in xfce4-tips-autostart xfce4-screensaver light-locker xfce4-power-manager; do \
       printf '[Desktop Entry]\nHidden=true\n' > $HOME/.config/autostart/$a.desktop; done && \
-    chown -R cua:cua $HOME && rm -rf /tmp/cua
+    chown -R cua:cua $HOME && rm -rf /tmp/cua && \
+    # Replace Cua's fixed startup waits with readiness polls.
+    sed -i 's|^sleep 5$|until (exec 3<>/dev/tcp/127.0.0.1/5901) 2>/dev/null; do sleep 0.1; done|' /usr/local/bin/start-novnc.sh && \
+    sed -i 's|^    sleep 1$|    sleep 0.1|' /usr/local/bin/start-spacesd.sh
 
 EXPOSE 5901 6901 3211
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]

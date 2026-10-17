@@ -65,6 +65,8 @@ code of our own.
 | Desktop image | Cua's XFCE image, rebuilt multi-arch (`cua-vm/`) | — | decided |
 | Network | **Tailscale**; `tailscale serve` on `biscotti.<tailnet>.ts.net` | — | decided |
 | Control panel | **Svelte**, minimal | — | decided |
+| Generated pages ("generative UI") | **Important spec.** The agent can make web pages (comparison tables, itineraries, dashboards, forms to fill in) and send a link. Pages are static files the agent writes, served on the tailnet by the existing Caddy / `tailscale serve` (e.g. `https://biscotti.<tailnet>.ts.net/p/<id>`). Interactive pages post back to the agent through the same host. No public hosting | publish location | decided |
+| Attachments over text | **Important spec.** Send and receive files (images, PDFs, screenshots from the sandbox, generated docs) through Photon's attachment support. Received files are saved for the agent; large outputs go out as a generated-page link | `bot/` | decided |
 | Approvals | sending any email/message, purchases, deletes, account/settings changes, website form submissions. Captchas and 2FA go to the user by text. Lives in the system prompt. | — | decided |
 
 ## Deployment targets

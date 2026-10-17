@@ -24,10 +24,14 @@ echo nameserver 1.1.1.1 > /etc/resolv.conf
 cat /proc/net/route /etc/resolv.conf > /dev/console
 hostname sandbox; printf '127.0.0.1 localhost sandbox\n' > /etc/hosts
 # Mirror Cua's service logs to the serial console so the host can see them.
+(while :; do echo "heartbeat $(cut -d" " -f1 /proc/uptime)"; sleep 2; done) > /dev/console &
 (sleep 3; tail -qF /var/log/supervisor/*.log) > /dev/console 2>&1 &
 # Optional warm-up: `biscotti.url=<url>` on the kernel cmdline opens Firefox once X is up.
 url=$(sed -n 's/.*biscotti\.url=\([^ ]*\).*/\1/p' /proc/cmdline)
 [ -n "$url" ] && (until xdpyinfo -display :1 >/dev/null 2>&1; do sleep 0.2; done; runuser -u cua -- firefox-esr "$url" > /dev/console 2>&1) &
+# Dev hook: `biscotti.run=<script>` runs a script once X is up, output to the console.
+run=$(sed -n 's/.*biscotti\.run=\([^ ]*\).*/\1/p' /proc/cmdline)
+[ -n "$run" ] && (until xdpyinfo -display :1 >/dev/null 2>&1; do sleep 0.2; done; sh "$run" > /dev/console 2>&1) &
 exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
 EOF
 chmod +x "$DIR/sbin/biscotti-init"
