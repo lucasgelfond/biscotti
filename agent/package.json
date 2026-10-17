@@ -12,11 +12,9 @@
     "db:generate": "drizzle-kit generate"
   },
   "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ],
     "ignoredBuiltDependencies": [
       "@google/genai",
+      "better-sqlite3",
       "esbuild",
       "protobufjs"
     ],
