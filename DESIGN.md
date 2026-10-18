@@ -1,7 +1,7 @@
 # biscotti
 
 Biscotti: a lightweight, Instinct-like agent harness. A personal agent you text over iMessage, running on hardware you
-own. Diagram: [docs/architecture.html](docs/architecture.html) (PNGs next to it).
+own. Diagram: [docs/architecture.svg](docs/architecture.svg) (PNGs next to it).
 
 ## Principles
 
