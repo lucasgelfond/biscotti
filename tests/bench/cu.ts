@@ -27,6 +27,10 @@ const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | 
     goal: "On https://www.demoblaze.com buy one Samsung galaxy s6: add it to the cart, then Place Order with name Ada Lovelace, country USA, city New York, card 4242424242424242, month 12, year 2030, and Purchase. Report the confirmation exactly as shown, including the amount and card number.",
     pass: (r) => /thank you for your purchase/i.test(r) && r.replace(/\D/g, "").includes("4242424242424242"),
   },
+  angelika: {
+    goal: "Find tickets for the Cameron Winter concert film at an Angelika theater in New York. Pick the next showing, open its seat selection, and give a general overview of the seat map: which areas are open, roughly how full, and the best seats left. Leave the seat map on screen. Don't buy anything.",
+    pass: (r) => /cameron winter/i.test(r) && /seat/i.test(r) && /(open|available|full|sold|left)/i.test(r),
+  },
   seats: {
     goal: "Open https://www.seatguru.com/airlines/Delta_Airlines/Delta_Airlines_Airbus_A321_new.php and give a general overview of the seat map: the cabins, roughly how many rows each, and which rows are exit rows.",
     pass: (r) => /first|comfort/i.test(r) && /exit/i.test(r),
