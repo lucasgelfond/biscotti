@@ -22,6 +22,13 @@
       "when": 1792294491969,
       "tag": "0002_memories-without-embeddings",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792331950874,
+      "tag": "0003_wakes-and-vault",
+      "breakpoints": true
     }
   ]
 }

@@ -1,20 +1,9 @@
 import { localTools, text, type Plugin } from "./plugin.ts";
 import { Cron } from "croner";
-import { eq, sql } from "drizzle-orm";
-import { integer, sqliteTable, text as column } from "drizzle-orm/sqlite-core";
+import { eq } from "drizzle-orm";
+import { wakes } from "./schema.ts";
 
 // Prompts the agent schedules for itself; when due, they come back as a message.
-
-const wakes = sqliteTable("wakes", {
-  id: integer().primaryKey({ autoIncrement: true }),
-  label: column().notNull(),
-  when: column().notNull(),
-  prompt: column().notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" })
-    .notNull()
-    .$defaultFn(() => new Date()),
-  lastRun: integer("last_run", { mode: "timestamp" }),
-});
 
 type Wake = typeof wakes.$inferSelect;
 
@@ -33,9 +22,6 @@ export default {
   report). It is your own note, not the user speaking.`,
 
   async tools({ db }) {
-    db.run(sql`CREATE TABLE IF NOT EXISTS wakes (
-      id integer PRIMARY KEY AUTOINCREMENT NOT NULL, label text NOT NULL, "when" text NOT NULL, prompt text NOT NULL,
-      created_at integer NOT NULL, last_run integer)`);
     return localTools([
       {
         name: "schedule",

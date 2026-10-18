@@ -1,19 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { localTools, text, type Plugin } from "./plugin.ts";
-import { sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { vault } from "./schema.ts";
 
 // Logins, cards and licenses in the encrypted database. Entered through one-time forms on the tailnet, never in chat.
 
 const PORT = 4791;
 const FORM_TTL_MS = 30 * 60_000;
-
-interface Row {
-  name: string;
-  fields: string;
-  confirm: number;
-  value: string;
-}
 
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
@@ -33,11 +27,10 @@ repeat full passwords or card numbers in texts. To save a new one, \`vault_reque
 
   async tools(ctx) {
     const { db } = ctx;
-    db.run(sql`CREATE TABLE IF NOT EXISTS vault (
-      name text PRIMARY KEY NOT NULL, fields text NOT NULL, confirm integer NOT NULL, value text NOT NULL)`);
-
-    const save = (name: string, values: Record<string, string>, confirm: boolean) =>
-      db.run(sql`INSERT OR REPLACE INTO vault VALUES (${name}, ${JSON.stringify(Object.keys(values))}, ${confirm ? 1 : 0}, ${JSON.stringify(values)})`);
+    const save = (name: string, value: Record<string, string>, confirm: boolean) => {
+      const row = { name, fields: Object.keys(value), confirm, value };
+      db.insert(vault).values(row).onConflictDoUpdate({ target: vault.name, set: row }).run();
+    };
 
     // One-time forms, served only once one has been asked for.
     const forms = new Map<string, { name: string; fields: string[] }>();
@@ -62,9 +55,9 @@ repeat full passwords or card numbers in texts. To save a new one, \`vault_reque
         description: "List saved secrets (logins, cards, licenses): their names and fields, not their values.",
         input: { type: "object", properties: {} },
         async run() {
-          const rows = db.all<Row>(sql`SELECT name, fields, confirm FROM vault ORDER BY name`);
+          const rows = db.select().from(vault).orderBy(vault.name).all();
           if (!rows.length) return text("No secrets saved.");
-          return text(rows.map((r) => `${r.name}: ${JSON.parse(r.fields).join(", ")}${r.confirm ? " (asks the user first)" : ""}`).join("\n"));
+          return text(rows.map((r) => `${r.name}: ${r.fields.join(", ")}${r.confirm ? " (asks the user first)" : ""}`).join("\n"));
         },
       },
       {
@@ -76,10 +69,10 @@ repeat full passwords or card numbers in texts. To save a new one, \`vault_reque
           required: ["name", "why"],
         },
         async run({ name, why }) {
-          const row = db.get<Row>(sql`SELECT * FROM vault WHERE name = ${name as string}`);
+          const row = db.select().from(vault).where(eq(vault.name, name as string)).get();
           if (!row) return text(`No secret named "${name}".`);
           if (row.confirm && !(await ctx.ask(`Use "${row.name}" for ${why}? Reply yes or no.`))) return text("The user declined.");
-          return text(row.value);
+          return text(JSON.stringify(row.value));
         },
       },
       {

@@ -12,7 +12,7 @@ const OUT = process.env.OUT ?? "/tmp/cu";
 
 const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | Promise<boolean> }> = {
   hn: {
-    goal: "Open https://news.ycombinator.com in Firefox and report the exact title of the #1 story.",
+    goal: "Open https://news.ycombinator.com and report the exact title of the #1 story.",
     async pass(report) {
       const [id] = await (await fetch("https://hacker-news.firebaseio.com/v0/topstories.json")).json();
       const { title } = await (await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`)).json();
@@ -61,8 +61,12 @@ async function run(task: string, slot: number, guidance: string) {
       socket.setTimeout(10 * 60_000, () => socket.destroy(new Error("timed out")));
       createInterface({ input: socket }).on("line", (line) => {
         const e = JSON.parse(line) as Record_ & { png?: string };
+        if (process.env.CU_TRACE && e.type.startsWith("tool_execution_") && e.type !== "tool_execution_update")
+          console.error(`${((Date.now() - started) / 1000).toFixed(1)}s ${task} ${e.type.slice(15)} ${e.toolName} ${e.isError ? "ERROR" : ""}`);
         if (e.type === "screenshot") screenshot = Buffer.from(e.png!, "base64");
         if (e.type === "turn_start") turns++;
+        if (process.env.CU_TRACE && ["turn_start", "message_end", "agent_settled"].includes(e.type))
+          console.error(`${((Date.now() - started) / 1000).toFixed(1)}s ${task} ${e.type} ${e.message?.role ?? ""}`);
         if (e.type === "tool_execution_end") {
           tools[e.toolName!] = (tools[e.toolName!] ?? 0) + 1;
           if (e.isError) errors++;
