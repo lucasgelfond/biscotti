@@ -4,7 +4,7 @@ RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod
-COPY SYSTEM.md ./
+COPY SYSTEM.md models.json ./
 COPY drizzle drizzle
 COPY src src
 CMD ["node", "src/main.ts"]

@@ -6,7 +6,7 @@ import { createAgent } from "../agent/src/agent.ts";
 import { openDb } from "../agent/src/db.ts";
 import { pageTool } from "../agent/src/pages.ts";
 
-test("publishes a page and texts its link", async () => {
+test("publishes a page with link-preview tags and texts its link", async () => {
   const dir = mkdtempSync(join(tmpdir(), "biscotti-"));
   const pages = join(dir, "pages");
   const db = openDb(join(dir, "biscotti.db"));
@@ -14,8 +14,11 @@ test("publishes a page and texts its link", async () => {
 
   const reply = await agent.reply("Make me a page with a table comparing biscotti, shortbread and madeleines: origin and texture.");
 
-  const files = readdirSync(pages);
+  const files = readdirSync(pages).filter((f) => f.endsWith(".html"));
+  const page = readFileSync(join(pages, files[0]), "utf8");
   expect(files).toHaveLength(1);
-  expect(readFileSync(join(pages, files[0]), "utf8").toLowerCase()).toContain("madeleine");
+  expect(page.toLowerCase()).toContain("madeleine");
+  expect(page).toContain('<meta property="og:title"');
+  expect(page).toContain('<meta property="og:image" content="https://biscotti.example.ts.net:8445/preview.jpg">');
   expect(reply).toContain(`https://biscotti.example.ts.net:8445/${files[0]}`);
 });

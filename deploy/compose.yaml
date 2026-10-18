@@ -18,7 +18,10 @@ services:
       OWNER: ${OWNER:?}
       EMBEDDINGS_URL: http://127.0.0.1:8090
       EXECUTOR_URL: http://127.0.0.1:4788
-      PASSTHROUGH_PORT: "4790"
+      GATE_PORT: "4790"
+      # The models: MODEL for the main agent (provider/id), TASK_MODEL for task VMs (a gateway model id).
+      MODEL: ${MODEL:-vercel-ai-gateway/deepseek/deepseek-v4.1-flash-1017-fast}
+      TASK_MODEL: ${TASK_MODEL:-deepseek/deepseek-v4.1-flash-1017-fast}
       EXECUTOR_ORIGIN: https://${TAILNET_HOST:?}:8443
       EXECUTOR_API_KEY: ${EXECUTOR_API_KEY:-}
       EXECUTOR_ADMIN_PASSWORD: ${EXECUTOR_ADMIN_PASSWORD:-}
@@ -80,9 +83,6 @@ services:
     network_mode: host
     # An init process reaps exited Firecracker processes.
     init: true
-    environment:
-      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
-      EXA_API_KEY: ${EXA_API_KEY:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - agent:/agent:ro

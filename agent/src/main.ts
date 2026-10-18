@@ -8,7 +8,7 @@ import { connectors, ensureExecutorToken, NO, YES } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
 import { pageTool } from "./pages.ts";
-import { startPassThrough } from "./passthrough.ts";
+import { startGate } from "./gate.ts";
 import { taskTool } from "./sandbox.ts";
 import { ensureVaultAccount, ensureVaultSharing, vaultTools } from "./vault.ts";
 import { startWakes, wakeTools } from "./wakes.ts";
@@ -97,13 +97,30 @@ const agent = await createAgent({
   }),
 });
 
-if (executorUrl && executorKey && process.env.PASSTHROUGH_PORT)
-  startPassThrough({ executorUrl, token: executorKey, port: Number(process.env.PASSTHROUGH_PORT), askOwner });
+if (executorUrl && executorKey && process.env.GATE_PORT)
+  startGate({
+    executorUrl,
+    token: executorKey,
+    gatewayKey: env("AI_GATEWAY_API_KEY"),
+    taskModel: process.env.TASK_MODEL ?? "deepseek/deepseek-v4.1-flash-1017-fast",
+    exaKey: process.env.EXA_API_KEY,
+    port: Number(process.env.GATE_PORT),
+    askOwner,
+  });
+
+// Sends a reply, with any page links as messages of their own so iMessage expands them into cards.
+async function sendReply(reply: string) {
+  const pages = process.env.PAGES_URL;
+  const links = pages ? reply.split(/\s+/).filter((word) => word.startsWith(`${pages}/`)) : [];
+  const text = links.reduce((t, link) => t.replace(link, ""), reply).trim();
+  if (text) await ownerSpace?.send(text);
+  for (const link of links) await ownerSpace?.send(link);
+}
 
 async function deliver(text: string, screenshot?: Buffer) {
   try {
     const reply = await agent.reply(text);
-    if (reply && ownerSpace) await ownerSpace.send(reply);
+    if (reply) await sendReply(reply);
     if (screenshot && ownerSpace) await ownerSpace.send(attachment(screenshot, { mimeType: "image/png", name: "screen.png" }));
   } catch (err) {
     console.error(err);
@@ -153,7 +170,7 @@ for await (const [space, message] of imessage.app.messages) {
   space
     .responding(async () => {
       const reply = await agent.reply(text);
-      if (reply) await space.send(reply);
+      if (reply) await sendReply(reply);
     })
     .catch((err) => console.error(err));
 }

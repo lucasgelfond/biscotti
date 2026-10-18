@@ -26,12 +26,14 @@ export interface AgentOptions {
 export async function createAgent({
   db,
   dir,
-  model = "vercel-ai-gateway/anthropic/claude-opus-5.5",
+  model = "vercel-ai-gateway/deepseek/deepseek-v4.1-flash-1017-fast",
   tools,
   extensions = [],
 }: AgentOptions) {
   const [provider, ...rest] = model.split("/");
-  const modelRuntime = await ModelRuntime.create({ authPath: `${dir}/auth.json`, modelsPath: null });
+  // models.json adds gateway models pi's catalog doesn't list yet.
+  const modelsPath = new URL("../models.json", import.meta.url).pathname;
+  const modelRuntime = await ModelRuntime.create({ authPath: `${dir}/auth.json`, modelsPath });
   const resolved = modelRuntime.getModel(provider, rest.join("/"));
   if (!resolved) throw new Error(`unknown model ${model}`);
 

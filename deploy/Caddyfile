@@ -1,4 +1,4 @@
-# The sandbox bridge: task VMs reach the model and the owner's connectors through here without holding any keys.
+# The sandbox bridge: a plain router for task VMs; it holds no keys.
 {
 	admin localhost:2019
 }
@@ -14,24 +14,10 @@ http://:8082 {
 http://:80 {
 	bind 10.200.1.1 10.200.2.1 10.200.3.1
 
-	handle_path /llm/* {
-		reverse_proxy https://ai-gateway.vercel.sh {
-			header_up Authorization "Bearer {env.AI_GATEWAY_API_KEY}"
-			header_up -x-api-key
-			header_up Host {upstream_hostport}
-		}
-	}
-
-	# Web search: Exa's MCP server.
-	handle_path /search/* {
-		reverse_proxy https://mcp.exa.ai {
-			header_up x-api-key "{env.EXA_API_KEY}"
-			header_up Host {upstream_hostport}
-		}
-	}
-
-	# Connectors: the agent's pass-through to Executor, which asks the owner before any write.
-	handle_path /tools/* {
+	# The model (/llm), web search (/search) and connectors (/tools): all through the agent's gate, which holds the
+	# keys and asks the owner before writes.
+	@gate path /llm/* /search/* /tools/*
+	handle @gate {
 		reverse_proxy 127.0.0.1:4790
 	}
 

@@ -1,5 +1,22 @@
 {
   "providers": {
-    "vercel-ai-gateway": { "baseUrl": "http://172.16.0.1/llm", "apiKey": "added-by-the-bridge" }
+    "biscotti": {
+      "baseUrl": "http://172.16.0.1/llm",
+      "api": "anthropic-messages",
+      "apiKey": "added-by-the-gate",
+      "models": [
+        {
+          "id": "task",
+          "name": "Task model (chosen by the host)",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 200000,
+          "maxTokens": 32768
+        }
+      ]
+    }
   }
 }

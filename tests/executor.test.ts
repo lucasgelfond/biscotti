@@ -6,7 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { expect, test } from "vitest";
 import { ensureExecutorToken } from "../agent/src/connectors.ts";
-import { startPassThrough } from "../agent/src/passthrough.ts";
+import { startGate } from "../agent/src/gate.ts";
 
 // The fresh Executor from tests/compose.yaml (its origin is its own URL). Its first-run setup works once, so the
 // tests in this file share it.
@@ -38,7 +38,7 @@ test("sets up a fresh Executor: the owner's admin account, the agent's token and
 
 test("gives task VMs Executor's tools without the token or a way to approve", async () => {
   const token = await setup;
-  const server = startPassThrough({ executorUrl: EXECUTOR_URL, token, port: PASSTHROUGH_PORT, askOwner: async () => false });
+  const server = startGate({ executorUrl: EXECUTOR_URL, token, gatewayKey: "unused", taskModel: "unused", port: PASSTHROUGH_PORT, askOwner: async () => false });
 
   const vm = await mcp(`http://127.0.0.1:${PASSTHROUGH_PORT}/mcp`);
   const names = (await vm.listTools()).tools.map((t) => t.name);
@@ -51,4 +51,29 @@ test("gives task VMs Executor's tools without the token or a way to approve", as
   expect(names).toContain("search");
   expect(names).not.toContain("resume");
   expect(JSON.stringify(found)).toContain("tools.google.");
+});
+
+test.skipIf(!process.env.AI_GATEWAY_API_KEY)("answers a task VM's model call with the host's chosen model and key", async () => {
+  const token = await setup;
+  const port = PASSTHROUGH_PORT + 1;
+  const server = startGate({
+    executorUrl: EXECUTOR_URL,
+    token,
+    gatewayKey: process.env.AI_GATEWAY_API_KEY!,
+    taskModel: "deepseek/deepseek-v4.1-flash-1017-fast",
+    port,
+    askOwner: async () => false,
+  });
+
+  // What pi in the VM sends: an Anthropic-style request for the generic "task" model, with no real key.
+  const res = await fetch(`http://127.0.0.1:${port}/llm/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": "added-by-the-gate" },
+    body: JSON.stringify({ model: "task", max_tokens: 200, messages: [{ role: "user", content: "Reply with just the word biscotti." }] }),
+  });
+  const body = await res.json();
+  server.close();
+
+  expect(res.status).toBe(200);
+  expect(JSON.stringify(body.content).toLowerCase()).toContain("biscotti");
 });
