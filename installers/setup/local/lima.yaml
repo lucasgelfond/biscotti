@@ -5,7 +5,7 @@ vmType: vz
 plain: true
 nestedVirtualization: true
 cpus: 4
-memory: 6GiB
+memory: 8GiB
 disk: 20GiB
 images:
   - location: https://biscotti.lucasgelfond.online/biscotti-mac.qcow2.zst

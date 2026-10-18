@@ -12,12 +12,14 @@ let
       })
     ];
   });
+  # Loads a huge-page snapshot into a restored VM (core/src/tasks.ts).
+  faultAll = pkgs.runCommandCC "fault-all" { } "mkdir -p $out/bin && $CC -O2 -o $out/bin/fault-all ${self}/core/vm/uffd/fault-all.c";
   # The repo, as built into the image; setup and the services run from here.
   repo = "${self}";
 in
 {
   imports = [ ./net.nix ./setup.nix ];
-  _module.args = { inherit repo firecracker; };
+  _module.args = { inherit repo firecracker faultAll; };
 
   networking.hostName = "biscotti";
   system.nixos.label = "biscotti-v${version}";

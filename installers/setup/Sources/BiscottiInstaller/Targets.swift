@@ -74,7 +74,7 @@ enum Mac {
             plain: true
             nestedVirtualization: true
             cpus: 4
-            memory: 6GiB
+            memory: 8GiB
             disk: 20GiB
             images:
               - location: \(disk.path)

@@ -1,7 +1,7 @@
 # Brings biscotti up, or up to date, on every boot (a no-op once done): the installer's settings, generated secrets,
 # Tailscale, the services for the plugins biscotti.json names, and the task VM snapshot. Texts the owner when they
 # need to act and when biscotti is ready.
-{ pkgs, repo, firecracker, ... }:
+{ pkgs, repo, firecracker, faultAll, ... }:
 {
   systemd.tmpfiles.rules = [
     "d /var/lib/biscotti 0700 root root -"
@@ -67,13 +67,18 @@
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
       if has artifacts; then tailscale funnel --bg --https=443 http://127.0.0.1:8082; fi
 
-      [ -f "$STATE/vm/desktop.snap" ] || FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
+      # Huge pages reserved (the Mac): task VMs run on them.
+      huge=$([ "$(cat /proc/sys/vm/nr_hugepages)" -gt 0 ] && echo 2M || true)
+      [ -f "$STATE/vm/desktop.snap" ] || HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
       # The agent, plus the services of the plugins that bring one. Nix-built binaries mounted into the agent (the
       # patched Firecracker) load their libraries from the Nix store.
       {
         echo "include:"
         for p in $plugins; do [ -f "${repo}/plugins/$p/compose.yaml" ] && echo "  - ${repo}/plugins/$p/compose.yaml"; done
-        echo "services: { agent: { volumes: [ /nix/store:/nix/store:ro ] } }"
+        echo "services:"
+        echo "  agent:"
+        echo "    volumes: [ /nix/store:/nix/store:ro ]"
+        [ -z "$huge" ] || echo "    environment: { UFFD_HANDLER: ${faultAll}/bin/fault-all }"
       } > "$STATE/compose.plugins.yaml"
       # Texted before the agent starts: a second Photon connection takes the agent's incoming messages away.
       if [ ! -f "$STATE/ready" ]; then
