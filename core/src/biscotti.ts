@@ -2,12 +2,10 @@ import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { eq } from "drizzle-orm";
 import { createAgent } from "./agent.ts";
 import crons from "./crons.ts";
 import { createGate } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
-import { tasks as running } from "./schema.ts";
 import type { Channel, Context, Plugin } from "./plugin.ts";
 import { containerVms, firecrackerVms, SLOTS, taskTool, taskVms } from "./tasks.ts";
 import vault from "./vault.ts";
@@ -66,10 +64,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
           taskVms(start),
           (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot),
           liveDesktop ? (slot) => `${liveDesktop}:${10440 + slot}/vnc.html` : undefined,
-          (goal) => {
-            const [row] = db.insert(running).values({ goal }).returning().all();
-            return () => db.delete(running).where(eq(running.id, row.id)).run();
-          },
         ),
       ]
     : [];
@@ -102,10 +96,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   }
 
   for (const plugin of plugins) await plugin.start?.(ctx);
-  // Tasks a restart cut off: report them, so the agent doesn't wait on them.
-  for (const { id, goal } of db.select().from(running).all()) {
-    db.delete(running).where(eq(running.id, id)).run();
-    void deliver(`Task report (${goal}):\nStopped by a restart before it finished.`);
-  }
+
   return { db, gateUrl, channel, handle };
 }
