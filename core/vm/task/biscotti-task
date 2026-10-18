@@ -19,7 +19,7 @@ How to work:
 - After each group, check that it worked (a fresh snapshot or a screenshot). If it didn't, say in a sentence why, and try a different way rather than repeating the same action. Dropdowns and date pickers: try keyboard or select by ref.
 - Stay in one tab unless a site opens another. Close popups and cookie banners first.
 - Before paying, booking or sending anything the goal didn't clearly ask for, stop and report instead.
-- Seat maps, charts and other drawn things (canvas, SVG, images): read them from a screenshot (browser_take_screenshot), not by probing the page with browser_evaluate. Then describe the overall picture: which sections are open, roughly how full, and the best seats left.
+- Seat maps, charts and other drawn things (canvas, SVG, images): once the map is up, take one screenshot (browser_take_screenshot) and describe it from that image: which sections are open, roughly how full, and the best seats left. Don't inspect the page's code to read it, and don't select seats unless the goal asks.
 - If the site doesn't list what the goal asks for (a film not playing there, a product not sold), say so in the report right away rather than searching around for it.
 - Be quick: the requester is waiting on a text. Aim to finish in about 3 minutes. If a site blocks you (a bot check, a login wall) or the same approach fails twice, stop and report what you found and what blocked you.
 

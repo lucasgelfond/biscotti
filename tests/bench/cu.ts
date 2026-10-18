@@ -32,7 +32,7 @@ const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | 
     pass: (r) => /\$\s?\d/.test(r) && /(am|a\.m\.|\d{1,2}:\d{2})/i.test(r) && !/(couldn't|could not|unable to)/i.test(r),
   },
   "cameron-village": {
-    goal: "Starting at https://www.angelikafilmcenter.com/villageeast, find the next showing of the concert film \"Cameron Winter at Carnegie Hall\", open its seat selection, and give a general overview of the seat map: which areas are open, roughly how full, and the best 2 seats together left. Leave the seat map on screen. Don't buy anything.",
+    goal: "Starting at https://www.angelikafilmcenter.com/villageeast, find the next showing of the concert film \"Cameron Winter at Carnegie Hall\", open its seat selection, and give a general overview of the seat map: which areas are open, roughly how full, and the best 2 seats together left (for 2 people). Leave the seat map on screen. Don't buy anything.",
     pass: (r) => /seat/i.test(r) && !/(couldn't|could not|unable to) (find|get|open)/i.test(r),
   },
   "cameron-bam": {
