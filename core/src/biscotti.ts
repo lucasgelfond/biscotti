@@ -53,7 +53,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
     },
   });
 
-  const liveDesktop = process.env.LIVE_DESKTOP_URL;
+  const liveDesktop = process.env.LIVE_DESKTOP_URL ?? (process.env.TAILNET_HOST && `https://${process.env.TAILNET_HOST}`);
   const tasks = vmDir
     ? [
         taskTool(
