@@ -32,12 +32,12 @@
       mac = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         inherit specialArgs;
-        modules = [ ./installers/toolchain/biscotti.nix ./installers/local/mac.nix ];
+        modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/mac.nix ];
       };
       aws = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         inherit specialArgs;
-        modules = [ ./installers/toolchain/biscotti.nix ./installers/aws/aws.nix ];
+        modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/aws.nix ];
       };
     };
 

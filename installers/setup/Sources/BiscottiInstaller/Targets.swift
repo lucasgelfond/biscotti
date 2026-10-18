@@ -38,7 +38,7 @@ func saveCommand(_ file: String) -> String {
     return "\(guarded)mkdir -p /var/lib/biscotti && umask 077 && cat > \(path)"
 }
 
-// MARK: Mac. Thin on purpose: this mirrors installers/local/lima.yaml and boots the published biscotti-mac image.
+// MARK: Mac. Thin on purpose: this mirrors installers/setup/local/lima.yaml and boots the published biscotti-mac image.
 
 enum Mac {
     /// Lima's nested virtualization (for Firecracker) needs an M3 or later.
@@ -67,7 +67,7 @@ enum Mac {
         try readImage(image, progress: { _ in }) { out.write(Data($0)) }
         try out.close()
 
-        // installers/local/lima.yaml, with the image swapped for the published one.
+        // installers/setup/local/lima.yaml, with the image swapped for the published one.
         let yaml = dir.appending(path: "biscotti.yaml")
         try """
             vmType: vz
@@ -101,13 +101,13 @@ enum Cloud {
     /// The release tag of this repo the machine builds.
     static let rev = "v\(Release.version)"
 
-    /// installers/aws/user-data.nix.
+    /// installers/setup/aws/user-data.nix.
     static let userData = """
         # Paste as the instance's user data. No secrets here: user data is readable by anyone with EC2 describe access
         # and by every process on the instance.
         { ... }:
         {
-          imports = [ "${builtins.fetchTarball "https://github.com/lucasgelfond/biscotti/archive/\(rev).tar.gz"}/installers/aws" ];
+          imports = [ "${builtins.fetchTarball "https://github.com/lucasgelfond/biscotti/archive/\(rev).tar.gz"}/installers/setup/aws" ];
         }
 
         """

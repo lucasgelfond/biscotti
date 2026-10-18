@@ -6,7 +6,7 @@ steps are written to be followed click by click, by you or a browser agent (Clau
 ## Your settings
 
 Every path ends the same way: a NixOS machine that waits, on first boot, for your settings in
-`/var/lib/biscotti/.env`. Fill a copy of [`core/host/.env.example`](../../core/host/.env.example) on your computer:
+`/var/lib/biscotti/.env`. Fill a copy of [`core/host/.env.example`](../../../core/host/.env.example) on your computer:
 
 - `LLM_BASE_URL` (any OpenAI-compatible API) and `LLM_API_KEY`, `SPECTRUM_PROJECT_ID`, `SPECTRUM_PROJECT_SECRET`, `OWNER` (your number, e.g. `+15551234567`)
 - Plugins you enable in `biscotti.json`: `EXA_API_KEY`, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `GITHUB_TOKEN`
@@ -32,7 +32,7 @@ configuration.
 6. **Network settings**: **Allow SSH traffic** only (leave HTTP/HTTPS unchecked).
 7. **Configure storage**: 40 GiB gp3.
 8. Expand **Advanced details**. Set **Nested virtualization** to **Enable**. In **User data**, paste the contents of
-   `installers/aws/user-data.nix` with `REV` replaced by a commit of this repo (the repo is private for now, so the
+   `installers/setup/aws/user-data.nix` with `REV` replaced by a commit of this repo (the repo is private for now, so the
    download fails until it's public; until then use the AMI below).
 9. Click **Launch instance**, then **View all instances**, and copy the instance's **Public IPv4 address**.
 10. On your computer, copy your settings in (replace `IP`):

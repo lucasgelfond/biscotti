@@ -17,6 +17,8 @@ enum Tailscale {
         guard let cli, let data = try? run(cli, ["status", "--json"]),
               let status = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let peers = status["Peer"] as? [String: [String: Any]] else { return nil }
-        return peers.values.first { ["iOS", "android"].contains($0["OS"] as? String ?? "") }?["HostName"] as? String
+        // iOS reports its HostName as "localhost"; the MagicDNS name is the one people see.
+        let peer = peers.values.first { ["iOS", "android"].contains($0["OS"] as? String ?? "") }
+        return (peer?["DNSName"] as? String)?.split(separator: ".").first.map(String.init) ?? peer?["HostName"] as? String
     }
 }

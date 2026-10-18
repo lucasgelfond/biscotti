@@ -19,8 +19,8 @@ own. Diagram: [docs/architecture.html](docs/architecture.html) (PNGs next to it)
 ```
 core/            agent, memory, crons, vault, gate, task VMs, plugin API (src/); VM image (vm/); compose (host/)
 plugins/         channels/spectrum, exa, google, github, artifacts, embedding
-installers/      toolchain (NixOS modules), setup-app (the macOS installer for every target), local (Lima on a Mac),
-                 aws, site (biscotti.lucasgelfond.online)
+installers/      setup (the macOS installer for every target, with aws/ and local/), site (biscotti.lucasgelfond.online),
+                 toolchain (NixOS modules)
 tests/           end-to-end tests, compose.yaml for their services, bench/ (computer-use benchmark)
 biscotti.json    which plugins load
 ```
@@ -73,7 +73,7 @@ official remote MCP server. More services: a remote MCP server with a token, or 
 ## Cloud (no Pi)
 
 Task VMs need KVM: bare metal or a VM with nested virtualization. AWS is the cloud target (`flake.nix#aws`, stock
-Firecracker on x86); the installer launches it ([installers/aws/README.md](installers/aws/README.md)).
+Firecracker on x86); the installer launches it ([installers/setup/aws/README.md](installers/setup/aws/README.md)).
 
 ## To-dos
 
