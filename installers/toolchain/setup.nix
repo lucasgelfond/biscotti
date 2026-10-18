@@ -45,13 +45,15 @@ in
       set_default TZ America/New_York
       set_default DB_KEY "$(openssl rand -hex 32)"
       set_default FIRECRACKER_BIN ${firecracker}/bin/firecracker
+      # The installer picks a free name, so it can show the Google redirect URI upfront.
+      set_default TS_HOSTNAME biscotti
 
       docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
       notify() { docker run --rm --network host --env-file "$ENV" biscotti/agent node plugins/channels/spectrum/notify.ts "$1" || true; }
 
       # Tailscale: text the owner the login link.
       if ! tailscale status >/dev/null 2>&1; then
-        tailscale up --hostname=biscotti > "$STATE/tailscale-up.log" 2>&1 &
+        tailscale up --hostname="$(get TS_HOSTNAME)" > "$STATE/tailscale-up.log" 2>&1 &
         until url=$(grep -o 'https://login.tailscale.com/[^ ]*' "$STATE/tailscale-up.log"); do sleep 1; done
         notify "Hi, it's biscotti! To finish setting me up, open this link and add me to your Tailscale: $url"
         until tailscale status >/dev/null 2>&1; do sleep 5; done

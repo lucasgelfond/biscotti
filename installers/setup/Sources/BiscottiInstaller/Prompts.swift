@@ -1,3 +1,5 @@
+import Foundation
+
 /// Ready-to-paste prompts for a browser agent (e.g. Claude for Chrome) that get a service's keys or launch the cloud
 /// machine. The install site uses the same wording.
 enum Prompts {
@@ -9,6 +11,18 @@ enum Prompts {
         "github": "https://github.com/settings/personal-access-tokens/new",
         "aws": "https://console.aws.amazon.com/iam/home#/users",
     ]
+
+    static let redirectPlaceholder = """
+        https://biscotti.<tailnet>.ts.net:9443/oauth/callback, where <tailnet> is my tailnet name from the Tailscale \
+        admin console under DNS (https://login.tailscale.com/admin/dns). If I don't know it yet, skip it: biscotti \
+        texts me the exact address when I first connect Google.
+        """
+
+    /// A service's prompt, with Google's redirect URI filled in once the tailnet is known.
+    static func prompt(_ id: String, redirect: String?) -> String {
+        let text = prompts[id] ?? ""
+        return redirect.map { text.replacingOccurrences(of: redirectPlaceholder, with: "\($0).") } ?? text
+    }
 
     static let prompts = [
         "photon": """
@@ -32,9 +46,7 @@ enum Prompts {
             3. Configure the OAuth consent screen: External, in testing, with my own email as a test user, and the \
             scopes https://www.googleapis.com/auth/gmail.modify and https://www.googleapis.com/auth/calendar.events.
             4. Create an OAuth client ID of type "Web application" with the authorized redirect URI \
-            https://biscotti.<tailnet>.ts.net:9443/oauth/callback, where <tailnet> is my tailnet name from the Tailscale \
-            admin console under DNS (https://login.tailscale.com/admin/dns). If I don't know it yet, skip it: biscotti \
-            texts me the exact address when I first connect Google.
+            \(redirectPlaceholder)
             5. Show me the client ID and client secret so I can copy them.
             """,
         "github": """

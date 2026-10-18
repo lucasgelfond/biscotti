@@ -107,6 +107,8 @@ struct InstallerView: View {
     @State private var phone = UserDefaults.standard.string(forKey: "tailscalePhone")
     @State private var phoneConfirmed = false
     @State private var askedContacts = false
+    // `-tailnet tail0000.ts.net` stands in for a signed-in Mac in screenshots.
+    @State private var tailnet = UserDefaults.standard.string(forKey: "tailnet")
     @State private var skipped: Set<Step> = []
     @State private var skippedPlugins: [String] = []
     @State private var hasLima = Mac.tool("limactl") != nil
@@ -231,6 +233,7 @@ struct InstallerView: View {
                     Link("Install Tailscale", destination: Tailscale.downloadMac)
                 }
             }
+            TextField("biscotti's name on your tailnet", text: $settings.tailscaleName)
             LabeledContent("On your phone") {
                 if let phone {
                     Label(phone, systemImage: "checkmark.circle.fill")
@@ -265,6 +268,7 @@ struct InstallerView: View {
     private func checkTailscale() {
         tailscaleOnMac = Tailscale.isInstalled
         if phone == nil, !Self.noAutofill, let found = Tailscale.phone() { phone = found }
+        if tailnet == nil, !Self.noAutofill, let found = Tailscale.tailnet() { (tailnet, settings.tailscaleName) = found }
     }
 
     private var wifi: some View {
@@ -371,6 +375,16 @@ struct InstallerView: View {
         case "google":
             TextField("Google OAuth client ID", text: $settings.googleClientID)
             SecureField("Google OAuth client secret", text: $settings.googleClientSecret)
+            if let redirect {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(redirect).font(.callout.monospaced()).textSelection(.enabled)
+                        Spacer()
+                        Button(copied == "redirect" ? "Copied" : "Copy") { copy(redirect, as: "redirect") }.buttonStyle(.link)
+                    }
+                    Text("Add this under Authorized redirect URIs on your OAuth client").font(.caption).foregroundStyle(.secondary)
+                }
+            }
         case "github": SecureField("GitHub token (fine-grained)", text: $settings.githubToken)
         default: EmptyView()
         }
@@ -546,9 +560,12 @@ struct InstallerView: View {
     }
 
     private func copyPromptButton(_ id: String) -> some View {
-        Button(copied == id ? "Copied" : "Copy setup prompt") { copy(Prompts.prompts[id] ?? "", as: id) }
+        Button(copied == id ? "Copied" : "Copy setup prompt") { copy(Prompts.prompt(id, redirect: redirect), as: id) }
             .buttonStyle(.link)
     }
+
+    /// Google's OAuth redirect URI, once this Mac's tailnet is known.
+    private var redirect: String? { tailnet.map { "https://\(settings.tailscaleName).\($0):9443/oauth/callback" } }
 
     private func copy(_ text: String, as id: String) {
         NSPasteboard.general.clearContents()

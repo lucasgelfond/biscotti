@@ -9,6 +9,7 @@ struct Settings {
     var wifiPassword = ""
     var wifiCountry = Locale.current.region?.identifier ?? "US"
     var sshKey = Settings.firstSSHKey()
+    var tailscaleName = "biscotti"
     var phone = ""
     var email = ""
     var llmBaseURL = ""
@@ -113,6 +114,7 @@ struct Settings {
             case "WIFI_NAME": wifiName = value
             case "WIFI_PASSWORD": wifiPassword = value
             case "SSH_KEY": sshKey = value
+            case "TS_HOSTNAME": tailscaleName = value
             case "SPECTRUM_PROJECT_ID": photonID = value
             case "SPECTRUM_PROJECT_SECRET": photonSecret = value
             case "EXA_API_KEY": exaKey = value
@@ -129,7 +131,7 @@ struct Settings {
         [
             ("OWNER", phone), ("OWNER_EMAIL", email), ("LLM_BASE_URL", llmBaseURL), ("LLM_API_KEY", llmKey), ("MODEL", model),
             ("SPECTRUM_PROJECT_ID", photonID), ("SPECTRUM_PROJECT_SECRET", photonSecret),
-            ("EXA_API_KEY", exaKey), ("TZ", TimeZone.current.identifier),
+            ("EXA_API_KEY", exaKey), ("TZ", TimeZone.current.identifier), ("TS_HOSTNAME", tailscaleName),
             ("GOOGLE_CLIENT_ID", googleClientID), ("GOOGLE_CLIENT_SECRET", googleClientSecret), ("GITHUB_TOKEN", githubToken),
         ].filter { !$0.1.isEmpty }.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
     }
