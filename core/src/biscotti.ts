@@ -6,7 +6,7 @@ import { createAgent } from "./agent.ts";
 import { createGate } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import type { Channel, Context, Plugin } from "./plugin.ts";
-import { taskTool } from "./tasks.ts";
+import { SLOTS, taskTool, taskVms } from "./tasks.ts";
 
 // Wiring: the plugins, the gate, the agent, and the owner's channel. Settings come from the environment.
 
@@ -16,7 +16,6 @@ function env(name: string) {
   return value;
 }
 
-const VM_SLOTS = [1, 2, 3];
 
 type Message = { text: string; react(emoji: string): Promise<unknown> };
 
@@ -39,7 +38,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const gateServer = await gate.listen("127.0.0.1", opts.gatePort ?? 0);
   const gateUrl = `http://127.0.0.1:${(gateServer.address() as AddressInfo).port}`;
   const vmDir = process.env.VM_DIR;
-  if (vmDir) for (const slot of VM_SLOTS) await gate.listen(`10.200.${slot}.1`, 80);
+  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80);
 
   // The owner's latest message, for tapbacks.
   let latest: Message | undefined;
@@ -58,8 +57,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const tasks = vmDir
     ? [
         taskTool(
-          vmDir,
-          env("FIRECRACKER"),
+          taskVms(vmDir, env("FIRECRACKER")),
           (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot),
           (slot) => liveDesktop && void channel.send({ text: `Working on it. Watch or take over: ${liveDesktop}:${10440 + slot}/vnc.html` }),
         ),

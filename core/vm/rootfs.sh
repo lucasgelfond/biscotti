@@ -47,8 +47,8 @@ url=$(sed -n 's/.*biscotti\.url=\([^ ]*\).*/\1/p' /proc/cmdline)
 # Dev hook: `biscotti.run=<script>` runs a script once X is up, output to the console.
 run=$(sed -n 's/.*biscotti\.run=\([^ ]*\).*/\1/p' /proc/cmdline)
 [ -n "$run" ] && (until xdpyinfo -display :1 >/dev/null 2>&1; do sleep 0.2; done; sh "$run" > /dev/console 2>&1) &
-# Tasks: one pi run per connection on port 4000 (goal in, JSON events out), as the desktop user.
-socat -t 3600 TCP-LISTEN:4000,fork,reuseaddr EXEC:/usr/local/bin/biscotti-task,su=cua &
+# The task agent on port 4000 (goal in, JSON events out), as the desktop user.
+runuser -u cua -- env HOME=/home/cua /usr/local/bin/biscotti-task > /dev/console 2>&1 &
 exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
 EOF
 chmod +x "$DIR/sbin/biscotti-init"

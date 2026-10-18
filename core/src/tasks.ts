@@ -1,21 +1,24 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, rmSync } from "node:fs";
+import { createReadStream, existsSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import { Type } from "typebox";
 
-// Task VMs: each task restores a fresh desktop VM from the snapshot (cua-vm/snapshots.sh) in a free slot, runs one pi
-// task in it, and throws it away. Slots are network namespaces (deploy/sandbox-net.sh) in which every VM looks the
-// same, so up to three run at once; further tasks wait for a slot.
+// Task VMs: each task gets a fresh desktop VM restored from the snapshot (core/vm/snapshots.sh) in a free slot, runs one
+// pi task in it, and throws it away. Slots are network namespaces (installers/toolchain/net.nix) in which every VM
+// looks the same, so up to three run at once; further tasks wait for a slot. One VM is always restored ahead of time,
+// so a task starts without waiting on a restore.
 
 const TASK_TIMEOUT_MS = 30 * 60_000;
-const free = [1, 2, 3];
-const waiting: ((slot: number) => void)[] = [];
-const acquire = () => new Promise<number>((resolve) => (free.length ? resolve(free.shift()!) : waiting.push(resolve)));
-const release = (slot: number) => (waiting.length ? waiting.shift()!(slot) : free.push(slot));
+export const SLOTS = [1, 2, 3];
+
+interface Vm {
+  slot: number;
+  stop(): Promise<void>;
+}
 
 export interface TaskResult {
   report: string;
@@ -23,21 +26,65 @@ export interface TaskResult {
   screenshot?: Buffer;
 }
 
-// `onStart` hears which slot the task got, e.g. to share its live desktop.
-export async function runTask(vmDir: string, firecracker: string, goal: string, onStart?: (slot: number) => void) {
-  const slot = await acquire();
-  try {
-    onStart?.(slot);
-    return await runInVm(vmDir, firecracker, goal, slot);
-  } finally {
-    release(slot);
+export function taskVms(vmDir: string, firecracker: string) {
+  const free = [...SLOTS];
+  const waiting: ((slot: number) => void)[] = [];
+  const acquire = () => new Promise<number>((resolve) => (free.length ? resolve(free.shift()!) : waiting.push(resolve)));
+  let warm: Promise<Vm> | undefined;
+
+  function release(slot: number) {
+    if (waiting.length) return waiting.shift()!(slot);
+    free.push(slot);
+    warmUp();
   }
+
+  // Restores a VM in a free slot, unless one is already waiting.
+  function warmUp() {
+    if (warm || !free.length) return;
+    const slot = free.shift()!;
+    warm = restore(vmDir, firecracker, slot);
+    warm.catch((err) => {
+      console.error(`restoring a VM in slot ${slot}: ${err.message}`);
+      warm = undefined;
+      release(slot);
+    });
+  }
+
+  async function take() {
+    const ready = warm && (await warm.catch(() => undefined));
+    warm = undefined;
+    return ready ?? restore(vmDir, firecracker, await acquire());
+  }
+
+  // `onStart` hears which slot the task got, e.g. to share its live desktop.
+  async function run(goal: string, onStart?: (slot: number) => void): Promise<TaskResult> {
+    const vm = await take();
+    warmUp();
+    try {
+      onStart?.(vm.slot);
+      return await runPi(`10.200.${vm.slot}.2`, goal);
+    } finally {
+      await vm.stop();
+      release(vm.slot);
+    }
+  }
+
+  // The snapshot's memory, read once so restores and first tasks don't wait on the disk.
+  createReadStream(`${vmDir}/desktop.mem`).on("error", () => {}).resume();
+  warmUp();
+  return { run };
 }
 
-async function runInVm(vmDir: string, firecracker: string, goal: string, slot: number): Promise<TaskResult> {
+async function restore(vmDir: string, firecracker: string, slot: number): Promise<Vm> {
   const sock = `/tmp/fc-${slot}.sock`;
   rmSync(sock, { force: true });
   const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, firecracker, "--api-sock", sock], { stdio: "ignore" });
+  // Wait for the exit too: the next VM in this slot can't open the tap until this one has let go of it.
+  const stop = async () => {
+    const exited = once(vm, "exit");
+    vm.kill("SIGKILL");
+    await exited;
+  };
   try {
     while (!existsSync(sock)) await new Promise((r) => setTimeout(r, 20));
     await api(sock, "PUT", "/snapshot/load", {
@@ -45,12 +92,10 @@ async function runInVm(vmDir: string, firecracker: string, goal: string, slot: n
       mem_backend: { backend_type: "File", backend_path: `${vmDir}/desktop.mem` },
       resume_vm: true,
     });
-    return await runPi(`10.200.${slot}.2`, goal);
-  } finally {
-    // Wait for the exit too: the next VM can't open the tap until this one has let go of it.
-    const exited = once(vm, "exit");
-    vm.kill("SIGKILL");
-    await exited;
+    return { slot, stop };
+  } catch (err) {
+    await stop();
+    throw err;
   }
 }
 
@@ -91,12 +136,7 @@ function runPi(host: string, goal: string) {
 }
 
 // Starts a task and returns right away; `onReport` gets the report when the task ends.
-export function taskTool(
-  vmDir: string,
-  firecracker: string,
-  onReport: (goal: string, result: TaskResult) => void,
-  onStart?: (slot: number) => void,
-) {
+export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: string, result: TaskResult) => void, onStart?: (slot: number) => void) {
   return defineTool({
     name: "task",
     label: "Task",
@@ -104,7 +144,7 @@ export function taskTool(
       "Start a task in a fresh, disposable Linux VM with a desktop, browser, shell and internet, for anything that needs a website, a program or files. Returns right away; the report arrives later as a message starting 'Task report'. The task agent sees only the goal, so make it complete.",
     parameters: Type.Object({ goal: Type.String() }),
     async execute(_id, { goal }) {
-      runTask(vmDir, firecracker, goal, onStart).then(
+      vms.run(goal, onStart).then(
         (result) => onReport(goal, result),
         (err) => onReport(goal, { report: `The task failed: ${err.message}` }),
       );

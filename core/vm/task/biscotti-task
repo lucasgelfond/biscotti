@@ -1,9 +1,57 @@
-#!/bin/sh
-# One task per connection (see /sbin/biscotti-init): the goal arrives on stdin, pi's JSON events go to stdout.
-export HOME=/home/cua
-goal=$(cat)
-pi --mode json --no-session --model biscotti/task \
-  --append-system-prompt "You are a task agent in a disposable Debian VM with internet access and a desktop (DISPLAY=:1; sudo works) that the desktop tools see and control: Firefox is the app firefox-esr, and typing or key presses need delivery_mode foreground. Do the task, then end with a short report of what you did and found; the report and a screenshot of the final screen are all the requester sees. For visual work (a site, a seat map, a form), leave the relevant view on screen; for shell-only work, don't spend time arranging the screen. The biscotti tools are the owner's: web search, their accounts (mail, calendar, GitHub, …) and saved secrets (secrets_list, secret_get for logins and cards); some wait while the owner approves them." \
-  "$goal"
-# The final screen, for the owner's phone.
-DISPLAY=:1 scrot -o /tmp/screen.png 2>/dev/null && printf '{"type":"screenshot","png":"%s"}\n' "$(base64 -w0 /tmp/screen.png)"
+#!/usr/bin/env node
+// The VM's task agent: pi, started at boot and waiting in RPC mode, so the snapshot holds it loaded and a restored VM
+// starts on a task at once. One task per VM: the goal arrives on port 4000, pi's JSON events go back, then a
+// screenshot of the final screen.
+import { execFileSync, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createServer } from "node:net";
+
+const PROMPT =
+  "You are a task agent in a disposable Debian VM with internet access and a desktop (DISPLAY=:1; sudo works) that the desktop tools see and control: Firefox is the app firefox-esr, and typing or key presses need delivery_mode foreground. Do the task, then end with a short report of what you did and found; the report and a screenshot of the final screen are all the requester sees. For visual work (a site, a seat map, a form), leave the relevant view on screen; for shell-only work, don't spend time arranging the screen. The biscotti tools are the owner's: web search, their accounts (mail, calendar, GitHub, …) and saved secrets (secrets_list, secret_get for logins and cards); some wait while the owner approves them.";
+
+// The desktop tools' token appears once cua-spacesd is up.
+while (!existsSync("/run/cua/env-token")) await new Promise((r) => setTimeout(r, 100));
+
+const pi = spawn("pi", ["--mode", "rpc", "--no-session", "--model", "biscotti/task", "--append-system-prompt", PROMPT], {
+  stdio: ["pipe", "pipe", "inherit"],
+});
+const send = (command) => pi.stdin.write(`${JSON.stringify(command)}\n`);
+
+// pi's stdout as JSON records, split on LF only.
+const listeners = new Set();
+let buffer = "";
+pi.stdout.setEncoding("utf8").on("data", (chunk) => {
+  buffer += chunk;
+  for (let i = buffer.indexOf("\n"); i >= 0; i = buffer.indexOf("\n")) {
+    const line = buffer.slice(0, i);
+    buffer = buffer.slice(i + 1);
+    if (line.trim()) for (const listener of listeners) listener(line, JSON.parse(line));
+  }
+});
+
+// Ready once pi answers.
+await new Promise((resolve) => {
+  const ready = (_, record) => record.id === "ready" && (listeners.delete(ready), resolve());
+  listeners.add(ready);
+  send({ id: "ready", type: "get_state" });
+});
+
+createServer({ allowHalfOpen: true }, (socket) => {
+  let goal = "";
+  socket.setEncoding("utf8").on("data", (d) => (goal += d));
+  socket.on("end", () => {
+    const forward = (line, record) => {
+      if (record.type !== "response") socket.write(`${line}\n`);
+      if (record.type !== "agent_settled") return;
+      listeners.delete(forward);
+      try {
+        execFileSync("scrot", ["-o", "/tmp/screen.png"], { env: { ...process.env, DISPLAY: ":1" } });
+        const png = execFileSync("base64", ["-w0", "/tmp/screen.png"], { encoding: "utf8" });
+        socket.write(`${JSON.stringify({ type: "screenshot", png })}\n`);
+      } catch {}
+      socket.end();
+    };
+    listeners.add(forward);
+    send({ type: "prompt", message: goal });
+  });
+}).listen(4000, "0.0.0.0");

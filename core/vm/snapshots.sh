@@ -34,6 +34,8 @@ api PUT /actions '{"action_type":"InstanceStart"}'
 for port in 4000 6901 3211; do
   until (exec 3<>"/dev/tcp/$slot/$port") 2>/dev/null; do sleep 0.2; done
 done
+# Let idle keep-alive connections to the gate close, so no restored VM starts with a dead one.
+sleep 6
 api PATCH /vm '{"state":"Paused"}'
 api PUT /snapshot/create "{\"snapshot_type\":\"Full\",\"snapshot_path\":\"$OUT/desktop.snap\",\"mem_file_path\":\"$OUT/desktop.mem\"}"
 kill "$pid"
