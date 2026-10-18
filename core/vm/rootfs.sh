@@ -35,8 +35,8 @@ echo nameserver 1.1.1.1 > /etc/resolv.conf
 cat /proc/net/route /etc/resolv.conf > /dev/console
 # Track the host clock through KVM's PTP device, stepping on any jump (e.g. after a snapshot restore).
 [ -e /dev/ptp0 ] && printf 'refclock PHC /dev/ptp0 poll -2 dpoll -2\nmakestep 0.5 -1\n' > /etc/chrony/chrony.conf && chronyd
-# The gate is the VM's gateway.
-hostname sandbox; printf '127.0.0.1 localhost sandbox\n172.16.0.1 gate\n' > /etc/hosts
+# The gate is the VM's gateway. Ad and tracker hosts resolve nowhere: ticketing pages load several times faster.
+hostname sandbox; printf '127.0.0.1 localhost sandbox\n172.16.0.1 gate\n' > /etc/hosts; cat /etc/hosts.block >> /etc/hosts
 # Mirror Cua's service logs to the serial console so the host can see them.
 (while :; do echo "heartbeat $(cut -d" " -f1 /proc/uptime) $(date +%T)"; sleep 2; done) > /dev/console &
 (sleep 3; tail -qF /var/log/supervisor/*.log) > /dev/console 2>&1 &

@@ -35,6 +35,11 @@ RUN case "$TARGETARCH" in \
     echo "$sum  /tmp/node.tar.xz" | sha256sum -c - && \
     tar -xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz && rm /tmp/node.tar.xz
 
+# Ad and tracker blocklist (StevenBlack/hosts at a pinned commit), appended to /etc/hosts at boot.
+RUN curl -fsSL -o /etc/hosts.block \
+      https://raw.githubusercontent.com/StevenBlack/hosts/2025dea10a1d17c41acf1035056e5c4a2913ebfc/hosts && \
+    echo "b83fc7acc934248ea4995dac213aa0ebb92d6824fd8469c1c20327b445db9051  /etc/hosts.block" | sha256sum -c -
+
 # The task agent: pi and Playwright's MCP server from a lockfile, reaching the model through the host's gate (which
 # adds the key).
 COPY task/package.json task/package-lock.json /opt/pi/
