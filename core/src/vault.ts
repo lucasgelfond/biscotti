@@ -27,9 +27,9 @@ input:not([type=checkbox]){display:block;width:100%;font:inherit;padding:.5rem;b
 }
 
 export default {
-  prompt: `Secrets: \`vault_list\` shows the saved logins, cards and licenses. Whenever one is needed (logging in, checking
-out, or the user asking about it), call \`secret_get\`; it asks the user itself when the secret calls for it. Don't
-repeat full passwords or card numbers in texts. To save a new one, \`secret_request\` gives a one-time form link.`,
+  prompt: `Vault: \`vault_list\` shows the saved logins, cards and licenses. Whenever one is needed (logging in, checking
+out, or the user asking about it), call \`vault_get\`; it asks the user itself when the secret calls for it. Don't
+repeat full passwords or card numbers in texts. To save a new one, \`vault_request\` gives a one-time form link.`,
 
   async tools(ctx) {
     const { db } = ctx;
@@ -53,7 +53,7 @@ repeat full passwords or card numbers in texts. To save a new one, \`secret_requ
       forms.delete(token);
       save(pending.name, Object.fromEntries(pending.fields.map((f) => [f, body.get(`f:${f}`) ?? ""])), body.has("confirm"));
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end("<p style='font:17px system-ui'>Saved.</p>");
-      void ctx.deliver(`Secret "${pending.name}" was saved by the user.`);
+      void ctx.deliver(`"${pending.name}" was saved to the vault by the user.`);
     }).listen(Number(process.env.VAULT_PORT ?? PORT), "127.0.0.1"));
 
     return localTools([
