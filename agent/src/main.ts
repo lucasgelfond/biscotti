@@ -4,6 +4,7 @@ import { createAgent } from "./agent.ts";
 import { executor } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
+import { ensureVaultAccount } from "./vault.ts";
 
 function env(name: string) {
   const value = process.env[name];
@@ -13,6 +14,10 @@ function env(name: string) {
 
 const dir = process.env.DATA_DIR ?? "/data";
 const db = openDb(`${dir}/biscotti.db`);
+if (process.env.VAULT_URL) {
+  const account = await ensureVaultAccount(process.env.VAULT_URL, env("VAULT_EMAIL"), env("VAULT_PASSWORD"));
+  console.log(`vault account ${account}`);
+}
 const agent = await createAgent({
   db,
   dir,

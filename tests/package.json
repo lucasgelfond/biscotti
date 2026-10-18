@@ -4,10 +4,11 @@
   "type": "module",
   "packageManager": "pnpm@10.29.1",
   "scripts": {
-    "embeddings": "docker compose up -d --build --wait",
+    "services": "docker compose up -d --build --wait",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@bitwarden/cli": "2026.9.1",
     "vitest": "5.0.3"
   }
 }
