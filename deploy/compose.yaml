@@ -12,6 +12,8 @@ services:
       SPECTRUM_PROJECT_SECRET: ${SPECTRUM_PROJECT_SECRET:?}
       OWNER: ${OWNER:?}
       EMBEDDINGS_URL: http://embeddings:8080
+      EXECUTOR_URL: http://executor:4400/mcp
+      EXECUTOR_API_KEY: ${EXECUTOR_API_KEY:?}
       TZ: ${TZ:-America/New_York}
     volumes: [agent:/data]
     restart: unless-stopped

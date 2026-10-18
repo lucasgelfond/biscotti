@@ -5,6 +5,7 @@ import {
   ModelRuntime,
   SessionManager,
   SettingsManager,
+  type ExtensionFactory,
   type FileEntry,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -18,10 +19,17 @@ export interface AgentOptions {
   dir: string;
   model?: string;
   tools: ToolDefinition[];
+  extensions?: ExtensionFactory[];
 }
 
 // One continuous conversation, rebuilt from the transcripts table and compacted by pi as it grows.
-export async function createAgent({ db, dir, model = "vercel-ai-gateway/anthropic/claude-opus-5.5", tools }: AgentOptions) {
+export async function createAgent({
+  db,
+  dir,
+  model = "vercel-ai-gateway/anthropic/claude-opus-5.5",
+  tools,
+  extensions = [],
+}: AgentOptions) {
   const [provider, ...rest] = model.split("/");
   const modelRuntime = await ModelRuntime.create({ authPath: `${dir}/auth.json`, modelsPath: null });
   const resolved = modelRuntime.getModel(provider, rest.join("/"));
@@ -32,6 +40,7 @@ export async function createAgent({ db, dir, model = "vercel-ai-gateway/anthropi
     agentDir: dir,
     systemPrompt,
     noExtensions: true,
+    extensionFactories: extensions,
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
@@ -51,6 +60,7 @@ export async function createAgent({ db, dir, model = "vercel-ai-gateway/anthropi
     noTools: "builtin",
     customTools: tools,
   });
+  await session.bindExtensions({});
 
   function save() {
     const manager = session.sessionManager;

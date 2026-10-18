@@ -1,6 +1,7 @@
 import { Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 import { createAgent } from "./agent.ts";
+import { executor } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
 
@@ -17,6 +18,7 @@ const agent = await createAgent({
   dir,
   model: process.env.MODEL,
   tools: memoryTools(db, env("EMBEDDINGS_URL")),
+  extensions: process.env.EXECUTOR_URL ? executor(process.env.EXECUTOR_URL, env("EXECUTOR_API_KEY")) : [],
 });
 
 const owner = env("OWNER");
