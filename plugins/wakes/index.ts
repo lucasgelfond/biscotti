@@ -3,13 +3,11 @@ import { Cron } from "croner";
 import { eq, sql } from "drizzle-orm";
 import { integer, sqliteTable, text as column } from "drizzle-orm/sqlite-core";
 
-// Wakes: the agent saves a prompt for itself with a schedule; when it comes due, the prompt returns to the conversation
-// as a message, so the agent does it (reminding the owner, or starting a task and summarizing) like anything texted.
+// Prompts the agent schedules for itself; when due, they come back as a message.
 
 const wakes = sqliteTable("wakes", {
   id: integer().primaryKey({ autoIncrement: true }),
   label: column().notNull(),
-  // A cron expression, or a local date and time for once.
   when: column().notNull(),
   prompt: column().notNull(),
   createdAt: integer("created_at", { mode: "timestamp" })
@@ -24,7 +22,7 @@ const CHECK_MS = 30_000;
 const timezone = process.env.TZ ?? "America/New_York";
 const local = (d: Date | null | undefined) => d?.toLocaleString("en-US", { timeZone: timezone });
 
-// The next time a wake is due after its last run (or its creation); null once a one-time wake has run.
+// Null once a one-time wake has run.
 const nextRun = (wake: Wake) => new Cron(wake.when, { timezone }).nextRun(wake.lastRun ?? wake.createdAt);
 
 export default {
@@ -83,7 +81,6 @@ export default {
     ]);
   },
 
-  // Hands each due wake to the conversation. One-time wakes are removed once they've run.
   async start({ db, deliver }) {
     setInterval(async () => {
       const now = new Date();

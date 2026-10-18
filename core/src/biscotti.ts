@@ -8,14 +8,12 @@ import { memoryTools, openDb } from "./memory.ts";
 import type { Channel, Context, Plugin } from "./plugin.ts";
 import { SLOTS, taskTool, taskVms } from "./tasks.ts";
 
-// Wiring: the plugins, the gate, the agent, and the owner's channel. Settings come from the environment.
 
 function env(name: string) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is not set`);
   return value;
 }
-
 
 type Message = { text: string; react(emoji: string): Promise<unknown> };
 
@@ -40,7 +38,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const vmDir = process.env.VM_DIR;
   if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80);
 
-  // The owner's latest message, for tapbacks.
   let latest: Message | undefined;
   const react = defineTool({
     name: "react",
@@ -66,7 +63,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const prompt = [readFileSync(new URL("../SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
   const agent = await createAgent({ db, dir, gateUrl, prompt, tools: [...memoryTools(db, recalls), react, ...tasks] });
 
-  // Sends a reply. A line that's only a link goes as its own message, so it expands into a preview.
+  // A link on its own line goes as its own message, so it expands into a preview.
   async function send(reply: string) {
     const lines = reply.split("\n");
     const isLink = (line: string) => /^https?:\/\/\S+$/.test(line.trim());
@@ -85,7 +82,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
     }
   }
 
-  // One of the owner's messages: the answer to a pending question, or something for the agent.
   async function handle(message: Message) {
     if (gate.answer(message.text)) return;
     latest = message;

@@ -1,14 +1,13 @@
 import { type Plugin } from "@biscotti/core";
 import { sql } from "drizzle-orm";
 
-// Meaning-based recall: each memory's embedding (bge-small, on llama.cpp's server from compose.yaml), ranked by
-// similarity to the query.
+// Recall by meaning: bge-small embeddings from llama.cpp (compose.yaml).
 
-const URL = process.env.EMBEDDINGS_URL ?? "http://127.0.0.1:8090";
+const BASE = process.env.EMBEDDINGS_URL ?? "http://127.0.0.1:8090";
 const LIMIT = 20;
 
 async function embed(input: string): Promise<Float32Array> {
-  const res = await fetch(`${URL}/v1/embeddings`, {
+  const res = await fetch(`${BASE}/v1/embeddings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ input }),
@@ -18,7 +17,7 @@ async function embed(input: string): Promise<Float32Array> {
   return Float32Array.from(data[0].embedding);
 }
 
-// bge-small embeddings are normalized, so the dot product is the cosine similarity.
+// Normalized, so the dot product is cosine similarity.
 function dot(a: Float32Array, b: Float32Array) {
   let sum = 0;
   for (let i = 0; i < a.length; i++) sum += a[i] * b[i];

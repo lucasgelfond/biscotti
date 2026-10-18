@@ -7,10 +7,8 @@ import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import { Type } from "typebox";
 
-// Task VMs: each task gets a fresh desktop VM restored from the snapshot (core/vm/snapshots.sh) in a free slot, runs one
-// pi task in it, and throws it away. Slots are network namespaces (installers/toolchain/net.nix) in which every VM
-// looks the same, so up to three run at once; further tasks wait for a slot. One VM is always restored ahead of time,
-// so a task starts without waiting on a restore.
+// Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces). One VM is
+// always restored ahead of time.
 
 const TASK_TIMEOUT_MS = 30 * 60_000;
 export const SLOTS = [1, 2, 3];
@@ -22,7 +20,6 @@ interface Vm {
 
 export interface TaskResult {
   report: string;
-  // The VM's final screen, as PNG.
   screenshot?: Buffer;
 }
 
@@ -38,7 +35,6 @@ export function taskVms(vmDir: string, firecracker: string) {
     warmUp();
   }
 
-  // Restores a VM in a free slot, unless one is already waiting.
   function warmUp() {
     if (warm || !free.length) return;
     const slot = free.shift()!;
@@ -56,7 +52,6 @@ export function taskVms(vmDir: string, firecracker: string) {
     return ready ?? restore(vmDir, firecracker, await acquire());
   }
 
-  // `onStart` hears which slot the task got, e.g. to share its live desktop.
   async function run(goal: string, onStart?: (slot: number) => void): Promise<TaskResult> {
     const vm = await take();
     warmUp();
@@ -69,7 +64,7 @@ export function taskVms(vmDir: string, firecracker: string) {
     }
   }
 
-  // The snapshot's memory, read once so restores and first tasks don't wait on the disk.
+  // Pull the snapshot's memory into the page cache.
   createReadStream(`${vmDir}/desktop.mem`).on("error", () => {}).resume();
   warmUp();
   return { run };
@@ -79,7 +74,7 @@ async function restore(vmDir: string, firecracker: string, slot: number): Promis
   const sock = `/tmp/fc-${slot}.sock`;
   rmSync(sock, { force: true });
   const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, firecracker, "--api-sock", sock], { stdio: "ignore" });
-  // Wait for the exit too: the next VM in this slot can't open the tap until this one has let go of it.
+  // The next VM in this slot can't open the tap until this one has exited.
   const stop = async () => {
     const exited = once(vm, "exit");
     vm.kill("SIGKILL");
@@ -112,8 +107,7 @@ function api(socketPath: string, method: string, path: string, body: object) {
   });
 }
 
-// Sends the goal to the VM's task listener and reads pi's JSON events: the last assistant text is the report, and a
-// final screenshot line follows pi's output.
+// The goal goes to pi in the VM; its last assistant text is the report, then a screenshot follows.
 function runPi(host: string, goal: string) {
   return new Promise<TaskResult>((resolve, reject) => {
     const socket = connect({ host, port: 4000 }, () => socket.end(goal));
@@ -135,7 +129,6 @@ function runPi(host: string, goal: string) {
   });
 }
 
-// Starts a task and returns right away; `onReport` gets the report when the task ends.
 export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: string, result: TaskResult) => void, onStart?: (slot: number) => void) {
   return defineTool({
     name: "task",

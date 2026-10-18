@@ -3,9 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { localTools, text, type Plugin } from "@biscotti/core";
 
-// Web pages the agent makes (a comparison, an itinerary, a chart) and texts as a link. They're served publicly
-// (Tailscale Funnel to PORT) under unguessable names, so Photon can fetch the preview tags added here: a texted link
-// expands into a card with a title, summary and image.
+// Pages the agent texts as links. Public (Funnel) under unguessable names, so iMessage can fetch the preview tags.
 
 const PORT = 8082;
 // The biscotti photo by Geertje Caliguire on Unsplash.
@@ -62,7 +60,6 @@ as a separate message that expands into a card, so keep the rest of the reply to
     ]);
   },
 
-  // Serves only published pages by exact name: nothing to list or guess.
   async start(ctx) {
     const dir = `${ctx.dir}/pages`;
     createServer((req, res) => {

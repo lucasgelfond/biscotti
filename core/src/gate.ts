@@ -4,8 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Tools } from "./plugin.ts";
 
-// The gate: the one place keys live and tools are served. The main agent and task VMs reach the model (/llm) and
-// every plugin's tools (/mcp) only through here, and it asks the owner before anything that needs a yes.
+// The gate holds every key: the model at /llm, every plugin's tools at /mcp, and the owner's approvals.
 
 export const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)\b/i;
 export const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)\b/i;
@@ -13,7 +12,7 @@ const ANSWER_TIMEOUT_MS = 10 * 60_000;
 
 export function createGate(opts: {
   gatewayKey: string;
-  // The model names callers may use, mapped to AI Gateway model ids (e.g. main, task).
+  // Model names callers may use (main, task) -> AI Gateway ids.
   models: Record<string, string>;
   send: (text: string) => Promise<void>;
 }) {
@@ -21,7 +20,7 @@ export function createGate(opts: {
   let byTool = new Map<string, Tools>();
   let pending: ((yes: boolean) => void) | undefined;
 
-  // Asks the owner; their next yes or no answers it (one question, and one yes, at a time).
+  // One question at a time; the owner's next yes or no answers it.
   function ask(question: string) {
     void opts.send(question);
     return new Promise<boolean>((resolve) => {
@@ -35,7 +34,6 @@ export function createGate(opts: {
     });
   }
 
-  // Takes the owner's message as the answer to a pending question, if it is one.
   function answer(message: string) {
     const said = message.trim();
     if (!pending || !(YES.test(said) || NO.test(said))) return false;

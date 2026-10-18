@@ -7,8 +7,7 @@ import { Type } from "typebox";
 import type { Recall } from "./plugin.ts";
 import { memories, transcripts } from "./schema.ts";
 
-// Memory: every message of the one long conversation and the facts the agent saves (schema.ts), searched by keyword
-// (FTS5). Recall plugins (e.g. embeddings) add their rankings, fused by reciprocal rank.
+// Keyword search (FTS5) over transcripts and saved facts; Recall plugins' rankings are fused in by reciprocal rank.
 
 export function openDb(path: string) {
   const db = drizzle(new Database(path));
@@ -18,7 +17,6 @@ export function openDb(path: string) {
 
 export type Db = ReturnType<typeof openDb>;
 
-// A message entry's plain text, for transcripts_fts; null for entries that aren't messages.
 export function searchableText(entry: FileEntry): string | null {
   if (entry.type !== "message") return null;
   const { role, content } = entry.message as { role: string; content: unknown };
@@ -28,7 +26,7 @@ export function searchableText(entry: FileEntry): string | null {
   return joined ? `${role}: ${joined}` : null;
 }
 
-// Each word as a quoted FTS5 term, OR-ed, so user text can never be parsed as query syntax.
+// Quoted terms, so user text is never parsed as FTS5 syntax.
 const ftsQuery = (s: string) => (s.match(/[\p{L}\p{N}]+/gu) ?? []).map((t) => `"${t}"`).join(" OR ");
 
 const reply = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });

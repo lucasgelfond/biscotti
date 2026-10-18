@@ -2,8 +2,7 @@ import type { Channel, Plugin } from "@biscotti/core";
 import { attachment, Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 
-// iMessage through Photon's Spectrum (which also speaks Telegram, Slack, WhatsApp, …). Only the owner's texts come
-// through, and their conversation is opened up front so the agent can text first.
+// iMessage through Photon's Spectrum. Only the owner's texts come through.
 export async function connect(env: (name: string) => string): Promise<Channel> {
   const app = await Spectrum({
     projectId: env("SPECTRUM_PROJECT_ID"),

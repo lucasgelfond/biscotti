@@ -3,8 +3,7 @@ import { createServer } from "node:http";
 import { localTools, text, type Plugin } from "@biscotti/core";
 import { sql } from "drizzle-orm";
 
-// Secrets (logins, cards, licenses), encrypted with SECRETS_KEY in the agent's database. The owner enters each one
-// through a one-time form on the tailnet, never in chat; ones marked "ask me" need the owner's yes before every use.
+// Logins and cards, AES-GCM encrypted in SQLite. Entered through one-time forms on the tailnet, never in chat.
 
 const PORT = 4791;
 const FORM_TTL_MS = 30 * 60_000;
@@ -52,7 +51,6 @@ repeat full passwords or card numbers in texts. To save a new one, \`secret_requ
       return JSON.parse(Buffer.concat([decipher.update(row.data.subarray(0, -16)), decipher.final()]).toString("utf8"));
     }
 
-    // One-time forms by token, served on 127.0.0.1 (Tailscale Serve puts them on the tailnet).
     const forms = new Map<string, { name: string; fields: string[] }>();
     createServer(async (req, res) => {
       const token = req.url?.slice(1) ?? "";
