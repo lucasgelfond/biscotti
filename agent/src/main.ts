@@ -90,6 +90,9 @@ const app = await Spectrum({
   projectSecret: env("SPECTRUM_PROJECT_SECRET"),
   providers: [imessage.config()],
 });
+// Open the owner's conversation up front, so the agent can text first (task reports after a restart, setup links).
+const im = imessage(app);
+ownerSpace = await im.space.create(await im.user(owner));
 
 for await (const [space, message] of app.messages) {
   if (message.direction === "outbound" || message.content.type !== "text") continue;
