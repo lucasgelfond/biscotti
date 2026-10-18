@@ -1,5 +1,13 @@
 {
   "mcpServers": {
+    "desktop": {
+      "url": "http://127.0.0.1:3211/mcp",
+      "headers": {
+        "Authorization": "!echo Bearer $(cat /run/cua/env-token)"
+      },
+      "exposure": "direct",
+      "description": "This VM's desktop (cua-spacesd): screenshots, the accessibility tree, clicking, typing, browser control."
+    },
     "executor": {
       "url": "http://172.16.0.1/tools/mcp",
       "exposure": "direct",
