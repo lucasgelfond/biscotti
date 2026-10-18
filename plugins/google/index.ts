@@ -115,10 +115,12 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
     return localTools([
       {
         name: "google_connect",
-        description: "Get a link for the user to connect their Google account (Gmail and Calendar). Text it to them, with the note about the redirect URI.",
+        description: "Get a link for the user to connect their Google account (Gmail and Calendar). Text them the setup note and the link.",
         input: { type: "object", properties: {} },
         run: async () =>
-          text(`${signInLink()}\n\nIf Google says redirect_uri_mismatch, the user adds ${redirectUri} as an authorized redirect URI on their OAuth client (Google Cloud console, Credentials), then tries the link again.`),
+          text(`Text the user both:
+1. First time connecting this biscotti: in Google Cloud console → APIs & Services → Credentials → their OAuth client, add ${redirectUri} under "Authorized redirect URIs" and save (otherwise Google says the request is invalid / redirect_uri_mismatch).
+2. Then open: ${signInLink()}`),
       },
       {
         name: "gmail_search",
