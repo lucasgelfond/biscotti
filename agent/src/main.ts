@@ -1,9 +1,10 @@
-import { Spectrum } from "@spectrum-ts/core";
+import { Spectrum, type Space } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 import { createAgent } from "./agent.ts";
 import { executor } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
+import { taskTool } from "./sandbox.ts";
 import { ensureVaultAccount } from "./vault.ts";
 
 function env(name: string) {
@@ -22,9 +23,25 @@ const agent = await createAgent({
   db,
   dir,
   model: process.env.MODEL,
-  tools: memoryTools(db, env("EMBEDDINGS_URL")),
+  tools: [
+    ...memoryTools(db, env("EMBEDDINGS_URL")),
+    ...(process.env.VM_DIR
+      ? [taskTool(process.env.VM_DIR, env("FIRECRACKER"), (goal, report) => deliver(`Task report (${goal}):\n${report}`))]
+      : []),
+  ],
   extensions: process.env.EXECUTOR_URL ? executor(process.env.EXECUTOR_URL, env("EXECUTOR_API_KEY")) : [],
 });
+
+// The owner's conversation, where replies to task reports go.
+let ownerSpace: Space | undefined;
+async function deliver(text: string) {
+  try {
+    const reply = await agent.reply(text);
+    if (reply && ownerSpace) await ownerSpace.send(reply);
+  } catch (err) {
+    console.error(err);
+  }
+}
 
 const owner = env("OWNER");
 const app = await Spectrum({
@@ -39,6 +56,7 @@ for await (const [space, message] of app.messages) {
     console.warn(`ignoring message from ${message.sender?.id}`);
     continue;
   }
+  ownerSpace = space;
   const text = message.content.text;
   // Not awaited: a text that arrives mid-reply steers the reply already underway.
   space

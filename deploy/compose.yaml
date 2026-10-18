@@ -21,7 +21,15 @@ services:
       VAULT_EMAIL: agent@biscotti.local
       VAULT_PASSWORD: ${VAULT_PASSWORD:?}
       TZ: ${TZ:-America/New_York}
-    volumes: [agent:/data]
+      VM_DIR: /var/lib/biscotti/vm
+      FIRECRACKER: /usr/local/bin/firecracker
+    # Task VMs: KVM, the fc-task tap (opening it needs NET_ADMIN), the patched Firecracker and the snapshot.
+    devices: [/dev/kvm, /dev/net/tun]
+    cap_add: [NET_ADMIN]
+    volumes:
+      - agent:/data
+      - /var/lib/biscotti/vm:/var/lib/biscotti/vm:ro
+      - ${FIRECRACKER_BIN:-/usr/local/bin/firecracker}:/usr/local/bin/firecracker:ro
     restart: unless-stopped
 
   embeddings:

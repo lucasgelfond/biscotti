@@ -8,13 +8,11 @@ ip addr replace 172.16.0.1/24 dev biscotti0
 ip link set biscotti0 up
 sysctl -qw net.ipv4.ip_forward=1
 
-# One tap per VM kind; each kind's snapshot has its own guest address (headless 172.16.0.2, desktop 172.16.0.3).
-# Isolated bridge ports reach the host but not each other.
-for tap in fc-headless fc-desktop; do
-  ip link show "$tap" >/dev/null 2>&1 || ip tuntap add "$tap" mode tap
-  ip link set "$tap" master biscotti0 up
-  bridge link set dev "$tap" isolated on
-done
+# The task VM's tap (its snapshot has guest address 172.16.0.2). An isolated bridge port reaches the host but no
+# other VM.
+ip link show fc-task >/dev/null 2>&1 || ip tuntap add fc-task mode tap
+ip link set fc-task master biscotti0 up
+bridge link set dev fc-task isolated on
 
 ensure() { table=$1 chain=$2; shift 2; iptables -t "$table" -C "$chain" "$@" 2>/dev/null || iptables -t "$table" -I "$chain" "$@"; }
 

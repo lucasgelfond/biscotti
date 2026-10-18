@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build what task VMs start from: the guest kernel, the read-only disk, and one snapshot per kind, taken once the VM
+# Build what task VMs start from: the guest kernel, the read-only disk, and a snapshot of the desktop VM taken once it
 # is ready for a task. Usage: sudo cua-vm/snapshots.sh [dir]   (FC_BIN picks the Firecracker binary)
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -18,28 +18,22 @@ echo "$sum  $OUT/vmlinux" | sha256sum -c -
 docker build -t biscotti/cua-desktop .
 ./rootfs.sh biscotti/cua-desktop "$OUT/rootfs.ext4"
 
-# snapshot <kind> <tap> <guest ip> <memory MiB> <ports to wait for>
-snapshot() {
-  local kind=$1 tap=$2 ip=$3 mem=$4 sock=/tmp/fc-snapshot.sock
-  shift 4
-  rm -f "$sock"
-  "$FC" --api-sock "$sock" >"$OUT/$kind.log" 2>&1 &
-  local pid=$!
-  until [ -S "$sock" ]; do sleep 0.05; done
-  api() { curl -sf --unix-socket "$sock" -X "$1" "http://localhost$2" -H 'Content-Type: application/json' -d "$3"; }
-  api PUT /boot-source "{\"kernel_image_path\":\"$OUT/vmlinux\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 ro init=/sbin/biscotti-init ip=$ip::172.16.0.1:255.255.255.0::eth0:off biscotti.mode=$kind\"}"
-  api PUT /drives/rootfs "{\"drive_id\":\"rootfs\",\"path_on_host\":\"$OUT/rootfs.ext4\",\"is_root_device\":true,\"is_read_only\":true}"
-  api PUT /machine-config "{\"vcpu_count\":2,\"mem_size_mib\":$mem}"
-  api PUT /network-interfaces/eth0 "{\"iface_id\":\"eth0\",\"host_dev_name\":\"$tap\"}"
-  api PUT /actions '{"action_type":"InstanceStart"}'
-  for port in "$@"; do
-    until (exec 3<>"/dev/tcp/$ip/$port") 2>/dev/null; do sleep 0.2; done
-  done
-  api PATCH /vm '{"state":"Paused"}'
-  api PUT /snapshot/create "{\"snapshot_type\":\"Full\",\"snapshot_path\":\"$OUT/$kind.snap\",\"mem_file_path\":\"$OUT/$kind.mem\"}"
-  kill "$pid"
-  echo "$kind snapshot: $(du -h "$OUT/$kind.mem" | cut -f1) memory"
-}
-
-snapshot headless fc-headless 172.16.0.2 1024 4000
-snapshot desktop fc-desktop 172.16.0.3 2048 4000 6901 3211
+# Boot once on the task tap, wait until the task listener, noVNC and cua-spacesd are up, then snapshot.
+sock=/tmp/fc-snapshot.sock ip=172.16.0.2
+rm -f "$sock"
+"$FC" --api-sock "$sock" >"$OUT/snapshot.log" 2>&1 &
+pid=$!
+until [ -S "$sock" ]; do sleep 0.05; done
+api() { curl -sf --unix-socket "$sock" -X "$1" "http://localhost$2" -H 'Content-Type: application/json' -d "$3"; }
+api PUT /boot-source "{\"kernel_image_path\":\"$OUT/vmlinux\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 ro init=/sbin/biscotti-init ip=$ip::172.16.0.1:255.255.255.0::eth0:off\"}"
+api PUT /drives/rootfs "{\"drive_id\":\"rootfs\",\"path_on_host\":\"$OUT/rootfs.ext4\",\"is_root_device\":true,\"is_read_only\":true}"
+api PUT /machine-config '{"vcpu_count":2,"mem_size_mib":2048}'
+api PUT /network-interfaces/eth0 '{"iface_id":"eth0","host_dev_name":"fc-task"}'
+api PUT /actions '{"action_type":"InstanceStart"}'
+for port in 4000 6901 3211; do
+  until (exec 3<>"/dev/tcp/$ip/$port") 2>/dev/null; do sleep 0.2; done
+done
+api PATCH /vm '{"state":"Paused"}'
+api PUT /snapshot/create "{\"snapshot_type\":\"Full\",\"snapshot_path\":\"$OUT/desktop.snap\",\"mem_file_path\":\"$OUT/desktop.mem\"}"
+kill "$pid"
+echo "snapshot: $(du -h "$OUT/desktop.mem" | cut -f1) memory"
