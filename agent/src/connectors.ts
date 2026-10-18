@@ -28,8 +28,10 @@ export function executor(url: string, token: string): ExtensionFactory[] {
   const usedYes = new Set<string>();
   const approvals: ExtensionFactory = (pi) => {
     pi.on("tool_call", (event, ctx) => {
-      const input = event.input as { action?: string };
-      if (event.toolName !== "mcp__executor__resume" || input.action !== "accept") return;
+      if (event.toolName !== "mcp__executor__resume") return;
+      // Fail closed: only declining or cancelling needs no yes.
+      const action = (event.input as { response?: { action?: string } }).response?.action;
+      if (action === "decline" || action === "cancel") return;
       const latest = ctx.sessionManager
         .getBranch()
         .flatMap((e) => (e.type === "message" && e.message.role === "user" ? [{ id: e.id, content: e.message.content }] : []))
