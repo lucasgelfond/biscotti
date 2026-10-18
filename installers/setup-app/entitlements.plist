@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hardened runtime, with one exception: reading the "Me" card to prefill the phone number. No sandbox: the app runs
+     diskutil, authopen, limactl, ssh and tailscale. -->
+<plist version="1.0"><dict>
+  <key>com.apple.security.personal-information.addressbook</key><true/>
+</dict></plist>

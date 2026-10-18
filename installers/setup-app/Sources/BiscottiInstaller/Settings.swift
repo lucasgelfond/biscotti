@@ -1,4 +1,3 @@
-import CoreWLAN
 import Foundation
 import Security
 
@@ -44,12 +43,10 @@ struct Settings {
     /// Everything but Wi-Fi, which only the Pi needs.
     var isComplete: Bool { hasOwner && hasPhoton && hasAI && hasPluginKeys }
 
-    /// The network this Mac is on (when macOS shares it), then its saved networks, most preferred first.
+    /// This Mac's saved Wi-Fi networks, most preferred first (readable without Location access).
     static func knownNetworks() -> [String] {
-        let saved = (try? run("/usr/sbin/networksetup", ["-listpreferredwirelessnetworks", "en0"]))
-            .map { String(decoding: $0, as: UTF8.self).split(separator: "\n").dropFirst().map { $0.trimmingCharacters(in: .whitespaces) } } ?? []
-        let current = CWWiFiClient.shared().interface()?.ssid()
-        return ([current].compactMap { $0 } + saved).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+        let out = (try? run("/usr/sbin/networksetup", ["-listpreferredwirelessnetworks", "en0"])) ?? Data()
+        return String(decoding: out, as: UTF8.self).split(separator: "\n").dropFirst().map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// The network's password from the Keychain; macOS asks the user before handing it over.

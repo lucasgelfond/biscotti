@@ -106,6 +106,7 @@ struct InstallerView: View {
     // `-tailscalePhone name` stands in for a detected phone in screenshots.
     @State private var phone = UserDefaults.standard.string(forKey: "tailscalePhone")
     @State private var phoneConfirmed = false
+    @State private var askedContacts = false
     @State private var hasLima = Mac.tool("limactl") != nil
 
     private var steps: [Step] { target.steps }
@@ -250,26 +251,25 @@ struct InstallerView: View {
 
     private var wifi: some View {
         Form {
-            Picker("Network", selection: $settings.wifiName) {
-                ForEach(networks, id: \.self) { Text($0) }
-                if !networks.contains(settings.wifiName) { Text(settings.wifiName).tag(settings.wifiName) }
+            HStack {
+                TextField("Network", text: $settings.wifiName)
+                if !networks.isEmpty {
+                    Menu("Saved") { ForEach(networks, id: \.self) { name in Button(name) { settings.wifiName = name } } }
+                        .menuStyle(.borderlessButton).fixedSize()
+                }
             }
             HStack {
                 TextField("Password", text: $settings.wifiPassword)
                 if settings.wifiPassword.isEmpty {
-                    Button("From Keychain") { fillWifiPassword() }.buttonStyle(.link).controlSize(.small)
+                    // Wi-Fi passwords live in the System keychain, so macOS asks for the Mac's password; cancel leaves typing.
+                    Button("From Keychain") { settings.wifiPassword = settings.savedWifiPassword() ?? "" }
+                        .buttonStyle(.link).controlSize(.small)
+                        .help("macOS will ask for your password")
                 }
             }
             TextField("Country code", text: $settings.wifiCountry)
         }
         .settingsForm()
-        .onChange(of: settings.wifiName) { settings.wifiPassword = ""; fillWifiPassword() }
-        .onAppear { if settings.wifiPassword.isEmpty { fillWifiPassword() } }
-    }
-
-    private func fillWifiPassword() {
-        guard !Self.noAutofill, UserDefaults.standard.string(forKey: "snapshot") == nil else { return }
-        settings.wifiPassword = settings.savedWifiPassword() ?? settings.wifiPassword
     }
 
     private var you: some View {
@@ -283,7 +283,9 @@ struct InstallerView: View {
         }
         .settingsForm()
         .task {
-            guard settings.phone.isEmpty, !Self.noAutofill else { return }
+            // Contacts only to fill an empty number, once; if access is denied, it's just typed.
+            guard settings.phone.isEmpty, !askedContacts, !Self.noAutofill else { return }
+            askedContacts = true
             me = await meCard()
             if settings.phone.isEmpty { settings.phone = me.phones.first ?? "" }
             if settings.email.isEmpty { settings.email = me.emails.first ?? "" }

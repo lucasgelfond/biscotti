@@ -21,5 +21,5 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSContactsUsageDescription</key><string>To fill in your phone number and email from your contact card.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - "$APP"
+codesign --force --sign - --options runtime --entitlements entitlements.plist "$APP"
 echo "$APP"
