@@ -6,7 +6,7 @@ import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
 import { startPassThrough } from "./passthrough.ts";
 import { taskTool } from "./sandbox.ts";
-import { ensureVaultAccount } from "./vault.ts";
+import { ensureVaultAccount, vaultTools } from "./vault.ts";
 
 function env(name: string) {
   const value = process.env[name];
@@ -35,12 +35,26 @@ if (process.env.VAULT_URL) {
 }
 const executorKey = executorUrl ? await executorToken(executorUrl) : undefined;
 
+// Questions only the owner can answer (a task's write, using a card): texted, answered by their next yes or no.
+let pendingApproval: ((yes: boolean) => void) | undefined;
+function askOwner(question: string) {
+  if (!ownerSpace) return Promise.resolve(false);
+  void ownerSpace.send(question);
+  return new Promise<boolean>((resolve) => {
+    pendingApproval = resolve;
+    setTimeout(() => resolve(false), 10 * 60_000);
+  });
+}
+
 const agent = await createAgent({
   db,
   dir,
   model: process.env.MODEL,
   tools: [
     ...memoryTools(db, env("EMBEDDINGS_URL")),
+    ...(process.env.VAULT_URL
+      ? vaultTools({ url: process.env.VAULT_URL, email: env("VAULT_EMAIL"), password: env("VAULT_PASSWORD"), dir, askOwner })
+      : []),
     ...(process.env.VM_DIR
       ? [
           taskTool(process.env.VM_DIR, env("FIRECRACKER"), (goal, { report, screenshot }) =>
@@ -52,16 +66,6 @@ const agent = await createAgent({
   extensions: executorUrl && executorKey ? executor(executorUrl, executorKey) : [],
 });
 
-// Task VMs reach Executor through the bridge's /tools route; writes they request are put to the owner here.
-let pendingApproval: ((yes: boolean) => void) | undefined;
-function askOwner(question: string) {
-  if (!ownerSpace) return Promise.resolve(false);
-  void ownerSpace.send(question);
-  return new Promise<boolean>((resolve) => {
-    pendingApproval = resolve;
-    setTimeout(() => resolve(false), 10 * 60_000);
-  });
-}
 if (executorUrl && executorKey && process.env.PASSTHROUGH_PORT)
   startPassThrough({ executorUrl, token: executorKey, port: Number(process.env.PASSTHROUGH_PORT), askOwner });
 

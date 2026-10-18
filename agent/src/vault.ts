@@ -1,4 +1,8 @@
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import { execFile } from "node:child_process";
 import { createCipheriv, createHmac, generateKeyPairSync, pbkdf2Sync, randomBytes } from "node:crypto";
+import { promisify } from "node:util";
+import { Type } from "typebox";
 
 // The agent's own Vaultwarden account, which the owner shares items with through an organization. Bitwarden's CLI
 // reads it, but no official tool registers accounts, and Bitwarden clients do the encryption, so registering follows
@@ -68,4 +72,90 @@ export async function ensureVaultAccount(url: string, email: string, password: s
 function accountExists(status: number, body: string) {
   if (/already exists/i.test(body)) return "exists";
   throw new Error(`vaultwarden register: ${status} ${body}`);
+}
+
+// Reading the vault: Bitwarden's CLI, logged in as the agent's account.
+
+const BW = new URL("../node_modules/.bin/bw", import.meta.url).pathname;
+const run = promisify(execFile);
+
+interface Item {
+  id: string;
+  name: string;
+  notes: string | null;
+  login?: { username: string | null; password: string | null; totp: string | null; uris?: { uri: string }[] | null } | null;
+  card?: Record<string, string | null> | null;
+  identity?: Record<string, string | null> | null;
+  fields?: { name: string; value: string | null }[] | null;
+}
+
+// An item's values by field name: "username", "password", "totp", "url", "card.number", "identity.licenseNumber", …
+function fieldsOf(item: Item): Record<string, string> {
+  const fields: Record<string, string | null | undefined> = {
+    username: item.login?.username,
+    password: item.login?.password,
+    totp: item.login?.totp,
+    url: item.login?.uris?.[0]?.uri,
+    notes: item.notes,
+    ...Object.fromEntries(Object.entries(item.card ?? {}).map(([k, v]) => [`card.${k}`, v])),
+    ...Object.fromEntries(Object.entries(item.identity ?? {}).map(([k, v]) => [`identity.${k}`, v])),
+    ...Object.fromEntries((item.fields ?? []).map((f) => [f.name, f.value])),
+  };
+  return Object.fromEntries(Object.entries(fields).filter((e): e is [string, string] => typeof e[1] === "string" && e[1] !== ""));
+}
+
+const text = (s: string) => ({ content: [{ type: "text" as const, text: s }], details: {} });
+
+export function vaultTools(opts: {
+  url: string;
+  email: string;
+  password: string;
+  dir: string;
+  askOwner: (question: string) => Promise<boolean>;
+}) {
+  const env = { ...process.env, BITWARDENCLI_APPDATA_DIR: `${opts.dir}/bw` };
+  const bw = async (...args: string[]) => (await run(BW, args, { env })).stdout.trim();
+  let session: string | undefined;
+
+  async function items(): Promise<Item[]> {
+    if (!session) {
+      const { status } = JSON.parse(await bw("status"));
+      if (status === "unauthenticated") {
+        await bw("config", "server", opts.url);
+        session = await bw("login", opts.email, opts.password, "--raw");
+      } else session = await bw("unlock", opts.password, "--raw");
+    }
+    await bw("sync", "--session", session);
+    return JSON.parse(await bw("list", "items", "--session", session));
+  }
+
+  const list = defineTool({
+    name: "vault_list",
+    label: "Vault",
+    description: "List the items the owner shared to your vault and which fields each has (no values).",
+    parameters: Type.Object({}),
+    async execute() {
+      const lines = (await items()).map((i) => `${i.name}: ${Object.keys(fieldsOf(i)).join(", ")}`);
+      return text(lines.length ? lines.join("\n") : "The vault is empty; ask the owner to share items to the biscotti organization.");
+    },
+  });
+
+  const get = defineTool({
+    name: "vault_get",
+    label: "Vault",
+    description:
+      "Read one field of a vault item, e.g. a password to log in or an address to fill a form. Card fields ask the owner first. For 'totp' this returns the current 2FA code.",
+    parameters: Type.Object({ item: Type.String({ description: "The item's name, as vault_list shows it." }), field: Type.String() }),
+    async execute(_id, { item, field }) {
+      const match = (await items()).find((i) => i.name.toLowerCase() === item.toLowerCase());
+      if (!match) return text(`No vault item named "${item}".`);
+      const value = fieldsOf(match)[field];
+      if (value === undefined) return text(`"${match.name}" has no field "${field}".`);
+      if (field.startsWith("card.") && !(await opts.askOwner(`Use your card "${match.name}" (${field})? Reply yes or no.`)))
+        return text("The owner said no.");
+      return text(field === "totp" ? await bw("get", "totp", match.id, "--session", session!) : value);
+    },
+  });
+
+  return [list, get];
 }
