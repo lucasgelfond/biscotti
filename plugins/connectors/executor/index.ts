@@ -2,7 +2,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mcpTools, type CallToolResult, type Context, type Plugin } from "@biscotti/core";
 
 // Executor's connected apps (Gmail, Calendar, Drive, GitHub, …) over MCP. A call that needs approval pauses; the
-// plugin asks the owner and resumes it with their answer. `resume` is never offered, so no agent can approve.
+// plugin asks the owner and resumes it with their answer. `resume` is never offered (so the gate refuses it), and
+// no agent can approve.
 
 const URL = process.env.EXECUTOR_URL ?? "http://127.0.0.1:4788";
 // Catalog apps the agent uses; the owner connects their accounts to them in Executor's UI.
@@ -72,7 +73,6 @@ export default {
 - To connect an account, send the user the connection link.`,
   async tools(ctx) {
     const tools = mcpTools(`${URL}/mcp`, { Authorization: `Bearer ${await token(ctx)}` }, async (client, name, args) => {
-      if (name === "resume") throw new Error("Approvals go to the owner.");
       let result = (await client.callTool({ name, arguments: args })) as CallToolResult;
       for (let p = paused(result); p; p = paused(result)) {
         const yes = await ctx.ask(`Okay to do this?\n${p.message.slice(0, 1200)}\n\nReply yes or no.`);

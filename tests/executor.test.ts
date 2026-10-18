@@ -37,7 +37,7 @@ test("offers Executor's tools through the gate without the token or a way to app
   const gate = await mcp(`${gateUrl}/mcp`);
   const names = (await gate.listTools()).tools.map((t) => t.name);
   const resume = gate.callTool({ name: "resume", arguments: { requestId: "apr_x", response: { action: "accept" } } });
-  await expect(resume).rejects.toThrow("Approvals go to the owner");
+  await expect(resume).rejects.toThrow("no tool resume");
   await gate.close();
 
   expect(names).toContain("search");

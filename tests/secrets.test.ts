@@ -14,7 +14,10 @@ test("saves a login through a one-time form and fills it back in", async () => {
   await say("I want to save my Delta login so you can book tickets. Send me the form.");
   const link = formLink(sent)!;
   const page = await (await fetch(link)).text();
-  const saved = await fetch(link, { method: "POST", body: new URLSearchParams({ "f:username": "owner@example.com", "f:password": "hunter2-biscotti" }) });
+  // The agent names the fields; the password goes in the one that says so, the username in the rest.
+  const fields = [...page.matchAll(/name="(f:[^"]+)"/g)].map((m) => m[1]);
+  const values = fields.map((f) => [f, /pass/i.test(f) ? "hunter2-biscotti" : "owner@example.com"]);
+  const saved = await fetch(link, { method: "POST", body: new URLSearchParams(values) });
   const reused = await fetch(link);
   // Saving tells the agent, which replies; wait for that before asking.
   const before = sent.length;
@@ -22,7 +25,7 @@ test("saves a login through a one-time form and fills it back in", async () => {
   await say("Look up my Delta login and tell me just the username it's under.");
 
   const stored = db.$client.prepare("SELECT data FROM secrets").get() as { data: Buffer };
-  expect(page).toContain('name="f:password"');
+  expect(fields.some((f) => /pass/i.test(f))).toBe(true);
   expect(saved.status).toBe(200);
   expect(reused.status).toBe(404);
   expect(stored.data.toString("latin1")).not.toContain("hunter2");
