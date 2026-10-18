@@ -32,9 +32,7 @@ enum Prompts {
             3. Configure the OAuth consent screen: External, in testing, with my own email as a test user, and the \
             scopes https://www.googleapis.com/auth/gmail.modify and https://www.googleapis.com/auth/calendar.events.
             4. Create an OAuth client ID of type "Web application" with the authorized redirect URI \
-            https://biscotti.<tailnet>.ts.net:9443/oauth/callback, where <tailnet> is my tailnet name from the Tailscale \
-            admin console under DNS (https://login.tailscale.com/admin/dns). If I don't have one yet, skip the redirect \
-            URI; I'll add it later.
+            https://biscotti.lucasgelfond.online/oauth/callback.
             5. Show me the client ID and client secret so I can copy them.
             """,
         "github": """
