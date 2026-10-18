@@ -150,6 +150,45 @@ look and feel like Raspberry Pi Imager and stay tiny (**about 5 Swift files at m
 Until it exists: Raspberry Pi Imager to flash, then copy those boot-partition files by hand (see `deploy/pi/README.md`).
 Every installer must get their own SSH key and Wi-Fi in; nothing personal is baked into the image.
 
+## Core and leaves (plan)
+
+biscotti should be a **small core that's easy to build around**, in the spirit of pi: the core does the few things
+everything else needs, and features live in leaves (plugins or separate packages) with their own dependencies.
+
+- **Core:** the agent loop (pi), one conversation with compaction, memory and transcripts (SQLite), the iMessage
+  channel, approvals, task VMs with **computer use** (a key primitive), and the gate (the one place keys live).
+- **Leaves**, each optional and swappable:
+  - **installers**: the Pi image plus the macOS card-writer app (today), and a desktop/laptop version (Lima on a Mac,
+    nothing to disable; SIP stays on).
+  - **pages** (published HTML), **wakes**, **vault**, **web search**, **connectors** (Executor).
+  - a **setup web app** outside the core that walks through only what's needed.
+- To decide in the write-up: each piece's footprint (RAM, disk, services), what moves out of the core, and whether the
+  vault should be Vaultwarden or encrypted values in our own SQLite (e.g. SQLCipher, or a libsodium-sealed `secrets`
+  table) to drop a service.
+
+**The easiest setup (a parallel path, later):** someone downloads biscotti onto a Mac and enters as little as possible:
+the Photon project (iMessage), a model provider key, then Google and GitHub sign-ins. A small setup web app (or the
+installer) walks through just those; Tailscale is handled by the image, or skipped on a laptop. It runs locally with
+task VMs, and the owner interacts by text. The Pi stays the main path for now.
+
+## Remaining to-dos
+
+- **Ship and verify on the Pi:** three task VMs at once (network-namespace slots); the gate's model routing from inside
+  a VM; per-slot live desktops; a task using a connector with a texted approval; DeepSeek as default.
+- **New card:** rebuild the NixOS image with everything above, flash it with the installer app, first boot (texted
+  Tailscale link, then "ready"), re-import the vault items from the saved export.
+- **Pages:** link-preview cards need a URL Photon can fetch, i.e. Tailscale Funnel for the pages port (an admin-console
+  change), or accept plain links.
+- **Vault in VMs:** task agents can't read the vault yet (the main agent passes what a task needs); route `vault_get`
+  through the gate, plus `vault_fill`, `vault_request`, and derived `totp` / card-expiry fields.
+- **Tests:** the fake Google connector test (fake MCP server registered in the test Executor, approval by text); run the
+  task tests in CI on a KVM host.
+- **Core-versus-leaves write-up and refactor** (above); the **laptop installer** (Lima); the **setup web app**.
+- **Event wakes** (new mail or calendar changes), the **per-role permission table** (P2), a pre-compaction memory nudge,
+  per-site browsing notes, email sender-authenticity.
+- **Housekeeping:** update `install.sh` to call `setup.sh`; delete the old unnamed Executor volume on the Pi; CJK fonts in
+  the VM if needed.
+
 ## Repo layout (planned)
 
 ```
