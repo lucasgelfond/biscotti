@@ -3,7 +3,7 @@
 	admin localhost:2019
 }
 
-# Pages the agent publishes, from its data volume; Tailscale Serve exposes them on the tailnet (:8445).
+# Pages the agent publishes, from its data volume; Tailscale Funnel makes them public on 443 (unguessable names).
 http://:8082 {
 	bind 127.0.0.1
 	root * /agent/pages

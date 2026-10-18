@@ -25,5 +25,5 @@ sudo tailscale serve --bg --https=8443 http://127.0.0.1:4788
 sudo tailscale serve --bg --https=9443 http://127.0.0.1:8081
 # Each task VM slot's desktop (noVNC), to watch or take over: :10441, :10442, :10443.
 for n in 1 2 3; do sudo tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
-# Pages the agent publishes.
-sudo tailscale serve --bg --https=8445 http://127.0.0.1:8082
+# Pages the agent publishes: public (Funnel) under unguessable names, so iMessage can show link previews.
+sudo tailscale funnel --bg --https=443 http://127.0.0.1:8082

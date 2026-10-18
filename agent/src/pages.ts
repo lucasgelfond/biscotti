@@ -3,8 +3,9 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { Type } from "typebox";
 
-// Web pages the agent makes (a comparison, an itinerary, a chart) and texts as a link. They're files under an
-// unguessable name. Preview tags are added here, so a texted link expands into a card with a title, summary and image.
+// Web pages the agent makes (a comparison, an itinerary, a chart) and texts as a link. They're public files (Tailscale
+// Funnel) under an unguessable name, so Photon can fetch the preview tags added here: a texted link expands into a card
+// with a title, summary and image.
 
 const PREVIEW_IMAGE = "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=80&w=1200&h=630&fit=crop";
 

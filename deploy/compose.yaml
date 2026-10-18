@@ -31,7 +31,7 @@ services:
       VAULT_EMAIL: agent@biscotti.local
       VAULT_PASSWORD: ${VAULT_PASSWORD:?}
       TZ: ${TZ:-America/New_York}
-      PAGES_URL: https://${TAILNET_HOST:?}:8445
+      PAGES_URL: https://${TAILNET_HOST:?}
       LIVE_DESKTOP_URL: https://${TAILNET_HOST:?}
       VM_DIR: /var/lib/biscotti/vm
       FIRECRACKER: /usr/local/bin/firecracker

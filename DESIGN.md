@@ -177,8 +177,6 @@ task VMs, and the owner interacts by text. The Pi stays the main path for now.
   a VM; per-slot live desktops; a task using a connector with a texted approval; DeepSeek as default.
 - **New card:** rebuild the NixOS image with everything above, flash it with the installer app, first boot (texted
   Tailscale link, then "ready"), re-import the vault items from the saved export.
-- **Pages:** link-preview cards need a URL Photon can fetch, i.e. Tailscale Funnel for the pages port (an admin-console
-  change), or accept plain links.
 - **Vault in VMs:** task agents can't read the vault yet (the main agent passes what a task needs); route `vault_get`
   through the gate, plus `vault_fill`, `vault_request`, and derived `totp` / card-expiry fields.
 - **Tests:** the fake Google connector test (fake MCP server registered in the test Executor, approval by text); run the
