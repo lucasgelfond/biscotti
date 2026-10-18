@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Minimal multi-arch Cua desktop (XFCE + TigerVNC + noVNC + Firefox + cua-spacesd) plus the task agent (pi).
+# Minimal multi-arch Cua desktop (XFCE + TigerVNC + noVNC + Chromium + cua-spacesd) plus the task agent (pi).
 # Startup scripts and configs come straight from Cua at a pinned commit; nothing is vendored.
 FROM debian:bookworm-slim
 
@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xfce4 xfce4-terminal dbus-x11 x11-utils x11-xserver-utils \
       tigervnc-standalone-server tigervnc-tools \
-      firefox-esr fonts-dejavu \
+      chromium chromium-sandbox fonts-dejavu \
       supervisor sudo isc-dhcp-client python3 git ca-certificates curl \
       xdotool xclip wmctrl chrony socat xz-utils scrot \
     && rm -rf /var/lib/apt/lists/*
@@ -35,9 +35,10 @@ RUN case "$TARGETARCH" in \
     echo "$sum  /tmp/node.tar.xz" | sha256sum -c - && \
     tar -xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz && rm /tmp/node.tar.xz
 
-# The task agent: pi from a lockfile, reaching the model through the host's gate (which adds the key).
+# The task agent: pi and Playwright's MCP server from a lockfile, reaching the model through the host's gate (which
+# adds the key).
 COPY task/package.json task/package-lock.json /opt/pi/
-RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
+RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /opt/pi/node_modules/.bin/playwright-mcp /usr/local/bin/
 COPY task/biscotti-task /usr/local/bin/
 COPY task/models.json task/mcp.json /home/cua/.pi/agent/
 
@@ -47,8 +48,6 @@ RUN mkdir -p /usr/share/backgrounds && \
       "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=85&w=1280&h=800&fit=crop" && \
     echo "aa403dc64a9378a59a8fc137e27d8246d55b5f7c363fbd93080e52e8daa9942e  /usr/share/backgrounds/biscotti.jpg" | sha256sum -c -
 COPY xfce4-desktop.xml /home/cua/.config/xfce4/xfconf/xfce-perchannel-xml/
-# Firefox: no first-run tabs, no telemetry.
-COPY firefox-policies.json /etc/firefox/policies/policies.json
 
 ARG CUA_SRC=https://raw.githubusercontent.com/trycua/cua/${CUA_COMMIT}/libs/xfce/src
 ADD ${CUA_SRC}/scripts/start-vnc.sh ${CUA_SRC}/scripts/start-novnc.sh ${CUA_SRC}/scripts/start-spacesd.sh \

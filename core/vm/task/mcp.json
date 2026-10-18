@@ -1,5 +1,16 @@
 {
   "mcpServers": {
+    "browser": {
+      "command": "playwright-mcp",
+      "args": [
+        "--cdp-endpoint",
+        "http://127.0.0.1:9222",
+        "--caps",
+        "vision"
+      ],
+      "exposure": "direct",
+      "description": "The open Chromium window, through Playwright: page snapshots (the accessibility tree, with element refs), clicking and typing by ref, navigation, tabs, page screenshots."
+    },
     "desktop": {
       "url": "http://127.0.0.1:3211/mcp",
       "headers": {
@@ -12,7 +23,7 @@
       "url": "http://172.16.0.1/mcp",
       "exposure": "direct",
       "timeout": 900,
-      "description": "The owner's tools: web search, connected accounts (mail, calendar, GitHub, …), saved secrets and more. Some wait for the owner's approval."
+      "description": "The owner's tools: web search, connected accounts (mail, calendar, GitHub, \u2026), saved secrets and more. Some wait for the owner's approval."
     }
   }
 }

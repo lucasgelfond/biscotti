@@ -72,7 +72,7 @@ export function taskVms(vmDir: string, firecracker: string) {
   return { run };
 }
 
-async function restore(vmDir: string, firecracker: string, slot: number): Promise<Vm> {
+export async function restore(vmDir: string, firecracker: string, slot: number): Promise<Vm> {
   const sock = `/tmp/fc-${slot}.sock`;
   rmSync(sock, { force: true });
   const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, firecracker, "--api-sock", sock], { stdio: "ignore" });

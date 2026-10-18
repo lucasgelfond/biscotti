@@ -1,9 +1,0 @@
-{
-  "policies": {
-    "DisableTelemetry": true,
-    "DontCheckDefaultBrowser": true,
-    "OverrideFirstRunPage": "",
-    "OverridePostUpdatePage": "",
-    "NoDefaultBookmarks": true
-  }
-}

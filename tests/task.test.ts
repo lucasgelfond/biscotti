@@ -3,15 +3,14 @@ import { expect, test } from "vitest";
 import { createGate } from "../core/src/gate.ts";
 import { SLOTS, taskVms } from "../core/src/tasks.ts";
 
-// Task VMs need Linux with KVM, the snapshot from core/vm/snapshots.sh and the slots, so this runs on the Pi (with the live agent stopped: it holds a slot and the gate's ports).
+// Runs on the Pi, with the live agent stopped (it holds the slots and the gate's ports).
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const onThePi = existsSync("/dev/kvm") && existsSync(`${VM_DIR}/desktop.snap`);
 const vms = onThePi ? taskVms(VM_DIR, FIRECRACKER) : undefined;
 
-// The VMs reach the model through a gate on their slots' links, as the live agent's would.
 if (onThePi) {
-  const gate = createGate({ gatewayKey: process.env.AI_GATEWAY_API_KEY!, models: { task: process.env.TASK_MODEL! }, send: async () => {} });
+  const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: process.env.TASK_MODEL! }, send: async () => {} });
   for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80);
 }
 

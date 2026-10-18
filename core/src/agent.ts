@@ -15,7 +15,7 @@ import { transcripts } from "./schema.ts";
 // One long conversation, rebuilt from transcripts and compacted by pi. Model and tools come through the gate.
 export async function createAgent(opts: { db: Db; dir: string; gateUrl: string; prompt: string; tools: ToolDefinition[] }) {
   const { db, dir, gateUrl } = opts;
-  const models = { providers: { biscotti: { baseUrl: `${gateUrl}/llm`, api: "anthropic-messages", apiKey: "added-by-the-gate", models: [{ id: "main", reasoning: true, input: ["text", "image"], contextWindow: 200000, maxTokens: 32768 }] } } };
+  const models = { providers: { biscotti: { baseUrl: `${gateUrl}/llm`, api: "openai-completions", apiKey: "added-by-the-gate", models: [{ id: "main", reasoning: true, input: ["text", "image"], contextWindow: 200000, maxTokens: 32768 }] } } };
   writeFileSync(`${dir}/models.json`, JSON.stringify(models));
   const modelRuntime = await ModelRuntime.create({ authPath: `${dir}/auth.json`, modelsPath: `${dir}/models.json`, modelsStorePath: `${dir}/models-store.json` });
 

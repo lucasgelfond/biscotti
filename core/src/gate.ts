@@ -11,8 +11,9 @@ export const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)\b/i;
 const ANSWER_TIMEOUT_MS = 10 * 60_000;
 
 export function createGate(opts: {
-  gatewayKey: string;
-  // Model names callers may use (main, task) -> AI Gateway ids.
+  // Any OpenAI-compatible API (AI Gateway, OpenRouter, OpenAI, a local server, …).
+  llm: { url: string; key: string };
+  // Model names callers may use (main, task) -> the provider's model ids.
   models: Record<string, string>;
   send: (text: string) => Promise<void>;
 }) {
@@ -61,9 +62,9 @@ export function createGate(opts: {
     const body = JSON.parse(await readBody(req));
     const model = opts.models[body.model];
     if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
-    const upstream = await fetch(`https://ai-gateway.vercel.sh${req.url!.slice("/llm".length)}`, {
+    const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}${req.url!.slice("/llm".length)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.gatewayKey}`, "anthropic-version": "2023-06-01" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
       body: JSON.stringify({ ...body, model }),
     });
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });

@@ -2,7 +2,8 @@
   "name": "biscotti-task",
   "private": true,
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.1.0"
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@playwright/mcp": "0.0.83"
   },
   "overrides": {
     "@earendil-works/chord": "1.1.0",

@@ -24,7 +24,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const plugins: Plugin[] = [crons, vault, ...opts.plugins];
   const db = openDb(`${dir}/biscotti.db`, env("DB_KEY"));
   const gate = createGate({
-    gatewayKey: env("AI_GATEWAY_API_KEY"),
+    llm: { url: env("LLM_BASE_URL"), key: env("LLM_API_KEY") },
     models: { main: env("MODEL"), task: env("TASK_MODEL") },
     send: (text) => channel.send({ text }),
   });

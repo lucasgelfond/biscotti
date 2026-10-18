@@ -2,7 +2,7 @@
   "providers": {
     "biscotti": {
       "baseUrl": "http://172.16.0.1/llm",
-      "api": "anthropic-messages",
+      "api": "openai-completions",
       "apiKey": "added-by-the-gate",
       "models": [
         {
