@@ -28,3 +28,8 @@ summary { cursor: pointer; font-weight: 600; }
 details > :not(summary) { margin: 12px 0 0; }
 .demo { display: block; width: 100%; max-width: 520px; height: auto; border: 1px solid #000; }
 .arch svg { display: block; width: 100%; height: auto; }
+
+.examples { display: flex; flex-wrap: wrap; gap: 24px; }
+.examples figure { margin: 0; flex: 1 1 220px; max-width: 360px; }
+.examples img { width: 100%; height: auto; border-radius: 18px; display: block; }
+.examples figcaption { margin-top: 8px; font-size: 0.85em; color: #555; }
