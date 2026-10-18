@@ -39,11 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 enum Step {
-    case welcome, wifi, you, photon, llm, plugins, ssh, review, card, write, mac, aws, launch, done
+    case welcome, tailscale, wifi, you, photon, llm, plugins, ssh, review, card, write, mac, aws, launch, done
 
     var title: String {
         switch self {
         case .welcome: "biscotti"
+        case .tailscale: "Tailscale"
         case .wifi: "Wi-Fi"
         case .you: "You"
         case .photon: "Photon"
@@ -101,6 +102,10 @@ struct InstallerView: View {
     @State private var awsToken: String?
     @State private var region = AWS.regions[0]
     @State private var log: [String] = []
+    @State private var tailscaleOnMac = Tailscale.isInstalled
+    // `-tailscalePhone name` stands in for a detected phone in screenshots.
+    @State private var phone = UserDefaults.standard.string(forKey: "tailscalePhone")
+    @State private var phoneConfirmed = false
     @State private var hasLima = Mac.tool("limactl") != nil
 
     private var steps: [Step] { target.steps }
@@ -143,6 +148,7 @@ struct InstallerView: View {
             }
         }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+            if step == .tailscale { checkTailscale() }
             guard step == .card else { return }
             disks = removableDisks()
             if let d = disk, !disks.contains(d) { disk = nil }
@@ -175,6 +181,7 @@ struct InstallerView: View {
     @ViewBuilder private var page: some View {
         switch step {
         case .welcome: welcome
+        case .tailscale: tailscale
         case .wifi: wifi
         case .you: you
         case .photon: photon
@@ -209,6 +216,36 @@ struct InstallerView: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    /// You reach biscotti's pages and forms over Tailscale, from this Mac and your phone.
+    private var tailscale: some View {
+        Form {
+            LabeledContent("On this Mac") {
+                if tailscaleOnMac {
+                    Label("Installed", systemImage: "checkmark.circle.fill")
+                } else {
+                    Link("Install Tailscale", destination: Tailscale.downloadMac)
+                }
+            }
+            LabeledContent("On your phone") {
+                if let phone {
+                    Label(phone, systemImage: "checkmark.circle.fill")
+                } else {
+                    HStack {
+                        Toggle("Tailscale is installed on my phone", isOn: $phoneConfirmed).toggleStyle(.checkbox)
+                        Link("Get it", destination: Tailscale.downloadPhone)
+                    }
+                }
+            }
+        }
+        .settingsForm()
+        .onAppear { checkTailscale() }
+    }
+
+    private func checkTailscale() {
+        tailscaleOnMac = Tailscale.isInstalled
+        if phone == nil, !Self.noAutofill, let found = Tailscale.phone() { phone = found }
     }
 
     private var wifi: some View {
@@ -537,6 +574,7 @@ struct InstallerView: View {
 
     private var canContinue: Bool {
         switch step {
+        case .tailscale: tailscaleOnMac && (phone != nil || phoneConfirmed)
         case .card: disk != nil && image != nil
         case .wifi: settings.hasWifi
         case .you: settings.hasOwner

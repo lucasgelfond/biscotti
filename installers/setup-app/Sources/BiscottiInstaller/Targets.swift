@@ -23,9 +23,9 @@ enum Target: String, CaseIterable {
     var steps: [Step] {
         let settings: [Step] = [.you, .photon, .llm, .plugins]
         switch self {
-        case .pi: return [.welcome, .wifi] + settings + [.ssh, .review, .card, .write, .done]
-        case .mac: return [.welcome] + settings + [.review, .mac, .done]
-        case .cloud: return [.welcome] + settings + [.review, .aws, .launch, .done]
+        case .pi: return [.welcome, .tailscale, .wifi] + settings + [.ssh, .review, .card, .write, .done]
+        case .mac: return [.welcome, .tailscale] + settings + [.review, .mac, .done]
+        case .cloud: return [.welcome, .tailscale] + settings + [.review, .aws, .launch, .done]
         }
     }
 }
