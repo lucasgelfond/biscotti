@@ -1,6 +1,6 @@
-import { attachment, Spectrum, type Space } from "@spectrum-ts/core";
-import { imessage } from "@spectrum-ts/imessage";
+import { attachment, type Space } from "@spectrum-ts/core";
 import { createAgent } from "./agent.ts";
+import { connectIMessage } from "./imessage.ts";
 import { connectors, ensureExecutorToken, NO, YES } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
@@ -85,16 +85,10 @@ async function deliver(text: string, screenshot?: Buffer) {
 }
 
 const owner = env("OWNER");
-const app = await Spectrum({
-  projectId: env("SPECTRUM_PROJECT_ID"),
-  projectSecret: env("SPECTRUM_PROJECT_SECRET"),
-  providers: [imessage.config()],
-});
-// Open the owner's conversation up front, so the agent can text first (task reports after a restart, setup links).
-const im = imessage(app);
-ownerSpace = await im.space.create(await im.user(owner));
+const imessage = await connectIMessage(env);
+ownerSpace = imessage.ownerSpace;
 
-for await (const [space, message] of app.messages) {
+for await (const [space, message] of imessage.app.messages) {
   if (message.direction === "outbound" || message.content.type !== "text") continue;
   if (message.sender?.id !== owner) {
     console.warn(`ignoring message from ${message.sender?.id}`);
