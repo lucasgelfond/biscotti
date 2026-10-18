@@ -1,7 +1,7 @@
 import { Spectrum, type Space } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 import { createAgent } from "./agent.ts";
-import { executor } from "./connectors.ts";
+import { ensureExecutorToken, executor } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
 import { taskTool } from "./sandbox.ts";
@@ -15,6 +15,18 @@ function env(name: string) {
 
 const dir = process.env.DATA_DIR ?? "/data";
 const db = openDb(`${dir}/biscotti.db`);
+
+// The agent's Executor token: EXECUTOR_API_KEY if set, otherwise minted on first start (with the owner's admin account).
+async function executorToken(url: string) {
+  return (
+    process.env.EXECUTOR_API_KEY ||
+    ensureExecutorToken(url, env("EXECUTOR_ORIGIN"), `${dir}/executor-token`, {
+      name: "biscotti owner",
+      email: env("OWNER_EMAIL"),
+      password: env("EXECUTOR_ADMIN_PASSWORD"),
+    })
+  );
+}
 if (process.env.VAULT_URL) {
   const account = await ensureVaultAccount(process.env.VAULT_URL, env("VAULT_EMAIL"), env("VAULT_PASSWORD"));
   console.log(`vault account ${account}`);
@@ -29,7 +41,7 @@ const agent = await createAgent({
       ? [taskTool(process.env.VM_DIR, env("FIRECRACKER"), (goal, report) => deliver(`Task report (${goal}):\n${report}`))]
       : []),
   ],
-  extensions: process.env.EXECUTOR_URL ? executor(process.env.EXECUTOR_URL, env("EXECUTOR_API_KEY")) : [],
+  extensions: process.env.EXECUTOR_URL ? executor(process.env.EXECUTOR_URL, await executorToken(process.env.EXECUTOR_URL)) : [],
 });
 
 // The owner's conversation, where replies to task reports go.

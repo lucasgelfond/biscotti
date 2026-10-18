@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@10.29.1",
   "scripts": {
-    "services": "docker compose up -d --build --wait",
+    "services": "docker compose up -d --build --wait --force-recreate --renew-anon-volumes",
     "test": "vitest run"
   },
   "devDependencies": {

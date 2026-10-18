@@ -17,7 +17,9 @@ sudo install -m 644 sandbox-net.service /etc/systemd/system/sandbox-net.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now sandbox-net
 
-grep -q "^VAULT_PASSWORD=." .env || echo "VAULT_PASSWORD=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')" >> .env
+secret() { grep -q "^$1=." .env || echo "$1=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')" >> .env; }
+secret VAULT_PASSWORD
+secret EXECUTOR_ADMIN_PASSWORD
 sudo docker compose up -d
 sudo tailscale serve --bg --https=8443 http://127.0.0.1:4788
 sudo tailscale serve --bg --https=9443 http://127.0.0.1:8081
