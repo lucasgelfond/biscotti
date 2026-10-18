@@ -47,6 +47,8 @@ RUN mkdir -p /usr/share/backgrounds && \
       "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=85&w=1280&h=800&fit=crop" && \
     echo "aa403dc64a9378a59a8fc137e27d8246d55b5f7c363fbd93080e52e8daa9942e  /usr/share/backgrounds/biscotti.jpg" | sha256sum -c -
 COPY xfce4-desktop.xml /home/cua/.config/xfce4/xfconf/xfce-perchannel-xml/
+# Firefox: no first-run tabs, no telemetry.
+COPY firefox-policies.json /etc/firefox/policies/policies.json
 
 ARG CUA_SRC=https://raw.githubusercontent.com/trycua/cua/${CUA_COMMIT}/libs/xfce/src
 ADD ${CUA_SRC}/scripts/start-vnc.sh ${CUA_SRC}/scripts/start-novnc.sh ${CUA_SRC}/scripts/start-spacesd.sh \
