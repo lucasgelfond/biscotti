@@ -39,6 +39,7 @@ set_default TAILNET_HOST "$(tailscale status --json | jq -r '.Self.DNSName | rtr
 tailscale serve --bg --https=8443 http://127.0.0.1:4788
 tailscale serve --bg --https=9443 http://127.0.0.1:8081
 tailscale serve --bg --https=10443 http://172.16.0.2:6901
+tailscale serve --bg --https=8445 http://127.0.0.1:8082
 
 # On NixOS, binaries mounted into containers (Firecracker) need the Nix store.
 compose=(docker compose --env-file "$ENV" -f "$REPO/deploy/compose.yaml")

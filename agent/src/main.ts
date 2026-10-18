@@ -4,6 +4,7 @@ import { connectIMessage } from "./imessage.ts";
 import { connectors, ensureExecutorToken, NO, YES } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
+import { pageTool } from "./pages.ts";
 import { startPassThrough } from "./passthrough.ts";
 import { taskTool } from "./sandbox.ts";
 import { ensureVaultAccount, vaultTools } from "./vault.ts";
@@ -55,6 +56,7 @@ const agent = await createAgent({
   tools: [
     ...memoryTools(db, env("EMBEDDINGS_URL")),
     ...wakeTools(db, timezone),
+    ...(process.env.PAGES_URL ? [pageTool(`${dir}/pages`, process.env.PAGES_URL)] : []),
     ...(process.env.VAULT_URL
       ? vaultTools({ url: process.env.VAULT_URL, email: env("VAULT_EMAIL"), password: env("VAULT_PASSWORD"), dir, askOwner })
       : []),

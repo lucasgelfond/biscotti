@@ -25,3 +25,5 @@ sudo tailscale serve --bg --https=8443 http://127.0.0.1:4788
 sudo tailscale serve --bg --https=9443 http://127.0.0.1:8081
 # The running task VM's desktop (noVNC), to watch or take over.
 sudo tailscale serve --bg --https=10443 http://172.16.0.2:6901
+# Pages the agent publishes.
+sudo tailscale serve --bg --https=8445 http://127.0.0.1:8082

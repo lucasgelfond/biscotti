@@ -28,6 +28,7 @@ services:
       VAULT_EMAIL: agent@biscotti.local
       VAULT_PASSWORD: ${VAULT_PASSWORD:?}
       TZ: ${TZ:-America/New_York}
+      PAGES_URL: https://${TAILNET_HOST:?}:8445
       VM_DIR: /var/lib/biscotti/vm
       FIRECRACKER: /usr/local/bin/firecracker
     # Task VMs: KVM, the fc-task tap (opening it needs NET_ADMIN), the patched Firecracker and the snapshot.
@@ -73,7 +74,9 @@ services:
     environment:
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
       EXA_API_KEY: ${EXA_API_KEY:-}
-    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - agent:/agent:ro
     restart: unless-stopped
 
 volumes:
