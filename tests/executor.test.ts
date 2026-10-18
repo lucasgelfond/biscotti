@@ -77,3 +77,26 @@ test.skipIf(!process.env.AI_GATEWAY_API_KEY)("answers a task VM's model call wit
   expect(res.status).toBe(200);
   expect(JSON.stringify(body.content).toLowerCase()).toContain("biscotti");
 });
+
+test("offers host-side tools (like the vault's) to task VMs alongside Executor's", async () => {
+  const token = await setup;
+  const port = PASSTHROUGH_PORT + 2;
+  const vaultList = {
+    name: "vault_list",
+    label: "Vault",
+    description: "List shared vault items.",
+    parameters: { type: "object", properties: {} },
+    execute: async () => ({ content: [{ type: "text" as const, text: "Example login: username, password" }], details: {} }),
+  };
+  const server = startGate({ executorUrl: EXECUTOR_URL, token, gatewayKey: "unused", taskModel: "unused", hostTools: [vaultList as never], port, askOwner: async () => false });
+
+  const vm = await mcp(`http://127.0.0.1:${port}/mcp`);
+  const names = (await vm.listTools()).tools.map((t) => t.name);
+  const listed = await vm.callTool({ name: "vault_list", arguments: {} });
+  await vm.close();
+  server.close();
+
+  expect(names).toContain("vault_list");
+  expect(names).toContain("search");
+  expect(JSON.stringify(listed)).toContain("Example login: username, password");
+});

@@ -1,3 +1,4 @@
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -9,8 +10,8 @@ import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } fr
 // key stays on the host (Instinct-style: the VM asks, the host acts).
 // - /llm: the model, through the AI Gateway. VMs ask for the model "task"; the gate picks the real one.
 // - /search: Exa's MCP server.
-// - /tools: Executor's tools. When Executor pauses a call for approval, the gate asks the owner and resumes or
-//   declines; the VM never sees `resume`, so it can't approve anything.
+// - /tools: Executor's tools, plus host-side tools such as the vault's. When Executor pauses a call for approval, the
+//   gate asks the owner and resumes or declines; the VM never sees `resume`, so it can't approve anything.
 
 interface Paused {
   requestId: string;
@@ -50,6 +51,8 @@ export function startGate(opts: {
   gatewayKey: string;
   taskModel: string;
   exaKey?: string;
+  // Tools that run here on the host (e.g. vault_list, vault_get), offered to VMs alongside Executor's.
+  hostTools?: ToolDefinition[];
   port: number;
   askOwner: (question: string) => Promise<boolean>;
 }) {
@@ -102,13 +105,21 @@ export function startGate(opts: {
     }
 
     const server = new Server({ name: "biscotti", version: "1" }, { capabilities: { tools: {} } });
+    const hostTools = opts.hostTools ?? [];
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       const { tools } = await withExecutor((executor) => executor.listTools());
-      return { tools: tools.filter((t) => t.name !== "resume") };
+      const host = hostTools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters as never }));
+      return { tools: [...tools.filter((t) => t.name !== "resume"), ...host] };
     });
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      if (request.params.name === "resume") throw new Error("Approvals go to the owner, not the task.");
-      return call(request.params.name, request.params.arguments ?? {});
+      const { name, arguments: args = {} } = request.params;
+      if (name === "resume") throw new Error("Approvals go to the owner, not the task.");
+      const host = hostTools.find((t) => t.name === name);
+      if (host) {
+        const result = await host.execute("gate", args as never, undefined, undefined, undefined as never);
+        return { content: result.content as CallToolResult["content"] };
+      }
+      return call(name, args);
     });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {

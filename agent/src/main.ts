@@ -66,6 +66,10 @@ function askOwner(question: string) {
   });
 }
 
+const vault = process.env.VAULT_URL
+  ? vaultTools({ url: process.env.VAULT_URL, email: env("VAULT_EMAIL"), password: env("VAULT_PASSWORD"), dir, askOwner })
+  : [];
+
 const agent = await createAgent({
   db,
   dir,
@@ -75,9 +79,7 @@ const agent = await createAgent({
     ...wakeTools(db, timezone),
     reactTool,
     ...(process.env.PAGES_URL ? [pageTool(`${dir}/pages`, process.env.PAGES_URL)] : []),
-    ...(process.env.VAULT_URL
-      ? vaultTools({ url: process.env.VAULT_URL, email: env("VAULT_EMAIL"), password: env("VAULT_PASSWORD"), dir, askOwner })
-      : []),
+    ...vault,
     ...(process.env.VM_DIR
       ? [
           taskTool(
@@ -104,6 +106,7 @@ if (executorUrl && executorKey && process.env.GATE_PORT)
     gatewayKey: env("AI_GATEWAY_API_KEY"),
     taskModel: process.env.TASK_MODEL ?? "deepseek/deepseek-v4.1-flash-1017-fast",
     exaKey: process.env.EXA_API_KEY,
+    hostTools: vault,
     port: Number(process.env.GATE_PORT),
     askOwner,
   });

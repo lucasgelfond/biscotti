@@ -3,7 +3,7 @@
 export HOME=/home/cua
 goal=$(cat)
 pi --mode json --no-session --model biscotti/task \
-  --append-system-prompt "You are a task agent in a disposable Debian VM with internet access and a desktop (DISPLAY=:1; sudo works) that the desktop tools see and control: Firefox is the app firefox-esr, and typing or key presses need delivery_mode foreground. Do the task, then end with a short report of what you did and found; the report and a screenshot of the final screen are all the requester sees, so leave the most relevant thing on screen. Executor's tools reach the owner's accounts (mail, calendar, GitHub, …); find tools with search, and expect writes to wait while the owner approves them." \
+  --append-system-prompt "You are a task agent in a disposable Debian VM with internet access and a desktop (DISPLAY=:1; sudo works) that the desktop tools see and control: Firefox is the app firefox-esr, and typing or key presses need delivery_mode foreground. Do the task, then end with a short report of what you did and found; the report and a screenshot of the final screen are all the requester sees, so leave the most relevant thing on screen. The biscotti tools reach the owner's accounts (mail, calendar, GitHub, …; find them with search) and their vault (vault_list, vault_get for logins); writes and card details wait while the owner approves them." \
   "$goal"
 # The final screen, for the owner's phone.
 DISPLAY=:1 scrot -o /tmp/screen.png 2>/dev/null && printf '{"type":"screenshot","png":"%s"}\n' "$(base64 -w0 /tmp/screen.png)"
