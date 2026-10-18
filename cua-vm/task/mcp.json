@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "executor": {
+      "url": "http://172.16.0.1/tools/mcp",
+      "exposure": "direct",
+      "timeout": 900,
+      "description": "The owner's connected accounts (Google, GitHub, …) through Executor. Writes wait for the owner's approval."
+    }
+  }
+}

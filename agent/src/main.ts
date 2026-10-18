@@ -1,9 +1,10 @@
 import { attachment, Spectrum, type Space } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 import { createAgent } from "./agent.ts";
-import { ensureExecutorToken, executor } from "./connectors.ts";
+import { ensureExecutorToken, executor, NO, YES } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
+import { startPassThrough } from "./passthrough.ts";
 import { taskTool } from "./sandbox.ts";
 import { ensureVaultAccount } from "./vault.ts";
 
@@ -15,6 +16,7 @@ function env(name: string) {
 
 const dir = process.env.DATA_DIR ?? "/data";
 const db = openDb(`${dir}/biscotti.db`);
+const executorUrl = process.env.EXECUTOR_URL;
 
 // The agent's Executor token: EXECUTOR_API_KEY if set, otherwise minted on first start (with the owner's admin account).
 async function executorToken(url: string) {
@@ -31,6 +33,8 @@ if (process.env.VAULT_URL) {
   const account = await ensureVaultAccount(process.env.VAULT_URL, env("VAULT_EMAIL"), env("VAULT_PASSWORD"));
   console.log(`vault account ${account}`);
 }
+const executorKey = executorUrl ? await executorToken(executorUrl) : undefined;
+
 const agent = await createAgent({
   db,
   dir,
@@ -45,8 +49,21 @@ const agent = await createAgent({
         ]
       : []),
   ],
-  extensions: process.env.EXECUTOR_URL ? executor(process.env.EXECUTOR_URL, await executorToken(process.env.EXECUTOR_URL)) : [],
+  extensions: executorUrl && executorKey ? executor(executorUrl, executorKey) : [],
 });
+
+// Task VMs reach Executor through the bridge's /tools route; writes they request are put to the owner here.
+let pendingApproval: ((yes: boolean) => void) | undefined;
+function askOwner(question: string) {
+  if (!ownerSpace) return Promise.resolve(false);
+  void ownerSpace.send(question);
+  return new Promise<boolean>((resolve) => {
+    pendingApproval = resolve;
+    setTimeout(() => resolve(false), 10 * 60_000);
+  });
+}
+if (executorUrl && executorKey && process.env.PASSTHROUGH_PORT)
+  startPassThrough({ executorUrl, token: executorKey, port: Number(process.env.PASSTHROUGH_PORT), askOwner });
 
 // The owner's conversation, where replies to task reports go.
 let ownerSpace: Space | undefined;
@@ -75,6 +92,14 @@ for await (const [space, message] of app.messages) {
   }
   ownerSpace = space;
   const text = message.content.text;
+  // A yes or no while a task's write waits for approval answers that, not the conversation.
+  if (pendingApproval && (YES.test(text.trim()) || NO.test(text.trim()))) {
+    const yes = YES.test(text.trim());
+    pendingApproval(yes);
+    pendingApproval = undefined;
+    await space.send(yes ? "Approved." : "Declined.");
+    continue;
+  }
   // Not awaited: a text that arrives mid-reply steers the reply already underway.
   space
     .responding(async () => {

@@ -39,7 +39,7 @@ RUN case "$TARGETARCH" in \
 COPY task/package.json task/package-lock.json /opt/pi/
 RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
 COPY task/biscotti-task /usr/local/bin/
-COPY task/models.json /home/cua/.pi/agent/
+COPY task/models.json task/mcp.json /home/cua/.pi/agent/
 
 # Wallpaper: "biscotti" by Geertje Caliguire on Unsplash (Unsplash License), fetched at a pinned size and checksum.
 RUN mkdir -p /usr/share/backgrounds && \

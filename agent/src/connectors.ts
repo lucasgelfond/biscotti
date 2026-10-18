@@ -1,7 +1,8 @@
 import { createMcpExtension, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)\b/i;
+export const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)\b/i;
+export const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)\b/i;
 
 function text(content: unknown): string {
   if (typeof content === "string") return content;
