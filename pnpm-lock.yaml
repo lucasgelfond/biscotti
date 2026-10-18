@@ -69,12 +69,6 @@ importers:
         specifier: 12.10.1
         version: 12.10.1(@spectrum-ts/core@12.10.1(typescript@7.0.2))(typescript@7.0.2)
 
-  plugins/connectors/executor:
-    dependencies:
-      '@biscotti/core':
-        specifier: workspace:*
-        version: link:../../../core
-
   plugins/embedding:
     dependencies:
       '@biscotti/core':
@@ -101,27 +95,6 @@ importers:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
-      drizzle-orm:
-        specifier: 0.45.4
-        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
-
-  plugins/secrets/sqlite:
-    dependencies:
-      '@biscotti/core':
-        specifier: workspace:*
-        version: link:../../../core
-      drizzle-orm:
-        specifier: 0.45.4
-        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
-
-  plugins/wakes:
-    dependencies:
-      '@biscotti/core':
-        specifier: workspace:*
-        version: link:../../core
-      croner:
-        specifier: 10.0.1
-        version: 10.0.1
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
