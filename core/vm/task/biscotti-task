@@ -39,7 +39,10 @@ await new Promise((resolve) => {
 createServer({ allowHalfOpen: true }, (socket) => {
   let goal = "";
   socket.setEncoding("utf8").on("data", (d) => (goal += d));
+  socket.on("error", () => {});
   socket.on("end", () => {
+    // A readiness probe connects and sends nothing.
+    if (!goal.trim()) return socket.end();
     const forward = (line, record) => {
       if (record.type !== "response") socket.write(`${line}\n`);
       if (record.type !== "agent_settled") return;
