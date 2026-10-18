@@ -226,24 +226,26 @@ struct InstallerView: View {
     /// You reach biscotti's pages and forms over Tailscale, from this Mac and your phone.
     @ViewBuilder private var tailscale: some View {
         Form {
-            LabeledContent("On this Mac") {
-                if tailscaleOnMac {
-                    Label("Installed", systemImage: "checkmark.circle.fill")
-                } else {
-                    Link("Install Tailscale", destination: Tailscale.downloadMac)
+            Section {
+                LabeledContent("On this Mac") {
+                    if tailscaleOnMac {
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                    } else {
+                        Link("Install Tailscale", destination: Tailscale.downloadMac)
+                    }
                 }
-            }
-            field("biscotti's name on your tailnet", $settings.tailscaleName)
-            LabeledContent("On your phone") {
-                if let phone {
-                    Label(phone, systemImage: "checkmark.circle.fill")
-                } else {
-                    HStack {
-                        Toggle("Tailscale is installed on my phone", isOn: $phoneConfirmed).toggleStyle(.checkbox)
-                        Link("Get it", destination: Tailscale.downloadPhone)
+                LabeledContent("On your phone") {
+                    if let phone {
+                        Label(phone, systemImage: "checkmark.circle.fill")
+                    } else {
+                        HStack {
+                            Toggle("Tailscale is installed on my phone", isOn: $phoneConfirmed).toggleStyle(.checkbox)
+                            Link("Get it", destination: Tailscale.downloadPhone)
+                        }
                     }
                 }
             }
+            Section { field("biscotti's name on your tailnet", $settings.tailscaleName) }
         }
         .settingsForm()
         .onAppear { checkTailscale() }
