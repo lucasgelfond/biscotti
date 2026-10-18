@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>biscotti</title>
+<p style="font:15px ui-monospace,Menlo,monospace">Connecting…</p>
+<script>
+  // Google's sign-in comes back here; the state ends with "~<your biscotti's tailnet host>", where it's sent on.
+  const params = new URLSearchParams(location.search);
+  const host = (params.get("state") ?? "").split("~")[1] ?? "";
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net$/.test(host)) location.replace(`https://${host}:9443/oauth/callback${location.search}`);
+  else document.body.textContent = "This sign-in link isn't from a biscotti.";
+</script>

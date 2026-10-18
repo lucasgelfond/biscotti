@@ -32,7 +32,8 @@ function rfc822(to: string, subject: string, text: string, inReplyTo?: string) {
 function googleApi(ctx: Context) {
   const clientId = ctx.env("GOOGLE_CLIENT_ID");
   const clientSecret = ctx.env("GOOGLE_CLIENT_SECRET");
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? `https://${ctx.env("TAILNET_HOST")}:9443/oauth/callback`;
+  // One redirect URI for every install: the site's relay page sends the browser on to this host (carried in the state).
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? "https://biscotti.lucasgelfond.online/oauth/callback";
   ctx.db.run(sql`CREATE TABLE IF NOT EXISTS google_auth (id integer PRIMARY KEY CHECK (id = 1), refresh_token text NOT NULL)`);
   let access: { token: string; expires: number } | undefined;
 
@@ -84,7 +85,7 @@ function googleApi(ctx: Context) {
 
   function signInLink() {
     serve();
-    state = randomBytes(16).toString("hex");
+    state = `${randomBytes(16).toString("hex")}~${ctx.env("TAILNET_HOST")}`;
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,

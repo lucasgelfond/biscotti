@@ -1,7 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
+import { eq } from "drizzle-orm";
 import type { Db } from "./memory.ts";
+import { vault } from "./schema.ts";
 
 // The plugin API. A plugin is plugins/<name>/index.ts default-exporting a Plugin; biscotti.json picks them.
 
@@ -70,3 +72,6 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
       withClient((client) => (call ? call(client, name, args) : (client.callTool({ name, arguments: args }) as Promise<CallToolResult>))),
   };
 }
+
+// A vault entry's values, for plugins whose keys can be saved there.
+export const secret = (db: Db, name: string) => db.select().from(vault).where(eq(vault.name, name)).get()?.value;
