@@ -23,6 +23,18 @@ export const memories = sqliteTable("memories", {
     .$defaultFn(() => new Date()),
 });
 
+// Scheduled wakes: a prompt the agent gave itself, due on a cron schedule or once at a set time (`when`).
+export const wakes = sqliteTable("wakes", {
+  id: integer().primaryKey({ autoIncrement: true }),
+  label: text().notNull(),
+  when: text().notNull(),
+  prompt: text().notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  lastRun: integer("last_run", { mode: "timestamp" }),
+});
+
 export function openDb(path: string) {
   const db = drizzle(new Database(path));
   migrate(db, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });

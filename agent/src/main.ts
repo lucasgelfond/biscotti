@@ -7,6 +7,7 @@ import { memoryTools } from "./memory.ts";
 import { startPassThrough } from "./passthrough.ts";
 import { taskTool } from "./sandbox.ts";
 import { ensureVaultAccount, vaultTools } from "./vault.ts";
+import { startWakes, wakeTools } from "./wakes.ts";
 
 function env(name: string) {
   const value = process.env[name];
@@ -17,6 +18,7 @@ function env(name: string) {
 const dir = process.env.DATA_DIR ?? "/data";
 const db = openDb(`${dir}/biscotti.db`);
 const executorUrl = process.env.EXECUTOR_URL;
+const timezone = process.env.TZ ?? "America/New_York";
 
 // The agent's Executor token: EXECUTOR_API_KEY if set, otherwise minted on first start (with the owner's admin account).
 async function executorToken(url: string) {
@@ -52,6 +54,7 @@ const agent = await createAgent({
   model: process.env.MODEL,
   tools: [
     ...memoryTools(db, env("EMBEDDINGS_URL")),
+    ...wakeTools(db, timezone),
     ...(process.env.VAULT_URL
       ? vaultTools({ url: process.env.VAULT_URL, email: env("VAULT_EMAIL"), password: env("VAULT_PASSWORD"), dir, askOwner })
       : []),
@@ -87,6 +90,7 @@ async function deliver(text: string, screenshot?: Buffer) {
 const owner = env("OWNER");
 const imessage = await connectIMessage(env);
 ownerSpace = imessage.ownerSpace;
+startWakes(db, timezone, (wake) => deliver(`Wake (${wake.label}): ${wake.prompt}`));
 
 for await (const [space, message] of imessage.app.messages) {
   if (message.direction === "outbound" || message.content.type !== "text") continue;

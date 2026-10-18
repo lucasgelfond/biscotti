@@ -64,6 +64,7 @@ code of our own.
 | Sandbox contents | **the task agent and the desktop in the same sandbox** (Instinct's layout) | — | decided |
 | Bridge | **Caddy** adds the keys for Vercel and Executor; sandbox network access is limited to the bridge | — | decided |
 | Sandbox runtime | **Firecracker** (bake-off winner; patched for GICv2 on the Pi 5: `lucasgelfond/firecracker@biscotti-gicv2`). **One fresh VM per task**, restored from a snapshot of the desktop taken once it is ready (`cua-vm/snapshots.sh`), and thrown away after. **Every task has a desktop**, so there is always a screen to send to the owner's phone. The disk is read-only and shared; each VM writes to a RAM overlay. The task agent is pi inside the VM (one `pi --mode json` run per connection on port 4000), reaching the model through the bridge's `/llm`. The main agent's `task(goal)` tool returns at once; the report comes back as a "Task report" message that the main agent summarizes. **One VM at a time** for now (the snapshot has one guest address); per-VM network namespaces would allow more | `agent/src/sandbox.ts` | decided |
+| Wakes | The agent `schedule`s a prompt for itself, on a cron expression or once at a local time, in SQLite (`wakes`; `croner` for the cron math). When due, it returns to the conversation as a "Wake" message the agent acts on: a reminder, or a task whose report it summarizes. `list_wakes` / `cancel_wake` | `agent/src/wakes.ts` | decided |
 | Web search | **Exa's hosted MCP server** (`https://mcp.exa.ai/mcp`; tools `web_search_exa` and `web_fetch_exa`, more via `?tools=`), for the main agent and for task agents. The key (`EXA_API_KEY`, sent as an `x-api-key` header) stays on the host: the main agent adds the header itself, and the bridge gets a `/search` route that adds it for VMs (as `/llm` adds the gateway key), with pi in the VM pointing its MCP config there. Setup reference: https://exa.ai/docs/get-started/exa-mcp | bridge route + VM `mcp.json` | **planned** |
 | Desktop image | Cua's XFCE image, rebuilt multi-arch (`cua-vm/`) | — | decided |
 | Network | **Tailscale**; `tailscale serve` on `biscotti.<tailnet>.ts.net` | — | decided |
@@ -224,8 +225,7 @@ Each step ends with something you can check.
   agent logs.
 
 - Backlog (ideas from comparing with Instinct):
-  - **Wakes:** scheduled prompts ("remind me at 5") and event subscriptions (new mail matching X, calendar
-    changes), so the agent can act without being texted first.
+  - **Event wakes:** subscriptions (new mail matching X, calendar changes). Scheduled wakes are built (above).
   - **`vault_request`:** a one-time web form for a secret the agent needs, so secrets never travel over iMessage.
   - **Derived fill fields:** `totp` (fill the current 2FA code) and card expiry as MM/YY; fill into digit boxes and
     `<select>`s.
