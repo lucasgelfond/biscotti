@@ -6,8 +6,11 @@ import UniformTypeIdentifiers
 struct BiscottiInstaller: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
+    // Always one fresh window: restoring a saved (empty) window state could leave the app with none.
+    init() { UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true]) }
+
     var body: some Scene {
-        WindowGroup("Installer") { InstallerView() }
+        Window("Installer", id: "installer") { InstallerView() }
             .windowResizability(.contentSize)
     }
 }
@@ -15,6 +18,7 @@ struct BiscottiInstaller: App {
 /// A menu bar with just About and Quit. Without an Edit menu, text fields lose ⌘X/⌘C/⌘V/⌘A/⌘Z, so a key monitor
 /// sends those to the focused field.
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationDidFinishLaunching(_ notification: Notification) {
         let app = NSMenu()
         app.addItem(withTitle: "About biscotti Installer", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
