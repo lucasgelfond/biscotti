@@ -32,8 +32,7 @@ function rfc822(to: string, subject: string, text: string, inReplyTo?: string) {
 function googleApi(ctx: Context) {
   const clientId = ctx.env("GOOGLE_CLIENT_ID");
   const clientSecret = ctx.env("GOOGLE_CLIENT_SECRET");
-  // One redirect URI for every install: the site's relay page sends the browser on to this host (carried in the state).
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? "https://biscotti.lucasgelfond.online/oauth/callback";
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? `https://${ctx.env("TAILNET_HOST")}:9443/oauth/callback`;
   ctx.db.run(sql`CREATE TABLE IF NOT EXISTS google_auth (id integer PRIMARY KEY CHECK (id = 1), refresh_token text NOT NULL)`);
   let access: { token: string; expires: number } | undefined;
 
@@ -85,7 +84,7 @@ function googleApi(ctx: Context) {
 
   function signInLink() {
     serve();
-    state = `${randomBytes(16).toString("hex")}~${ctx.env("TAILNET_HOST")}`;
+    state = randomBytes(16).toString("hex");
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
@@ -98,7 +97,7 @@ function googleApi(ctx: Context) {
     return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   }
 
-  return { call, signInLink };
+  return { call, signInLink, redirectUri };
 }
 
 const str = { type: "string" } as const;
@@ -109,16 +108,17 @@ their inbox (\`gmail_search\`) and calendar (\`calendar_events\`) first, in para
 user themselves, so just call the tool. If Google isn't connected, \`google_connect\` gives a sign-in link to text them.`,
 
   async tools(ctx) {
-    const { call, signInLink } = googleApi(ctx);
+    const { call, signInLink, redirectUri } = googleApi(ctx);
     const confirm = async (question: string) => (await ctx.ask(`${question}\n\nReply yes or no.`)) || undefined;
     const declined = text("The user declined.");
 
     return localTools([
       {
         name: "google_connect",
-        description: "Get a link for the user to connect their Google account (Gmail and Calendar). Text it to them.",
+        description: "Get a link for the user to connect their Google account (Gmail and Calendar). Text it to them, with the note about the redirect URI.",
         input: { type: "object", properties: {} },
-        run: async () => text(signInLink()),
+        run: async () =>
+          text(`${signInLink()}\n\nIf Google says redirect_uri_mismatch, the user adds ${redirectUri} as an authorized redirect URI on their OAuth client (Google Cloud console, Credentials), then tries the link again.`),
       },
       {
         name: "gmail_search",
