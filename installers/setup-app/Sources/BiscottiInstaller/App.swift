@@ -107,6 +107,8 @@ struct InstallerView: View {
     @State private var phone = UserDefaults.standard.string(forKey: "tailscalePhone")
     @State private var phoneConfirmed = false
     @State private var askedContacts = false
+    @State private var skipped: Set<Step> = []
+    @State private var skippedPlugins: [String] = []
     @State private var hasLima = Mac.tool("limactl") != nil
 
     private var steps: [Step] { target.steps }
@@ -220,7 +222,7 @@ struct InstallerView: View {
     }
 
     /// You reach biscotti's pages and forms over Tailscale, from this Mac and your phone.
-    private var tailscale: some View {
+    @ViewBuilder private var tailscale: some View {
         Form {
             LabeledContent("On this Mac") {
                 if tailscaleOnMac {
@@ -242,6 +244,22 @@ struct InstallerView: View {
         }
         .settingsForm()
         .onAppear { checkTailscale() }
+        if phone == nil && !phoneConfirmed {
+            Text("You can skip this, but you'll need Tailscale on your phone later to open biscotti's forms.")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Optional steps can be skipped: a plugin without its keys is turned off, and no SSH key is added.
+    private func skip() {
+        if step == .plugins {
+            let missing = Settings.optionalPlugins.filter { settings.plugins.contains($0.id) && !settings.hasKeys($0.id) }
+            for plugin in missing { settings.plugins.remove(plugin.id) }
+            skippedPlugins = missing.map(\.name)
+        }
+        if step == .ssh { settings.sshKey = "" }
+        skipped.insert(step)
+        index += 1
     }
 
     private func checkTailscale() {
@@ -377,12 +395,14 @@ struct InstallerView: View {
     private var review: some View {
         Form {
             LabeledContent("Target", value: target.title)
+            row(.tailscale, skipped.contains(.tailscale) ? "Skipped" : phone ?? "Ready")
             if target == .pi { row(.wifi, settings.wifiName) }
             row(.you, settings.phone)
             row(.photon, settings.photonID)
             row(.llm, "\(settings.model) via \(URL(string: settings.llmBaseURL)?.host() ?? settings.llmBaseURL)")
-            row(.plugins, Settings.optionalPlugins.filter { settings.plugins.contains($0.id) }.map(\.name).joined(separator: ", "))
-            if target == .pi { row(.ssh, settings.sshKey.isEmpty ? "None" : "Key added") }
+            row(.plugins, (Settings.optionalPlugins.filter { settings.plugins.contains($0.id) }.map(\.name)
+                + skippedPlugins.map { "\($0): Skipped" }).joined(separator: ", "))
+            if target == .pi { row(.ssh, skipped.contains(.ssh) ? "Skipped" : settings.sshKey.isEmpty ? "None" : "Key added") }
         }
         .settingsForm()
     }
@@ -567,9 +587,13 @@ struct InstallerView: View {
                     .disabled(busy)
             case .done: Button("Quit") { NSApp.terminate(nil) }.keyboardShortcut(.defaultAction)
             default:
-                Button("Continue") { index += 1 }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canContinue)
+                if [.tailscale, .plugins, .ssh].contains(step) { Button("Skip", action: skip) }
+                Button("Continue") {
+                    skipped.remove(step)
+                    index += 1
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canContinue)
             }
         }
     }

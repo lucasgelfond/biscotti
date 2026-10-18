@@ -35,11 +35,15 @@ struct Settings {
     var hasOwner: Bool { !phone.isEmpty && !email.isEmpty }
     var hasPhoton: Bool { !photonID.isEmpty && !photonSecret.isEmpty }
     var hasAI: Bool { ![llmBaseURL, llmKey, model].contains { $0.isEmpty } }
-    var hasPluginKeys: Bool {
-        !(plugins.contains("exa") && exaKey.isEmpty)
-            && !(plugins.contains("google") && (googleClientID.isEmpty || googleClientSecret.isEmpty))
-            && !(plugins.contains("github") && githubToken.isEmpty)
+    func hasKeys(_ plugin: String) -> Bool {
+        switch plugin {
+        case "exa": !exaKey.isEmpty
+        case "google": !googleClientID.isEmpty && !googleClientSecret.isEmpty
+        case "github": !githubToken.isEmpty
+        default: true
+        }
     }
+    var hasPluginKeys: Bool { plugins.allSatisfy(hasKeys) }
     /// Everything but Wi-Fi, which only the Pi needs.
     var isComplete: Bool { hasOwner && hasPhoton && hasAI && hasPluginKeys }
 
