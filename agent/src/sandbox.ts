@@ -1,5 +1,6 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { connect } from "node:net";
@@ -32,7 +33,10 @@ async function runInVm(vmDir: string, firecracker: string, goal: string) {
     });
     return await runPi(GUEST, goal);
   } finally {
+    // Wait for the exit too: the next VM can't open the tap until this one has let go of it.
+    const exited = once(vm, "exit");
     vm.kill("SIGKILL");
+    await exited;
   }
 }
 
