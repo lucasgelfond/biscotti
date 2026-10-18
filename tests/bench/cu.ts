@@ -31,6 +31,10 @@ const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | 
     goal: "Look up nonstop and one-stop flights from JFK to SFO on November 14, 2026, departing in the morning (before noon), on Google Flights. Report the best few options with airline, departure and arrival times, stops and price. Leave the results on screen.",
     pass: (r) => /\$\s?\d/.test(r) && /(am|a\.m\.|\d{1,2}:\d{2})/i.test(r) && !/(couldn't|could not|unable to)/i.test(r),
   },
+  cameron: {
+    goal: "Find upcoming New York screenings of the concert film \"Cameron Winter at Carnegie Hall\" at Village East (Angelika) and Alamo Drafthouse Brooklyn. For the next showing at each, open seat selection and give a general overview of the seat map: which areas are open, roughly how full, and the best 2 seats together left. Leave a seat map on screen. Don't buy anything.",
+    pass: (r) => /seat/i.test(r) && /(village east|alamo)/i.test(r) && !/(couldn't|could not|unable to) (find|get|open)/i.test(r),
+  },
   angelika: {
     goal: "Find tickets for the Cameron Winter concert film at an Angelika theater in New York. Pick the next showing, open its seat selection, and give a general overview of the seat map: which areas are open, roughly how full, and the best seats left. Leave the seat map on screen. Don't buy anything.",
     pass: (r) => /cameron winter/i.test(r) && /seat/i.test(r) && !/(couldn't|could not|unable to) (find|get|open)/i.test(r),
