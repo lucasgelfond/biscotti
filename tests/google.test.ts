@@ -58,7 +58,7 @@ test("answers from the inbox and the calendar", async () => {
 test("asks before sending an email, and sends it on a yes", async () => {
   const { say, sent } = await connected();
 
-  const replied = say("Email sam@example.com that I'm running 10 minutes late to dinner. Send it.");
+  const replied = say("Send an email to sam@example.com saying I'm running 10 minutes late to dinner.");
   await expect.poll(() => sent.join("\n"), { timeout: 60_000 }).toContain("Reply yes or no");
   await say("yes");
   await replied;
