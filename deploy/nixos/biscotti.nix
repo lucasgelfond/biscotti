@@ -8,7 +8,7 @@ let
       (pkgs.fetchpatch {
         url = "https://github.com/lucasgelfond/firecracker/compare/e786ba84fd5e0db878392a6a1f234e1b17fcaeb2...4f39c49fbe249592ccfb9ab20f29850ca1a66df7.diff";
         excludes = [ "CHANGELOG.md" ];
-        hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        hash = "sha256-1MLhwa9oqDYIxn/j3tdHcGBVKVBr9W03ncVVFzUXLvM=";
       })
     ];
   });
