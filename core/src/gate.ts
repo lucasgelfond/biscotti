@@ -10,6 +10,24 @@ export const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)\b
 export const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)\b/i;
 const ANSWER_TIMEOUT_MS = 10 * 60_000;
 
+// Some providers (Gemini) reject loose JSON Schema that MCP tools use: type lists, and properties on untyped or
+// non-object nodes.
+function strict(tool: unknown): unknown {
+  const fix = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(fix);
+    if (!node || typeof node !== "object") return node;
+    const out: Record<string, unknown> = Object.fromEntries(Object.entries(node).map(([k, v]) => [k, fix(v)]));
+    if (Array.isArray(out.type)) out.type = out.type.find((t) => t !== "null") ?? "string";
+    if (out.properties && !out.type) out.type = "object";
+    if (out.type && out.type !== "object") {
+      delete out.properties;
+      delete out.required;
+    }
+    return out;
+  };
+  return fix(tool);
+}
+
 export function createGate(opts: {
   // Any OpenAI-compatible API (AI Gateway, OpenRouter, OpenAI, a local server, …).
   llm: { url: string; key: string };
@@ -65,7 +83,7 @@ export function createGate(opts: {
     const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}${req.url!.slice("/llm".length)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
-      body: JSON.stringify({ ...body, model }),
+      body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict) }),
     });
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
     for await (const chunk of upstream.body ?? []) res.write(chunk);

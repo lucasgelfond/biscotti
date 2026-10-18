@@ -29,7 +29,7 @@ const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | 
   },
   angelika: {
     goal: "Find tickets for the Cameron Winter concert film at an Angelika theater in New York. Pick the next showing, open its seat selection, and give a general overview of the seat map: which areas are open, roughly how full, and the best seats left. Leave the seat map on screen. Don't buy anything.",
-    pass: (r) => /cameron winter/i.test(r) && /seat/i.test(r) && /(open|available|full|sold|left)/i.test(r),
+    pass: (r) => /cameron winter/i.test(r) && /seat/i.test(r) && !/(couldn't|could not|unable to) (find|get|open)/i.test(r),
   },
   seats: {
     goal: "Open https://www.seatguru.com/airlines/Delta_Airlines/Delta_Airlines_Airbus_A321_new.php and give a general overview of the seat map: the cabins, roughly how many rows each, and which rows are exit rows.",
@@ -77,6 +77,8 @@ async function run(task: string, slot: number, guidance: string) {
           toolMs += e.durationMs ?? 0;
         }
         if (e.type === "message_end" && e.message?.role === "assistant") {
+          const err = (e.message as { errorMessage?: string }).errorMessage;
+          if (err) report = `error: ${err}`;
           const text = e.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
           if (text) report = text;
         }
