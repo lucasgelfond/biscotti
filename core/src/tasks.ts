@@ -177,7 +177,12 @@ function runPi(host: string, goal: string) {
   });
 }
 
-export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: string, result: TaskResult) => void, watch?: (slot: number) => string) {
+export function taskTool(
+  vms: ReturnType<typeof taskVms>,
+  onReport: (goal: string, result: TaskResult) => void,
+  watch?: (slot: number) => string,
+  track?: (goal: string) => () => void,
+) {
   return defineTool({
     name: "task",
     label: "Task",
@@ -185,11 +190,15 @@ export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: strin
       "Start a task in a fresh, disposable Linux VM with a desktop, browser, shell and internet, for anything that needs a website, a program or files. Returns right away; the report arrives later as a message starting 'Task report'. The task agent sees only the goal, so make it complete.",
     parameters: Type.Object({ goal: Type.String() }),
     async execute(_id, { goal }) {
+      const done = track?.(goal);
       const started = new Promise<number>((resolve) =>
-        vms.run(goal, resolve).then(
-          (result) => onReport(goal, result),
-          (err) => onReport(goal, { report: `The task failed: ${err.message}` }),
-        ),
+        vms
+          .run(goal, resolve)
+          .then(
+            (result) => onReport(goal, result),
+            (err) => onReport(goal, { report: `The task failed: ${err.message}` }),
+          )
+          .finally(done),
       );
       // A queued task (every slot busy) doesn't hold up the reply.
       const slot = watch && (await Promise.race([started, new Promise<undefined>((r) => setTimeout(r, 3000))]));

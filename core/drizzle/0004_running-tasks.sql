@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS `tasks` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`goal` text NOT NULL
+);

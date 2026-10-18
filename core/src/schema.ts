@@ -29,6 +29,12 @@ export const vault = sqliteTable("vault", {
   value: text({ mode: "json" }).$type<Record<string, string>>().notNull(),
 });
 
+// Tasks still running, so ones cut off by a restart get reported (biscotti.ts).
+export const tasks = sqliteTable("tasks", {
+  id: integer().primaryKey({ autoIncrement: true }),
+  goal: text().notNull(),
+});
+
 export const memories = sqliteTable("memories", {
   id: integer().primaryKey({ autoIncrement: true }),
   content: text().notNull(),
