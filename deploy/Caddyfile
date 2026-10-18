@@ -14,6 +14,14 @@ http://172.16.0.1:80 {
 		}
 	}
 
+	# Web search: Exa's MCP server.
+	handle_path /search/* {
+		reverse_proxy https://mcp.exa.ai {
+			header_up x-api-key "{env.EXA_API_KEY}"
+			header_up Host {upstream_hostport}
+		}
+	}
+
 	# Connectors: the agent's pass-through to Executor, which asks the owner before any write.
 	handle_path /tools/* {
 		reverse_proxy 127.0.0.1:4790

@@ -12,6 +12,7 @@ services:
     init: true
     environment:
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:?}
+      EXA_API_KEY: ${EXA_API_KEY:-}
       SPECTRUM_PROJECT_ID: ${SPECTRUM_PROJECT_ID:?}
       SPECTRUM_PROJECT_SECRET: ${SPECTRUM_PROJECT_SECRET:?}
       OWNER: ${OWNER:?}
@@ -71,6 +72,7 @@ services:
     init: true
     environment:
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      EXA_API_KEY: ${EXA_API_KEY:-}
     volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]
     restart: unless-stopped
 

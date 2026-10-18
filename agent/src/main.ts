@@ -1,7 +1,7 @@
 import { attachment, Spectrum, type Space } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 import { createAgent } from "./agent.ts";
-import { ensureExecutorToken, executor, NO, YES } from "./connectors.ts";
+import { connectors, ensureExecutorToken, NO, YES } from "./connectors.ts";
 import { openDb } from "./db.ts";
 import { memoryTools } from "./memory.ts";
 import { startPassThrough } from "./passthrough.ts";
@@ -63,7 +63,10 @@ const agent = await createAgent({
         ]
       : []),
   ],
-  extensions: executorUrl && executorKey ? executor(executorUrl, executorKey) : [],
+  extensions: connectors({
+    executor: executorUrl && executorKey ? { url: executorUrl, token: executorKey } : undefined,
+    exaKey: process.env.EXA_API_KEY,
+  }),
 });
 
 if (executorUrl && executorKey && process.env.PASSTHROUGH_PORT)

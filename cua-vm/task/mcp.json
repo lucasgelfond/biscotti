@@ -4,7 +4,12 @@
       "url": "http://172.16.0.1/tools/mcp",
       "exposure": "direct",
       "timeout": 900,
-      "description": "The owner's connected accounts (Google, GitHub, …) through Executor. Writes wait for the owner's approval."
+      "description": "The owner's connected accounts (Google, GitHub, \u2026) through Executor. Writes wait for the owner's approval."
+    },
+    "exa": {
+      "url": "http://172.16.0.1/search/mcp",
+      "exposure": "direct",
+      "description": "Web search and page fetching (Exa)."
     }
   }
 }

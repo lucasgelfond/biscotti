@@ -9,23 +9,22 @@ function text(content: unknown): string {
   return (content as { type: string; text?: string }[]).map((p) => p.text ?? "").join("");
 }
 
-// Executor's tools over MCP. Calls that need approval pause, and the agent resumes them with the owner's answer
-// (Executor's default "model" elicitation mode). The agent can't approve on its own: accepting is allowed only when
-// the owner's latest text is a yes, and each yes approves one request.
-export function executor(url: string, token: string): ExtensionFactory[] {
-  const mcp = createMcpExtension({
-    loadConfig: () => ({
-      servers: [
-        {
-          name: "executor",
-          source: "biscotti",
-          scope: "extension",
-          config: { url: `${url}/mcp`, headers: { Authorization: `Bearer ${token}` }, exposure: "direct" },
-        },
-      ],
-      errors: [],
-    }),
-  });
+const server = (name: string, url: string, headers: Record<string, string>) => ({
+  name,
+  source: "biscotti",
+  scope: "extension" as const,
+  config: { url, headers, exposure: "direct" as const },
+});
+
+// Executor's tools and Exa's web search over MCP. Executor's calls that need approval pause, and the agent resumes
+// them with the owner's answer (its default "model" elicitation mode). The agent can't approve on its own: accepting
+// is allowed only when the owner's latest text is a yes, and each yes approves one request.
+export function connectors(opts: { executor?: { url: string; token: string }; exaKey?: string }): ExtensionFactory[] {
+  const servers = [
+    ...(opts.executor ? [server("executor", `${opts.executor.url}/mcp`, { Authorization: `Bearer ${opts.executor.token}` })] : []),
+    ...(opts.exaKey ? [server("exa", "https://mcp.exa.ai/mcp", { "x-api-key": opts.exaKey })] : []),
+  ];
+  const mcp = createMcpExtension({ loadConfig: () => ({ servers, errors: [] }) });
 
   const usedYes = new Set<string>();
   const approvals: ExtensionFactory = (pi) => {
