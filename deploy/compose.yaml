@@ -55,7 +55,6 @@ services:
     network_mode: host
     environment:
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
-      EXECUTOR_API_KEY: ${EXECUTOR_API_KEY:-}
     volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro]
     restart: unless-stopped
 

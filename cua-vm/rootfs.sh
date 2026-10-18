@@ -1,5 +1,6 @@
 #!/bin/bash
 # Turn the desktop image into an ext4 VM disk for Firecracker. Usage: sudo cua-vm/rootfs.sh [image] [out.ext4]
+# The disk is attached read-only and shared by every VM; each VM writes to its own RAM overlay.
 set -euo pipefail
 IMAGE=${1:-biscotti/cua-desktop:dev}
 OUT=${2:-cua-desktop.ext4}
@@ -12,9 +13,18 @@ docker rm "$cid" >/dev/null
 # docker export drops the image's ENV; carry it into the VM.
 docker image inspect "$IMAGE" --format '{{range .Config.Env}}export {{.}}{{"\n"}}{{end}}' > "$DIR/etc/biscotti-env"
 
-# PID 1 inside the VM: the mounts Docker would normally provide, then Cua's supervisord.
+# PID 1 inside the VM. First pass: move the read-only root onto a RAM overlay and start again from there.
+mkdir -p "$DIR/overlay"
 cat > "$DIR/sbin/biscotti-init" <<'EOF'
 #!/bin/sh
+if [ ! -d /.lower ]; then
+  mount -t tmpfs tmpfs /overlay
+  mkdir -p /overlay/upper /overlay/work /overlay/root
+  mount -t overlay overlay -o lowerdir=/,upperdir=/overlay/upper,workdir=/overlay/work /overlay/root
+  mkdir /overlay/root/.lower
+  cd /overlay/root && pivot_root . .lower && exec chroot . /sbin/biscotti-init
+fi
+# Second pass: the mounts Docker would normally provide, then the task listener and, for desktop VMs, Cua's desktop.
 . /etc/biscotti-env
 mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
 mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts; mount -t tmpfs tmpfs /dev/shm
@@ -37,6 +47,10 @@ url=$(sed -n 's/.*biscotti\.url=\([^ ]*\).*/\1/p' /proc/cmdline)
 # Dev hook: `biscotti.run=<script>` runs a script once X is up, output to the console.
 run=$(sed -n 's/.*biscotti\.run=\([^ ]*\).*/\1/p' /proc/cmdline)
 [ -n "$run" ] && (until xdpyinfo -display :1 >/dev/null 2>&1; do sleep 0.2; done; sh "$run" > /dev/console 2>&1) &
+# Tasks: one pi run per connection on port 4000 (goal in, JSON events out), as the desktop user.
+listen="socat -t 3600 TCP-LISTEN:4000,fork,reuseaddr EXEC:/usr/local/bin/biscotti-task,su=cua"
+grep -q "biscotti.mode=headless" /proc/cmdline && exec $listen
+$listen &
 exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
 EOF
 chmod +x "$DIR/sbin/biscotti-init"

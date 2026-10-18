@@ -1,4 +1,5 @@
-# The sandbox bridge: task VMs reach the model and connectors through here without holding any keys.
+# The sandbox bridge: task VMs reach the model through here without holding any keys. (Connectors come through
+# the agent's pass-through, which asks the owner before writes; never straight to Executor.)
 {
 	admin localhost:2019
 }
@@ -9,13 +10,8 @@ http://172.16.0.1:80 {
 	handle_path /llm/* {
 		reverse_proxy https://ai-gateway.vercel.sh {
 			header_up Authorization "Bearer {env.AI_GATEWAY_API_KEY}"
+			header_up -x-api-key
 			header_up Host {upstream_hostport}
-		}
-	}
-
-	handle_path /tools/* {
-		reverse_proxy 127.0.0.1:4788 {
-			header_up Authorization "Bearer {env.EXECUTOR_API_KEY}"
 		}
 	}
 

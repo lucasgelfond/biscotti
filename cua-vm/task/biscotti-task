@@ -1,0 +1,7 @@
+#!/bin/sh
+# One task per connection (see /sbin/biscotti-init): the goal arrives on stdin, pi's JSON events go to stdout.
+export HOME=/home/cua
+goal=$(cat)
+exec pi --mode json --no-session --model vercel-ai-gateway/anthropic/claude-opus-5.5 \
+  --append-system-prompt "You are a task agent in a disposable Linux VM with internet access. Do the task, then end with a short report of what you did and found; that report is all the requester sees." \
+  "$goal"

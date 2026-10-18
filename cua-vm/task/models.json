@@ -1,0 +1,5 @@
+{
+  "providers": {
+    "vercel-ai-gateway": { "baseUrl": "http://172.16.0.1/llm", "apiKey": "added-by-the-bridge" }
+  }
+}

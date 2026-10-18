@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
-# Minimal multi-arch Cua desktop: XFCE + TigerVNC + noVNC + Firefox + cua-spacesd.
+# Minimal multi-arch Cua desktop (XFCE + TigerVNC + noVNC + Firefox + cua-spacesd) plus the task agent (pi).
 # Startup scripts and configs come straight from Cua at a pinned commit; nothing is vendored.
 FROM debian:bookworm-slim
 
 ARG CUA_COMMIT=075add55cf938f4e351b74539efa18d4976696ae
 ARG CUA_SPACESD_VERSION=0.1.0
+ARG NODE_VERSION=22.23.3
 ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -17,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tigervnc-standalone-server tigervnc-tools \
       firefox-esr fonts-dejavu \
       supervisor sudo isc-dhcp-client python3 git ca-certificates curl \
-      xdotool xclip wmctrl chrony \
+      xdotool xclip wmctrl chrony socat xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 https://github.com/trycua/noVNC.git /opt/noVNC && \
@@ -26,6 +27,19 @@ RUN git clone --depth 1 https://github.com/trycua/noVNC.git /opt/noVNC && \
 RUN case "$TARGETARCH" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; esac && \
     curl -fsSL "https://github.com/trycua/cua/releases/download/cua-spacesd-v${CUA_SPACESD_VERSION}/cua-spacesd-${a}-unknown-linux-gnu.tar.gz" \
       | tar -xz -C /usr/local/bin cua-spacesd
+
+RUN case "$TARGETARCH" in \
+      amd64) a=x64 sum=df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de ;; \
+      arm64) a=arm64 sum=a44aeb94849a299b22df10b9e622ec2f605c2183501bc40590705131de7c740f ;; esac && \
+    curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${a}.tar.xz" && \
+    echo "$sum  /tmp/node.tar.xz" | sha256sum -c - && \
+    tar -xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz && rm /tmp/node.tar.xz
+
+# The task agent: pi from a lockfile, reaching the model through the host's bridge (which adds the key).
+COPY task/package.json task/package-lock.json /opt/pi/
+RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
+COPY task/biscotti-task /usr/local/bin/
+COPY task/models.json /home/cua/.pi/agent/
 
 ARG CUA_SRC=https://raw.githubusercontent.com/trycua/cua/${CUA_COMMIT}/libs/xfce/src
 ADD ${CUA_SRC}/scripts/start-vnc.sh ${CUA_SRC}/scripts/start-novnc.sh ${CUA_SRC}/scripts/start-spacesd.sh \
@@ -48,5 +62,5 @@ RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> 
     sed -i 's|^sleep 5$|until (exec 3<>/dev/tcp/127.0.0.1/5901) 2>/dev/null; do sleep 0.1; done|' /usr/local/bin/start-novnc.sh && \
     sed -i 's|^    sleep 1$|    sleep 0.1|' /usr/local/bin/start-spacesd.sh
 
-EXPOSE 5901 6901 3211
+EXPOSE 5901 6901 3211 4000
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
