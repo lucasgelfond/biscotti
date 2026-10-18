@@ -1,0 +1,14 @@
+services:
+  executor:
+    image: ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.24@sha256:39d8ce360adf86df46e953f43551dad4440d04d7246d30fc7b0d6f3f5cfed3f7
+    environment:
+      BETTER_AUTH_URL: https://${TAILNET_HOST:?}:8443
+      EXECUTOR_CATALOG_URL: https://catalog.executor.sh/index.json
+      DO_NOT_TRACK: "1"
+      EXECUTOR_DISABLE_ANALYTICS: "1"
+    volumes: [executor:/app/data]
+    ports: ["127.0.0.1:4788:4400"]
+    restart: unless-stopped
+
+volumes:
+  executor:

@@ -1,0 +1,8 @@
+{
+  "name": "@biscotti/executor",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*"
+  }
+}

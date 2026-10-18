@@ -37,6 +37,7 @@
       set_default TASK_MODEL deepseek/deepseek-v4.1-flash-1017-fast
       set_default TZ America/New_York
       set_default DB_KEY "$(openssl rand -hex 32)"
+      set_default EXECUTOR_ADMIN_PASSWORD "$(openssl rand -base64 18 | tr -d '/+=')"
       set_default FIRECRACKER_BIN ${firecracker}/bin/firecracker
 
       docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
@@ -63,6 +64,7 @@
       # The vault's one-time forms, and Google's sign-in callback.
       tailscale serve --bg --https=9443 http://127.0.0.1:4791
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
+      if has executor; then tailscale serve --bg --https=8443 http://127.0.0.1:4788; fi
       if has artifacts; then tailscale funnel --bg --https=443 http://127.0.0.1:8082; fi
 
       # The agent, plus the services of the plugins that bring one. Nix-built binaries mounted into the agent (the

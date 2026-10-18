@@ -59,7 +59,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
         taskTool(
           taskVms(vmDir, env("FIRECRACKER")),
           (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot),
-          (slot) => liveDesktop && void channel.send({ text: `Working on it. Watch or take over: ${liveDesktop}:${10440 + slot}/vnc.html` }),
+          liveDesktop ? (slot) => `${liveDesktop}:${10440 + slot}/vnc.html` : undefined,
         ),
       ]
     : [];

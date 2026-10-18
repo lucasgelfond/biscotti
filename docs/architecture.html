@@ -74,7 +74,7 @@
   a:focus-visible rect { stroke-width: 3; }
 </style>
 
-<div class="sheet" role="img" aria-label="biscotti (dashed boxes are plugins): iMessage arrives through Photon at a Raspberry Pi running NixOS on your tailnet. The core holds pi, the gate (keys and permissions), an encrypted SQLite store for memory, crons and the vault, and Firecracker task VMs (Debian with Cua). Plugins add croner, HTML artifacts and embeddings. The LLM, Gmail, Google Calendar, GitHub and Exa web search are reached only through the gate.">
+<div class="sheet" role="img" aria-label="biscotti (dashed boxes are plugins): iMessage arrives through Photon at a Raspberry Pi running NixOS on your tailnet. The core holds pi, the gate (keys and permissions), an encrypted SQLite store for memory, crons and the vault, and Firecracker task VMs (Debian with Cua). Plugins add HTML artifacts, embeddings and Executor. The LLM, Gmail, Google Calendar, GitHub and Exa web search are reached only through the gate.">
   <svg viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0L10 5L0 10z"/></marker>
@@ -94,7 +94,7 @@
     <text class="label" x="370" y="150">NixOS behind Tailscale <tspan class="s" dx="8">(running on Raspberry Pi or virtualized on Mac / the cloud)</tspan></text>
 
     <rect class="region" x="360" y="172" width="880" height="508" rx="3"/>
-    <text class="label" x="380" y="204">core <tspan class="s" dx="6">(~850 lines)</tspan></text>
+    <text class="label" x="380" y="204">core</text>
 
     <rect class="box" x="380" y="220" width="260" height="90" rx="3"/>
     <text class="t" x="510" y="274" text-anchor="middle">Pi</text>
@@ -123,6 +123,7 @@
     <text class="label" x="380" y="728">plugins</text>
     <rect class="plugin" x="380" y="748" width="200" height="56" rx="3"/><text class="p" x="480" y="783" text-anchor="middle">artifacts</text>
     <rect class="plugin" x="600" y="748" width="170" height="56" rx="3"/><text class="p" x="685" y="783" text-anchor="middle">embeddings</text>
+    <rect class="plugin" x="790" y="748" width="170" height="56" rx="3"/><text class="p" x="875" y="783" text-anchor="middle">Executor</text>
 
     <!-- Cloud -->
     <text class="label" x="1310" y="204">cloud</text>

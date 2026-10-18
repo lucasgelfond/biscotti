@@ -1,5 +1,5 @@
 # Services the end-to-end tests run against: the on-device embeddings model (chat goes to the AI Gateway, as in
-# production) and a fresh Executor each run (--renew-anon-volumes), so first-run setup can be tested.
+# production) and a fresh Executor (optional plugin) each run (--renew-anon-volumes), so first-run setup can be tested.
 name: biscotti-tests
 
 services:

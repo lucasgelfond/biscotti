@@ -84,6 +84,12 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  plugins/executor:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+
   plugins/github:
     dependencies:
       '@biscotti/core':

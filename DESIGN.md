@@ -6,7 +6,7 @@ own. Diagram: [docs/architecture.html](docs/architecture.html) (PNGs next to it)
 ## Principles
 
 1. **A small core, features as plugins.** The core is what everything needs: the agent, an encrypted store (memory,
-   crons, vault), the gate and task VMs (~850 lines). Everything else is a plugin that `biscotti.json` turns on.
+   crons, vault), the gate and task VMs. Everything else is a plugin that `biscotti.json` turns on.
 2. **Off-the-shelf first.** pi for agents, Photon for iMessage, Firecracker for VMs, Tailscale for access, NixOS for the
    host, SQLite for state.
 3. **The gate holds every key.** The main agent and task VMs reach the model and every tool only through it, and it asks
@@ -18,7 +18,7 @@ own. Diagram: [docs/architecture.html](docs/architecture.html) (PNGs next to it)
 
 ```
 core/            agent, memory, crons, vault, gate, task VMs, plugin API (src/); VM image (vm/); compose (host/)
-plugins/         channels/spectrum, exa, google, github, artifacts, embedding
+plugins/         channels/spectrum, exa, google, github, artifacts, embedding, executor
 installers/      toolchain (NixOS modules + Pi image), setup-app (macOS card writer), local (Lima on a Mac)
 tests/           end-to-end tests; compose.yaml for their services
 biscotti.json    which plugins load
@@ -56,6 +56,7 @@ A plugin is `plugins/<name>/index.ts` default-exporting `{ prompt?, channel?, to
 | github | GitHub's remote MCP server with a fine-grained token; anything not marked read-only asks first |
 | artifacts | HTML pages texted as links; public over Funnel under unguessable names so iMessage shows a preview card |
 | embedding | bge-small on llama.cpp, on device; recall by meaning |
+| executor | optional: Executor's catalog of apps over MCP, with its paused calls approved by text (off by default; a 659 MB container) |
 
 ## Host
 
@@ -66,7 +67,7 @@ State lives in `/var/lib/biscotti` (`.env`, `biscotti.json`, `data/`, `vm/`).
 
 ## Connectors
 
-Executor is gone (a 659 MB beta container with its own UI). From a sweep of pi, OpenClaw/mcporter and Hermes, the
+Executor is an optional plugin, off by default (a 659 MB beta container with its own UI). From a sweep of pi, OpenClaw/mcporter and Hermes, the
 lightweight path: small plugins per service, approvals in the plugin through the gate's `ask`. Google is our own REST
 tools (~200 lines); GitHub is its official remote MCP server (~30 lines). More services: a remote MCP server with a
 token, or a few REST tools.
