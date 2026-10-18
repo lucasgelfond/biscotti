@@ -78,7 +78,7 @@ async function run(task: string, slot: number, guidance: string) {
       createInterface({ input: socket }).on("line", (line) => {
         const e = JSON.parse(line) as Record_ & { png?: string };
         if (process.env.CU_TRACE && e.type.startsWith("tool_execution_") && e.type !== "tool_execution_update")
-          console.error(`${((Date.now() - started) / 1000).toFixed(1)}s ${task} ${e.type.slice(15)} ${e.toolName} ${e.isError ? "ERROR" : ""}`);
+          console.error(`${((Date.now() - started) / 1000).toFixed(1)}s ${task} ${e.type.slice(15)} ${e.toolName} ${e.isError ? "ERROR" : ""} ${e.type.endsWith("start") ? JSON.stringify((e as { args?: unknown }).args ?? "").slice(0, 160) : ""}`);
         if (e.type === "screenshot") screenshot = Buffer.from(e.png!, "base64");
         if (e.type === "turn_start") turns++;
         if (process.env.CU_TRACE && ["turn_start", "message_end", "agent_settled"].includes(e.type))
