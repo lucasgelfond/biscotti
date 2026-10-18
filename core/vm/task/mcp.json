@@ -20,7 +20,7 @@
       "description": "This VM's desktop (cua-spacesd): screenshots, the accessibility tree, clicking, typing, browser control."
     },
     "biscotti": {
-      "url": "http://172.16.0.1/mcp",
+      "url": "http://gate/mcp",
       "exposure": "direct",
       "timeout": 900,
       "description": "The owner's tools: web search, connected accounts (mail, calendar, GitHub, \u2026), saved secrets and more. Some wait for the owner's approval."

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Starts the task desktop, in a Firecracker VM (after biscotti-init) or as a container: Chromium open and maximized
+# once X is up, for the browser tools to drive over CDP; the task agent on port 4000 (goal in, JSON events out); then
+# Cua's desktop. CHROMIUM_FLAGS adds flags, e.g. --no-sandbox in a container.
+install -d -o cua -g cua -m 0700 /run/cua
+(until xdpyinfo -display :1 >/dev/null 2>&1; do sleep 0.2; done; runuser -u cua -- chromium --remote-debugging-port=9222 \
+  --user-data-dir=/tmp/chromium --no-first-run --no-default-browser-check --disable-dev-shm-usage --start-maximized \
+  --password-store=basic $CHROMIUM_FLAGS about:blank) &
+runuser -u cua -- env HOME=/home/cua /usr/local/bin/biscotti-task &
+exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf

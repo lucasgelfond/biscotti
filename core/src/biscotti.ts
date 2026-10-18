@@ -7,7 +7,7 @@ import crons from "./crons.ts";
 import { createGate } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import type { Channel, Context, Plugin } from "./plugin.ts";
-import { SLOTS, taskTool, taskVms } from "./tasks.ts";
+import { containerVms, firecrackerVms, SLOTS, taskTool, taskVms } from "./tasks.ts";
 import vault from "./vault.ts";
 
 
@@ -39,7 +39,11 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const gateServer = await gate.listen("127.0.0.1", opts.gatePort ?? 0);
   const gateUrl = `http://127.0.0.1:${(gateServer.address() as AddressInfo).port}`;
   const vmDir = process.env.VM_DIR;
-  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80);
+  const start =
+    process.env.TASK_BACKEND === "container"
+      ? containerVms(process.env.TASK_IMAGE ?? "biscotti/cua-desktop")
+      : vmDir && firecrackerVms(vmDir, env("FIRECRACKER"));
+  if (start) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80);
 
   let latest: Message | undefined;
   const react = defineTool({
@@ -54,10 +58,10 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   });
 
   const liveDesktop = process.env.LIVE_DESKTOP_URL;
-  const tasks = vmDir
+  const tasks = start
     ? [
         taskTool(
-          taskVms(vmDir, env("FIRECRACKER")),
+          taskVms(start),
           (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot),
           liveDesktop ? (slot) => `${liveDesktop}:${10440 + slot}/vnc.html` : undefined,
         ),

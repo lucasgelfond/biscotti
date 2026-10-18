@@ -29,27 +29,21 @@ fi
 mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
 mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts; mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run; mount -t tmpfs -o mode=1777 tmpfs /tmp
-install -d -o cua -g cua -m 0700 /run/cua
 # Like Docker's default seccomp profile: no user namespaces (Chromium uses its setuid sandbox instead).
 sysctl -qw user.max_user_namespaces=0
 echo nameserver 1.1.1.1 > /etc/resolv.conf
 cat /proc/net/route /etc/resolv.conf > /dev/console
 # Track the host clock through KVM's PTP device, stepping on any jump (e.g. after a snapshot restore).
 [ -e /dev/ptp0 ] && printf 'refclock PHC /dev/ptp0 poll -2 dpoll -2\nmakestep 0.5 -1\n' > /etc/chrony/chrony.conf && chronyd
-hostname sandbox; printf '127.0.0.1 localhost sandbox\n' > /etc/hosts
+# The gate is the VM's gateway.
+hostname sandbox; printf '127.0.0.1 localhost sandbox\n172.16.0.1 gate\n' > /etc/hosts
 # Mirror Cua's service logs to the serial console so the host can see them.
 (while :; do echo "heartbeat $(cut -d" " -f1 /proc/uptime) $(date +%T)"; sleep 2; done) > /dev/console &
 (sleep 3; tail -qF /var/log/supervisor/*.log) > /dev/console 2>&1 &
-# Chromium, open and maximized once X is up, so the snapshot holds it ready; the browser tools drive it over CDP.
-(until xdpyinfo -display :1 >/dev/null 2>&1; do sleep 0.2; done; runuser -u cua -- chromium --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/chromium --no-first-run --no-default-browser-check --disable-dev-shm-usage --start-maximized \
-  --password-store=basic about:blank > /dev/console 2>&1) &
 # Dev hook: `biscotti.run=<script>` runs a script once X is up, output to the console.
 run=$(sed -n 's/.*biscotti\.run=\([^ ]*\).*/\1/p' /proc/cmdline)
 [ -n "$run" ] && (until xdpyinfo -display :1 >/dev/null 2>&1; do sleep 0.2; done; sh "$run" > /dev/console 2>&1) &
-# The task agent on port 4000 (goal in, JSON events out), as the desktop user.
-runuser -u cua -- env HOME=/home/cua /usr/local/bin/biscotti-task > /dev/console 2>&1 &
-exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
+exec /usr/local/bin/biscotti-start > /dev/console 2>&1
 EOF
 chmod +x "$DIR/sbin/biscotti-init"
 

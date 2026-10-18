@@ -7,8 +7,9 @@ import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import { Type } from "typebox";
 
-// Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces). One VM is
-// always restored ahead of time.
+// Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces), or, where
+// Firecracker is slow or missing (a Mac's Lima VM, a VPS without KVM), in a fresh container of the same desktop image.
+// One is always started ahead of time.
 
 const TASK_TIMEOUT_MS = 30 * 60_000;
 export const SLOTS = [1, 2, 3];
@@ -23,7 +24,19 @@ export interface TaskResult {
   screenshot?: Buffer;
 }
 
-export function taskVms(vmDir: string, firecracker: string) {
+// Firecracker VMs, restored from the snapshot in vmDir.
+export function firecrackerVms(vmDir: string, firecracker: string) {
+  // Pull the snapshot's memory into the page cache.
+  createReadStream(`${vmDir}/desktop.mem`).on("error", () => {}).resume();
+  return (slot: number) => restore(vmDir, firecracker, slot);
+}
+
+// Containers of the desktop image, on the slots' Docker networks (biscotti-N, set up by net.nix).
+export function containerVms(image: string) {
+  return (slot: number) => startContainer(image, slot);
+}
+
+export function taskVms(start: (slot: number) => Promise<Vm>) {
   const free = [...SLOTS];
   const waiting: ((slot: number) => void)[] = [];
   const acquire = () => new Promise<number>((resolve) => (free.length ? resolve(free.shift()!) : waiting.push(resolve)));
@@ -38,7 +51,7 @@ export function taskVms(vmDir: string, firecracker: string) {
   function warmUp() {
     if (warm || !free.length) return;
     const slot = free.shift()!;
-    warm = restore(vmDir, firecracker, slot);
+    warm = start(slot);
     // On failure (e.g. no snapshot yet), try again in a while rather than at once.
     warm.catch((err) => {
       console.error(`restoring a VM in slot ${slot}: ${err.message}`);
@@ -52,7 +65,7 @@ export function taskVms(vmDir: string, firecracker: string) {
     const claimed = warm;
     warm = undefined;
     const ready = claimed && (await claimed.catch(() => undefined));
-    return ready ?? restore(vmDir, firecracker, await acquire());
+    return ready ?? start(await acquire());
   }
 
   async function run(goal: string, onStart?: (slot: number) => void): Promise<TaskResult> {
@@ -67,8 +80,6 @@ export function taskVms(vmDir: string, firecracker: string) {
     }
   }
 
-  // Pull the snapshot's memory into the page cache.
-  createReadStream(`${vmDir}/desktop.mem`).on("error", () => {}).resume();
   warmUp();
   return { run };
 }
@@ -97,16 +108,50 @@ export async function restore(vmDir: string, firecracker: string, slot: number):
   }
 }
 
-function api(socketPath: string, method: string, path: string, body: object) {
+async function startContainer(image: string, slot: number): Promise<Vm> {
+  const name = `biscotti-task-${slot}`;
+  const network = `biscotti-${slot}`;
+  const stop = () => docker("DELETE", `/containers/${name}?force=true`).catch(() => {});
+  await stop();
+  try {
+    await docker("POST", `/containers/create?name=${name}`, {
+      Image: image,
+      // The container is the sandbox; Chromium's own needs privileges a container doesn't get.
+      Env: ["CHROMIUM_FLAGS=--no-sandbox"],
+      HostConfig: { NetworkMode: network, ShmSize: 1 << 30, ExtraHosts: [`gate:10.200.${slot}.1`] },
+      NetworkingConfig: { EndpointsConfig: { [network]: { IPAMConfig: { IPv4Address: `10.200.${slot}.2` } } } },
+    });
+    await docker("POST", `/containers/${name}/start`);
+    // Ready once the task listener answers (an empty connection is ignored).
+    for (const t = Date.now(); !(await answers(`10.200.${slot}.2`, 4000)); ) {
+      if (Date.now() - t > 120_000) throw new Error("the task container didn't start");
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return { slot, stop };
+  } catch (err) {
+    await stop();
+    throw err;
+  }
+}
+
+function answers(host: string, port: number) {
+  return new Promise<boolean>((resolve) => {
+    const socket = connect({ host, port }, () => (socket.end(), resolve(true))).on("error", () => resolve(false));
+  });
+}
+
+const docker = (method: string, path: string, body?: object) => api("/var/run/docker.sock", method, path, body);
+
+function api(socketPath: string, method: string, path: string, body?: object) {
   return new Promise<void>((resolve, reject) => {
     const req = request({ socketPath, method, path, headers: { "Content-Type": "application/json" } }, (res) => {
       let text = "";
       res.on("data", (d) => (text += d)).on("end", () => {
         if (res.statusCode! < 300) resolve();
-        else reject(new Error(`firecracker ${path}: ${res.statusCode} ${text}`));
+        else reject(new Error(`${path}: ${res.statusCode} ${text}`));
       });
     });
-    req.on("error", reject).end(JSON.stringify(body));
+    req.on("error", reject).end(body && JSON.stringify(body));
   });
 }
 

@@ -39,7 +39,7 @@ RUN case "$TARGETARCH" in \
 # adds the key).
 COPY task/package.json task/package-lock.json /opt/pi/
 RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /opt/pi/node_modules/.bin/playwright-mcp /usr/local/bin/
-COPY task/biscotti-task /usr/local/bin/
+COPY task/biscotti-task task/biscotti-start /usr/local/bin/
 COPY task/models.json task/mcp.json /home/cua/.pi/agent/
 
 # Wallpaper: "biscotti" by Geertje Caliguire on Unsplash (Unsplash License), fetched at a pinned size and checksum.
@@ -71,4 +71,4 @@ RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> 
     sed -i 's|^    sleep 1$|    sleep 0.1|' /usr/local/bin/start-spacesd.sh
 
 EXPOSE 5901 6901 3211 4000
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
+CMD ["/usr/local/bin/biscotti-start"]

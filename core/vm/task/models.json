@@ -1,7 +1,7 @@
 {
   "providers": {
     "biscotti": {
-      "baseUrl": "http://172.16.0.1/llm",
+      "baseUrl": "http://gate/llm",
       "api": "openai-completions",
       "apiKey": "added-by-the-gate",
       "models": [
