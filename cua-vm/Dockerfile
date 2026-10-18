@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tigervnc-standalone-server tigervnc-tools \
       firefox-esr fonts-dejavu \
       supervisor sudo isc-dhcp-client python3 git ca-certificates curl \
-      xdotool xclip wmctrl chrony socat xz-utils \
+      xdotool xclip wmctrl chrony socat xz-utils scrot \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 https://github.com/trycua/noVNC.git /opt/noVNC && \
@@ -40,6 +40,13 @@ COPY task/package.json task/package-lock.json /opt/pi/
 RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
 COPY task/biscotti-task /usr/local/bin/
 COPY task/models.json /home/cua/.pi/agent/
+
+# Wallpaper: "biscotti" by Geertje Caliguire on Unsplash (Unsplash License), fetched at a pinned size and checksum.
+RUN mkdir -p /usr/share/backgrounds && \
+    curl -fsSL -o /usr/share/backgrounds/biscotti.jpg \
+      "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=85&w=1280&h=800&fit=crop" && \
+    echo "aa403dc64a9378a59a8fc137e27d8246d55b5f7c363fbd93080e52e8daa9942e  /usr/share/backgrounds/biscotti.jpg" | sha256sum -c -
+COPY xfce4-desktop.xml /home/cua/.config/xfce4/xfconf/xfce-perchannel-xml/
 
 ARG CUA_SRC=https://raw.githubusercontent.com/trycua/cua/${CUA_COMMIT}/libs/xfce/src
 ADD ${CUA_SRC}/scripts/start-vnc.sh ${CUA_SRC}/scripts/start-novnc.sh ${CUA_SRC}/scripts/start-spacesd.sh \

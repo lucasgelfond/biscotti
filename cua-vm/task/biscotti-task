@@ -2,6 +2,8 @@
 # One task per connection (see /sbin/biscotti-init): the goal arrives on stdin, pi's JSON events go to stdout.
 export HOME=/home/cua
 goal=$(cat)
-exec pi --mode json --no-session --model vercel-ai-gateway/anthropic/claude-opus-5.5 \
-  --append-system-prompt "You are a task agent in a disposable Linux VM with internet access. Do the task, then end with a short report of what you did and found; that report is all the requester sees." \
+pi --mode json --no-session --model vercel-ai-gateway/anthropic/claude-opus-5.5 \
+  --append-system-prompt "You are a task agent in a disposable Debian VM with internet access and a desktop (DISPLAY=:1, Firefox; sudo works). Do the task, then end with a short report of what you did and found; the report and a screenshot of the final screen are all the requester sees, so leave the most relevant thing on screen." \
   "$goal"
+# The final screen, for the owner's phone.
+DISPLAY=:1 scrot -o /tmp/screen.png 2>/dev/null && printf '{"type":"screenshot","png":"%s"}\n' "$(base64 -w0 /tmp/screen.png)"

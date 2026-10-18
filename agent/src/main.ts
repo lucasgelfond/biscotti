@@ -1,4 +1,4 @@
-import { Spectrum, type Space } from "@spectrum-ts/core";
+import { attachment, Spectrum, type Space } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 import { createAgent } from "./agent.ts";
 import { ensureExecutorToken, executor } from "./connectors.ts";
@@ -38,7 +38,11 @@ const agent = await createAgent({
   tools: [
     ...memoryTools(db, env("EMBEDDINGS_URL")),
     ...(process.env.VM_DIR
-      ? [taskTool(process.env.VM_DIR, env("FIRECRACKER"), (goal, report) => deliver(`Task report (${goal}):\n${report}`))]
+      ? [
+          taskTool(process.env.VM_DIR, env("FIRECRACKER"), (goal, { report, screenshot }) =>
+            deliver(`Task report (${goal}):\n${report}`, screenshot),
+          ),
+        ]
       : []),
   ],
   extensions: process.env.EXECUTOR_URL ? executor(process.env.EXECUTOR_URL, await executorToken(process.env.EXECUTOR_URL)) : [],
@@ -46,10 +50,11 @@ const agent = await createAgent({
 
 // The owner's conversation, where replies to task reports go.
 let ownerSpace: Space | undefined;
-async function deliver(text: string) {
+async function deliver(text: string, screenshot?: Buffer) {
   try {
     const reply = await agent.reply(text);
     if (reply && ownerSpace) await ownerSpace.send(reply);
+    if (screenshot && ownerSpace) await ownerSpace.send(attachment(screenshot, { mimeType: "image/png", name: "screen.png" }));
   } catch (err) {
     console.error(err);
   }

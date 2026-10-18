@@ -14,7 +14,13 @@ const GUEST = "172.16.0.2";
 const TASK_TIMEOUT_MS = 30 * 60_000;
 let queue: Promise<unknown> = Promise.resolve();
 
-export function runTask(vmDir: string, firecracker: string, goal: string): Promise<string> {
+export interface TaskResult {
+  report: string;
+  // The VM's final screen, as PNG.
+  screenshot?: Buffer;
+}
+
+export function runTask(vmDir: string, firecracker: string, goal: string): Promise<TaskResult> {
   const run = queue.then(() => runInVm(vmDir, firecracker, goal));
   queue = run.catch(() => {});
   return run;
@@ -53,24 +59,31 @@ function api(socketPath: string, method: string, path: string, body: object) {
   });
 }
 
-// Sends the goal to the VM's task listener and reads pi's JSON events; the last assistant text is the report.
+// Sends the goal to the VM's task listener and reads pi's JSON events: the last assistant text is the report, and a
+// final screenshot line follows pi's output.
 function runPi(host: string, goal: string) {
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<TaskResult>((resolve, reject) => {
     const socket = connect({ host, port: 4000 }, () => socket.end(goal));
     socket.setTimeout(TASK_TIMEOUT_MS, () => socket.destroy(new Error("task timed out")));
     let report = "";
+    let screenshot: Buffer | undefined;
     createInterface({ input: socket }).on("line", (line) => {
-      const event = JSON.parse(line) as { type: string; message?: { role: string; content: { type: string; text?: string }[] } };
+      const event = JSON.parse(line) as {
+        type: string;
+        png?: string;
+        message?: { role: string; content: { type: string; text?: string }[] };
+      };
+      if (event.type === "screenshot") screenshot = Buffer.from(event.png!, "base64");
       if (event.type !== "message_end" || event.message?.role !== "assistant") return;
       const text = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
       if (text) report = text;
     });
-    socket.on("error", reject).on("close", () => resolve(report || "The task ended without a report."));
+    socket.on("error", reject).on("close", () => resolve({ report: report || "The task ended without a report.", screenshot }));
   });
 }
 
 // Starts a task and returns right away; `onReport` gets the report when the task ends.
-export function taskTool(vmDir: string, firecracker: string, onReport: (goal: string, report: string) => void) {
+export function taskTool(vmDir: string, firecracker: string, onReport: (goal: string, result: TaskResult) => void) {
   return defineTool({
     name: "task",
     label: "Task",
@@ -79,8 +92,8 @@ export function taskTool(vmDir: string, firecracker: string, onReport: (goal: st
     parameters: Type.Object({ goal: Type.String() }),
     async execute(_id, { goal }) {
       runTask(vmDir, firecracker, goal).then(
-        (report) => onReport(goal, report),
-        (err) => onReport(goal, `The task failed: ${err.message}`),
+        (result) => onReport(goal, result),
+        (err) => onReport(goal, { report: `The task failed: ${err.message}` }),
       );
       return { content: [{ type: "text" as const, text: "Task started." }], details: {} };
     },
