@@ -21,5 +21,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSContactsUsageDescription</key><string>To fill in your phone number and email from your contact card.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - --options runtime --entitlements entitlements.plist "$APP"
-echo "$APP"
+# Ad hoc unless SIGN_ID names a Developer ID; with NOTARY_PROFILE (xcrun notarytool store-credentials), notarized too.
+codesign --force --sign "${SIGN_ID:--}" --timestamp --options runtime --entitlements entitlements.plist "$APP"
+ZIP="build/biscotti-installer-v$VERSION.zip"
+ditto -c -k --keepParent "$APP" "$ZIP"
+if [ -n "${NOTARY_PROFILE:-}" ]; then
+  xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$APP"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+fi
+echo "$ZIP"
