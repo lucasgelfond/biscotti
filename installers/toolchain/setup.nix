@@ -1,10 +1,7 @@
 # Brings biscotti up, or up to date, on every boot (a no-op once done): the installer's settings, generated secrets,
 # Tailscale, the services for the plugins biscotti.json names, and the task VM snapshot. Texts the owner when they
 # need to act and when biscotti is ready.
-{ config, lib, pkgs, repo, firecracker, ... }:
-let
-  containers = config.biscotti.tasks == "container";
-in
+{ pkgs, repo, firecracker, ... }:
 {
   systemd.tmpfiles.rules = [
     "d /var/lib/biscotti 0700 root root -"
@@ -70,22 +67,13 @@ in
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
       if has artifacts; then tailscale funnel --bg --https=443 http://127.0.0.1:8082; fi
 
-      # The task desktop: a snapshot of it for Firecracker, or the image itself for containers (built before the agent
-      # starts one).
-      ${if containers then ''
-        docker build -q -t biscotti/cua-desktop ${repo}/core/vm >/dev/null
-      '' else ''
-        [ -f "$STATE/vm/desktop.snap" ] || FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
-      ''}
+      [ -f "$STATE/vm/desktop.snap" ] || FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
       # The agent, plus the services of the plugins that bring one. Nix-built binaries mounted into the agent (the
-      # patched Firecracker) load their libraries from the Nix store. Container tasks: Docker's socket instead of KVM.
+      # patched Firecracker) load their libraries from the Nix store.
       {
         echo "include:"
         for p in $plugins; do [ -f "${repo}/plugins/$p/compose.yaml" ] && echo "  - ${repo}/plugins/$p/compose.yaml"; done
-        echo "services:"
-        echo "  agent:"
-        echo "    volumes: [ /nix/store:/nix/store:ro${lib.optionalString containers ", /var/run/docker.sock:/var/run/docker.sock"} ]"
-        ${lib.optionalString containers ''echo "    environment: { TASK_BACKEND: container }"; echo "    devices: !reset []"''}
+        echo "services: { agent: { volumes: [ /nix/store:/nix/store:ro ] } }"
       } > "$STATE/compose.plugins.yaml"
       # Texted before the agent starts: a second Photon connection takes the agent's incoming messages away.
       if [ ! -f "$STATE/ready" ]; then
