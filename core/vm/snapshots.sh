@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build what task VMs start from: the guest kernel, the read-only disk, and a snapshot of the desktop VM taken once it
 # is ready for a task. Usage: sudo core/vm/snapshots.sh [dir]   (FC_BIN picks the Firecracker binary)
 set -euo pipefail

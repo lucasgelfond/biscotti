@@ -39,10 +39,11 @@ export function taskVms(vmDir: string, firecracker: string) {
     if (warm || !free.length) return;
     const slot = free.shift()!;
     warm = restore(vmDir, firecracker, slot);
+    // On failure (e.g. no snapshot yet), try again in a while rather than at once.
     warm.catch((err) => {
       console.error(`restoring a VM in slot ${slot}: ${err.message}`);
       warm = undefined;
-      release(slot);
+      setTimeout(() => release(slot), 30_000);
     });
   }
 

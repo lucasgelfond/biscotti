@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Turn the desktop image into an ext4 VM disk for Firecracker. Usage: sudo core/vm/rootfs.sh [image] [out.ext4]
 # The disk is attached read-only and shared by every VM; each VM writes to its own RAM overlay.
 set -euo pipefail

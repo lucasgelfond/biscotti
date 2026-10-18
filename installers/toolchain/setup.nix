@@ -13,7 +13,7 @@
     wants = [ "network-online.target" ];
     requires = [ "docker.service" "biscotti-net.service" ];
     wantedBy = [ "multi-user.target" ];
-    path = [ firecracker ] ++ (with pkgs; [ bash coreutils gnugrep gnused jq curl docker tailscale e2fsprogs gnutar util-linux openssl ]);
+    path = [ firecracker ] ++ (with pkgs; [ bash coreutils gnugrep gnused jq curl docker tailscale e2fsprogs gnutar util-linux openssl iproute2 ]);
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
