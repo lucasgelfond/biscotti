@@ -1,6 +1,20 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
-import { createCipheriv, createHmac, generateKeyPairSync, pbkdf2Sync, randomBytes } from "node:crypto";
+import {
+  constants,
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  pbkdf2Sync,
+  privateDecrypt,
+  publicEncrypt,
+  randomBytes,
+  randomUUID,
+  type KeyObject,
+} from "node:crypto";
 import { promisify } from "node:util";
 import { Type } from "typebox";
 
@@ -35,6 +49,19 @@ function encrypt(plain: Buffer, key: Buffer) {
     .digest();
   return `2.${iv.toString("base64")}|${data.toString("base64")}|${mac.toString("base64")}`;
 }
+
+function decrypt(enc: string, key: Buffer) {
+  const [iv, data, mac] = enc.slice(2).split("|").map((p) => Buffer.from(p, "base64"));
+  const expected = createHmac("sha256", key.subarray(32)).update(Buffer.concat([iv, data])).digest();
+  if (!expected.equals(mac)) throw new Error("vault: bad MAC");
+  const decipher = createDecipheriv("aes-256-cbc", key.subarray(0, 32), iv);
+  return Buffer.concat([decipher.update(data), decipher.final()]);
+}
+
+// Bitwarden's "type 4" encrypted string: RSA-OAEP (SHA-1), used to hand an organization key to a member.
+const rsaOpts = { padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha1" };
+const rsaEncrypt = (data: Buffer, key: KeyObject) => `4.${publicEncrypt({ key, ...rsaOpts }, data).toString("base64")}`;
+const rsaDecrypt = (enc: string, key: KeyObject) => privateDecrypt({ key, ...rsaOpts }, Buffer.from(enc.slice(2), "base64"));
 
 // Registers the account if it doesn't exist yet, with an RSA key pair so organizations can share items with it.
 export async function ensureVaultAccount(url: string, email: string, password: string) {
@@ -72,6 +99,82 @@ export async function ensureVaultAccount(url: string, email: string, password: s
 function accountExists(status: number, body: string) {
   if (/already exists/i.test(body)) return "exists";
   throw new Error(`vaultwarden register: ${status} ${body}`);
+}
+
+// Sharing: the agent's account owns a "biscotti" organization with a "Shared" collection, invites the owner, and
+// confirms them once they've registered (confirming hands them the organization key, encrypted to their public key).
+// Safe to repeat. Returns where things stand; "owner-managed" means the owner set sharing up themselves.
+export async function ensureVaultSharing(url: string, email: string, password: string, ownerEmail: string) {
+  const { hash, stretched } = masterKeys(email, password);
+  const token = await fetch(`${url}/identity/connect/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "password",
+      username: email,
+      password: hash,
+      scope: "api offline_access",
+      client_id: "cli",
+      deviceType: "8",
+      deviceIdentifier: randomUUID(),
+      deviceName: "biscotti",
+    }),
+  }).then((r) => r.json() as Promise<{ access_token: string; Key: string; PrivateKey: string }>);
+  const api = async (path: string, body?: object) => {
+    const res = await fetch(`${url}/api${path}`, {
+      method: body ? "POST" : "GET",
+      headers: { Authorization: `Bearer ${token.access_token}`, "Content-Type": "application/json" },
+      body: body && JSON.stringify(body),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`vaultwarden ${path}: ${res.status} ${text}`);
+    return text ? JSON.parse(text) : undefined;
+  };
+  const privateKey = createPrivateKey({ key: decrypt(token.PrivateKey, decrypt(token.Key, stretched)), format: "der", type: "pkcs8" });
+
+  const { profile } = await api("/sync?excludeDomains=true");
+  const existing = profile.organizations.find((o: { name: string }) => o.name.toLowerCase() === "biscotti");
+  if (existing && existing.type !== 0) return "owner-managed";
+
+  let org = existing;
+  if (!org) {
+    const orgKey = randomBytes(64);
+    const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    org = await api("/organizations", {
+      name: "biscotti",
+      billingEmail: email,
+      collectionName: encrypt(Buffer.from("Shared"), orgKey),
+      key: rsaEncrypt(orgKey, createPublicKey(privateKey)),
+      keys: {
+        publicKey: keys.publicKey.export({ type: "spki", format: "der" }).toString("base64"),
+        encryptedPrivateKey: encrypt(keys.privateKey.export({ type: "pkcs8", format: "der" }), orgKey),
+      },
+      planType: 0,
+    });
+    org.key = rsaEncrypt(orgKey, createPublicKey(privateKey));
+  }
+  const orgKey = rsaDecrypt(org.key, privateKey);
+
+  const members: { id: string; userId: string; email: string; status: number }[] = (await api(`/organizations/${org.id}/users`)).data;
+  const owner = members.find((m) => m.email.toLowerCase() === ownerEmail.toLowerCase());
+  if (!owner) {
+    const [shared] = (await api(`/organizations/${org.id}/collections`)).data;
+    await api(`/organizations/${org.id}/users/invite`, {
+      emails: [ownerEmail],
+      groups: [],
+      type: 2,
+      collections: [{ id: shared.id, readOnly: false, hidePasswords: false, manage: true }],
+      permissions: {},
+    });
+    return "invited";
+  }
+  if (owner.status === 0) return "invited";
+  if (owner.status === 1) {
+    const { publicKey } = await api(`/users/${owner.userId}/public-key`);
+    const ownerKey = createPublicKey({ key: Buffer.from(publicKey, "base64"), format: "der", type: "spki" });
+    await api(`/organizations/${org.id}/users/${owner.id}/confirm`, { key: rsaEncrypt(orgKey, ownerKey) });
+  }
+  return "confirmed";
 }
 
 // Reading the vault: Bitwarden's CLI, logged in as the agent's account.

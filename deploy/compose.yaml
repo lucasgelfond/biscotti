@@ -61,7 +61,9 @@ services:
     image: vaultwarden/server:1.37.4@sha256:efb3cde962015fcc036b2ea625242248611943b27212ebf4392841fb30fad055
     environment:
       DOMAIN: https://${TAILNET_HOST:?}:9443
-      SIGNUPS_ALLOWED: ${VAULTWARDEN_SIGNUPS:-true}
+      # Only the agent's own account signs itself up; the owner joins through the agent's invite.
+      SIGNUPS_ALLOWED: "false"
+      SIGNUPS_DOMAINS_WHITELIST: biscotti.local
     volumes: [vaultwarden:/data]
     ports: ["127.0.0.1:8081:80"]
     restart: unless-stopped

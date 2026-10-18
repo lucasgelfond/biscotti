@@ -4,7 +4,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { ensureVaultAccount, vaultTools } from "../agent/src/vault.ts";
+import { ensureVaultAccount, ensureVaultSharing, vaultTools } from "../agent/src/vault.ts";
 
 // The Vaultwarden from tests/compose.yaml: plain HTTP for our registration, and HTTPS through Caddy's local CA for
 // Bitwarden's official CLI, which refuses anything else.
@@ -71,4 +71,37 @@ test("vault tools list items without values, read fields, and ask the owner befo
   expect(refused).toBe("The owner said no.");
   expect(allowed).toBe("4111111111111111");
   expect(questions).toHaveLength(2);
+});
+
+test("sets up sharing: the agent's organization invites the owner, confirms them, and sees what they share", async () => {
+  const agentEmail = `agent-${randomUUID()}@biscotti.local`;
+  const ownerEmail = `owner-${randomUUID()}@example.com`;
+  const agentPassword = randomBytes(24).toString("base64url");
+  const ownerPassword = randomBytes(24).toString("base64url");
+  await ensureVaultAccount(VAULT_URL, agentEmail, agentPassword);
+
+  const invited = await ensureVaultSharing(VAULT_URL, agentEmail, agentPassword, ownerEmail);
+  await ensureVaultAccount(VAULT_URL, ownerEmail, ownerPassword);
+  const confirmed = await ensureVaultSharing(VAULT_URL, agentEmail, agentPassword, ownerEmail);
+  const again = await ensureVaultSharing(VAULT_URL, agentEmail, agentPassword, ownerEmail);
+  expect(invited).toBe("invited");
+  expect(confirmed).toBe("confirmed");
+  expect(again).toBe("confirmed");
+
+  // The owner, in Bitwarden's own client, puts a login in the shared collection.
+  const env = { ...process.env, BITWARDENCLI_APPDATA_DIR: mkdtempSync(join(tmpdir(), "bw-")), NODE_EXTRA_CA_CERTS: CADDY_ROOT_CA };
+  const bw = (...args: string[]) => execFileSync(BW, args, { env, encoding: "utf8" }).trim();
+  bw("config", "server", VAULT_HTTPS_URL);
+  const session = bw("login", ownerEmail, ownerPassword, "--raw");
+  const [org] = JSON.parse(bw("list", "organizations", "--session", session));
+  const [shared] = JSON.parse(bw("list", "org-collections", "--organizationid", org.id, "--session", session));
+  const item = { type: 1, name: "Shared login", organizationId: org.id, collectionIds: [shared.id], login: { username: "lucas", password: "s3cret" } };
+  bw("create", "item", Buffer.from(JSON.stringify(item)).toString("base64"), "--organizationid", org.id, "--session", session);
+  expect(org.status).toBe(2);
+  expect(shared.name).toBe("Shared");
+
+  process.env.NODE_EXTRA_CA_CERTS = CADDY_ROOT_CA;
+  const [vaultList] = vaultTools({ url: VAULT_HTTPS_URL, email: agentEmail, password: agentPassword, dir: mkdtempSync(join(tmpdir(), "vault-")), askOwner: async () => false });
+  const listed = await vaultList.execute("call", {} as never, undefined, undefined, undefined as never);
+  expect((listed.content[0] as { text: string }).text).toContain("Shared login: username, password");
 });

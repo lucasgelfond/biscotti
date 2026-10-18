@@ -1,3 +1,4 @@
+import { existsSync, writeFileSync } from "node:fs";
 import { attachment, type Space } from "@spectrum-ts/core";
 import { createAgent } from "./agent.ts";
 import { connectIMessage } from "./imessage.ts";
@@ -7,7 +8,7 @@ import { memoryTools } from "./memory.ts";
 import { pageTool } from "./pages.ts";
 import { startPassThrough } from "./passthrough.ts";
 import { taskTool } from "./sandbox.ts";
-import { ensureVaultAccount, vaultTools } from "./vault.ts";
+import { ensureVaultAccount, ensureVaultSharing, vaultTools } from "./vault.ts";
 import { startWakes, wakeTools } from "./wakes.ts";
 
 function env(name: string) {
@@ -93,6 +94,23 @@ const owner = env("OWNER");
 const imessage = await connectIMessage(env);
 ownerSpace = imessage.ownerSpace;
 startWakes(db, timezone, (wake) => deliver(`Wake (${wake.label}): ${wake.prompt}`));
+
+// Vault sharing on a fresh install: invite the owner, tell them once where to sign up, confirm them once they have.
+if (process.env.VAULT_URL && process.env.OWNER_EMAIL) {
+  const [url, email, password, ownerEmail] = [process.env.VAULT_URL, env("VAULT_EMAIL"), env("VAULT_PASSWORD"), process.env.OWNER_EMAIL];
+  const toldFile = `${dir}/vault-invite-sent`;
+  const check = async () => {
+    const state = await ensureVaultSharing(url, email, password, ownerEmail).catch((err) => (console.error(err), "error"));
+    if (state === "invited" && !existsSync(toldFile)) {
+      await ownerSpace?.send(
+        `Your vault is ready for you: create your account at ${url} with ${ownerEmail}. Anything you put in the biscotti organization's Shared collection, I can use.`,
+      );
+      writeFileSync(toldFile, "");
+    }
+    if (state === "invited" || state === "error") setTimeout(check, 2 * 60_000);
+  };
+  void check();
+}
 
 for await (const [space, message] of imessage.app.messages) {
   if (message.direction === "outbound" || message.content.type !== "text") continue;
