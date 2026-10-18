@@ -1,5 +1,7 @@
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { existsSync, writeFileSync } from "node:fs";
 import { attachment, type Space } from "@spectrum-ts/core";
+import { Type } from "typebox";
 import { createAgent } from "./agent.ts";
 import { connectIMessage } from "./imessage.ts";
 import { connectors, ensureExecutorToken, NO, YES } from "./connectors.ts";
@@ -39,6 +41,20 @@ if (process.env.VAULT_URL) {
 }
 const executorKey = executorUrl ? await executorToken(executorUrl) : undefined;
 
+// The owner's conversation, where replies to task reports go, and their latest message (for tapbacks).
+let ownerSpace: Space | undefined;
+let lastMessage: { react: (emoji: string) => Promise<unknown> } | undefined;
+const reactTool = defineTool({
+  name: "react",
+  label: "Tapback",
+  description: "Tapback the user's latest message (❤️ 👍 👎 😂 ‼️ ❓), e.g. 👍 when starting on something, ❤️ on thanks. Can replace a reply.",
+  parameters: Type.Object({ emoji: Type.String() }),
+  async execute(_id, { emoji }) {
+    await lastMessage?.react(emoji);
+    return { content: [{ type: "text" as const, text: "Reacted." }], details: {} };
+  },
+});
+
 // Questions only the owner can answer (a task's write, using a card): texted, answered by their next yes or no.
 let pendingApproval: ((yes: boolean) => void) | undefined;
 function askOwner(question: string) {
@@ -57,6 +73,7 @@ const agent = await createAgent({
   tools: [
     ...memoryTools(db, env("EMBEDDINGS_URL")),
     ...wakeTools(db, timezone),
+    reactTool,
     ...(process.env.PAGES_URL ? [pageTool(`${dir}/pages`, process.env.PAGES_URL)] : []),
     ...(process.env.VAULT_URL
       ? vaultTools({ url: process.env.VAULT_URL, email: env("VAULT_EMAIL"), password: env("VAULT_PASSWORD"), dir, askOwner })
@@ -78,8 +95,6 @@ const agent = await createAgent({
 if (executorUrl && executorKey && process.env.PASSTHROUGH_PORT)
   startPassThrough({ executorUrl, token: executorKey, port: Number(process.env.PASSTHROUGH_PORT), askOwner });
 
-// The owner's conversation, where replies to task reports go.
-let ownerSpace: Space | undefined;
 async function deliver(text: string, screenshot?: Buffer) {
   try {
     const reply = await agent.reply(text);
@@ -119,6 +134,7 @@ for await (const [space, message] of imessage.app.messages) {
     continue;
   }
   ownerSpace = space;
+  lastMessage = message;
   const text = message.content.text;
   // A yes or no while a task's write waits for approval answers that, not the conversation.
   if (pendingApproval && (YES.test(text.trim()) || NO.test(text.trim()))) {
