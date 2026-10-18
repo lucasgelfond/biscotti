@@ -685,13 +685,11 @@ struct InstallerView: View {
 
     static let noAutofill = UserDefaults.standard.bool(forKey: "noAutofill")
 
-    /// Prefills keys saved from an earlier install, if there are any.
+    /// Prefilled only from an explicit `-settings file.env`.
     private static func initialSettings() -> Settings {
         var settings = Settings()
         if noAutofill { (settings.wifiName, settings.sshKey) = ("", "") }
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let file = UserDefaults.standard.string(forKey: "settings").map { URL(fileURLWithPath: $0) }
-        if let file { settings.load(envFile: file) } else if !noAutofill { settings.load(envFile: home.appending(path: "Desktop/biscotti/creds/keys.env")) }
+        if let file = UserDefaults.standard.string(forKey: "settings") { settings.load(envFile: URL(fileURLWithPath: file)) }
         return settings
     }
 
