@@ -7,3 +7,11 @@ The general design is a main Pi agent that dispatches tasks to little VMs. Acces
 I built a small setup wizard that should make it easy to deploy on Raspberry Pi, Mac (with nested virutalization because it needs KVM access), or on AWS. Open for PRs + feedback! 
 
 ![biscotti](site/public/tweet.png)
+
+<table><tr>
+<td><img src="site/public/img/examples/landlord.gif" width="260" alt="Email and Calendar"><br>Email and Calendar</td>
+<td><img src="site/public/img/examples/flights.gif" width="260" alt="Flights"><br>Flights</td>
+<td><img src="site/public/img/examples/cameron.gif" width="260" alt="Tickets and checkout"><br>Tickets and checkout</td>
+</tr></table>
+
+[Watch the full demo (2 min)](https://dl.biscotti.lucasgelfond.online/media/biscotti-demo.mp4)
