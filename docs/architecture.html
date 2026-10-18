@@ -14,19 +14,20 @@
     --grid: #dde5ea;
     --accent: #b8701f;
     --accent-soft: #f4e3cf;
+    --vm-bg: #e2eaf0;
     --display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #10181e; --sheet: #141e25; --panel: #1b2730; --ink: #e2e9ee; --muted: #93a6b3;
-      --line: #465966; --grid: #1c2830; --accent: #e3a35a; --accent-soft: #3a2a17;
+      --line: #465966; --grid: #1c2830; --accent: #e3a35a; --accent-soft: #3a2a17; --vm-bg: #22323d;
       color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #10181e; --sheet: #141e25; --panel: #1b2730; --ink: #e2e9ee; --muted: #93a6b3;
-    --line: #465966; --grid: #1c2830; --accent: #e3a35a; --accent-soft: #3a2a17;
+    --line: #465966; --grid: #1c2830; --accent: #e3a35a; --accent-soft: #3a2a17; --vm-bg: #22323d;
     color-scheme: dark;
   }
   body {
@@ -43,100 +44,108 @@
     background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
     background-size: 25px 25px;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 3px;
     overflow-x: auto;
   }
   svg { display: block; width: 100%; min-width: 900px; height: auto; }
   .box { fill: var(--panel); stroke: var(--line); stroke-width: 1.4; }
   .frame { fill: none; stroke: var(--ink); stroke-width: 1.6; }
   .core { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.8; }
-  .vm { fill: var(--panel); stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 8 6; }
-  .chip { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+  .group { fill: none; stroke: var(--line); stroke-width: 1.4; }
+  .vms { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.8; }
+  .gate { fill: var(--panel); stroke: var(--ink); stroke-width: 1.8; }
+  .region { fill: none; stroke: var(--muted); stroke-width: 1.4; stroke-dasharray: 6 6; }
+  .plugin { fill: var(--sheet); stroke: var(--muted); stroke-width: 1.4; stroke-dasharray: 6 5; }
+  .p { font: 600 21px var(--display); fill: var(--muted); }
+  .vm { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+  .vm.idle { stroke-dasharray: 8 6; stroke-width: 1.6; }
   .title { font: 700 64px var(--display); fill: var(--ink); letter-spacing: -0.01em; }
   .t { font: 600 26px var(--display); fill: var(--ink); }
-  .big { font: 700 34px var(--display); fill: var(--ink); }
-  .s { font: 500 17px var(--mono); fill: var(--muted); }
-  .c { font: 500 17px var(--mono); fill: var(--ink); }
-  .label { font: 600 19px var(--display); fill: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .m { font: 600 21px var(--display); fill: var(--ink); }
+  .m.small { font-size: 17px; }
+  .s { font: 500 16px var(--mono); fill: var(--muted); }
+  .link { font: 500 16px var(--mono); fill: var(--accent); text-decoration: underline; }
+  .label { font: 600 22px var(--display); fill: var(--muted); }
   .label.key { fill: var(--accent); }
   .wire { fill: none; stroke: var(--ink); stroke-width: 1.8; }
-  .wire.key { stroke: var(--accent); stroke-width: 2.2; }
+  .wire.key { stroke: var(--ink); stroke-width: 2.4; }
   .arrow { fill: var(--ink); }
-  .arrow.key { fill: var(--accent); }
+  .arrow.key { fill: var(--ink); }
+  a:focus-visible rect { stroke-width: 3; }
 </style>
 
-<div class="sheet" role="img" aria-label="biscotti: you text from your iPhone through iMessage to a Raspberry Pi running NixOS. On it, a small core (agent, memory, gate) loads plugins. Task VMs run in Firecracker. Everything reaches the model and tools only through the gate, which holds the keys; Tailscale shows you the live desktops and pages.">
+<div class="sheet" role="img" aria-label="biscotti (dashed boxes are plugins): iMessage arrives through Photon at a Raspberry Pi running NixOS on your tailnet. The core holds pi, the gate (keys and permissions), an encrypted SQLite store for memory, crons and the vault, and Firecracker task VMs (Debian with Cua). Plugins add croner, HTML artifacts and embeddings. The LLM, Gmail, Google Calendar, GitHub and Exa web search are reached only through the gate.">
   <svg viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0L10 5L0 10z"/></marker>
       <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow key" d="M0 0L10 5L0 10z"/></marker>
     </defs>
 
-    <text class="title" x="60" y="110">biscotti</text>
+    <text class="title" x="60" y="80">biscotti</text>
 
-    <!-- You -->
-    <text class="label" x="60" y="232">You</text>
-    <rect class="box" x="60" y="256" width="240" height="96" rx="8"/>
-    <text class="t" x="84" y="313">iPhone</text>
-    <rect class="box" x="60" y="440" width="240" height="96" rx="8"/>
-    <text class="t" x="84" y="490">iMessage</text>
-    <text class="s" x="84" y="516">Photon Spectrum</text>
-    <rect class="box" x="60" y="694" width="240" height="96" rx="8"/>
-    <text class="t" x="84" y="744">Tailscale</text>
-    <text class="s" x="84" y="770">live desktops, pages</text>
+    <!-- iMessage -->
+    <rect class="box" x="60" y="128" width="240" height="64" rx="3"/>
+    <text class="t" x="180" y="169" text-anchor="middle">iMessage</text>
+    <rect class="box" x="60" y="220" width="240" height="90" rx="3"/>
+    <text class="t" x="180" y="274" text-anchor="middle">Photon</text>
 
     <!-- Raspberry Pi -->
-    <rect class="frame" x="360" y="200" width="860" height="640" rx="12"/>
-    <text class="label" x="390" y="240">Raspberry Pi 5 · NixOS</text>
+    <rect class="frame" x="340" y="110" width="920" height="740" rx="4"/>
+    <text class="label" x="370" y="150">NixOS behind Tailscale <tspan class="s" dx="8">(running on Raspberry Pi or virtualized on Mac / the cloud)</tspan></text>
 
-    <rect class="core" x="390" y="262" width="800" height="150" rx="8"/>
-    <text class="label key" x="414" y="296">core · 650 lines</text>
-    <text class="big" x="414" y="352">agent</text>
-    <text class="s" x="414" y="384">pi</text>
-    <text class="big" x="660" y="352">memory</text>
-    <text class="s" x="660" y="384">SQLite + FTS5</text>
-    <text class="big" x="920" y="352">gate</text>
-    <text class="s" x="920" y="384">keys · tools · approvals</text>
+    <rect class="region" x="360" y="172" width="880" height="508" rx="3"/>
+    <text class="label" x="380" y="204">core <tspan class="s" dx="6">(~850 lines)</tspan></text>
 
-    <text class="label" x="390" y="458">plugins</text>
-    <g>
-      <rect class="chip" x="390" y="474" width="132" height="44" rx="22"/><text class="c" x="456" y="502" text-anchor="middle">spectrum</text>
-      <rect class="chip" x="532" y="474" width="86" height="44" rx="22"/><text class="c" x="575" y="502" text-anchor="middle">exa</text>
-      <rect class="chip" x="628" y="474" width="104" height="44" rx="22"/><text class="c" x="680" y="502" text-anchor="middle">wakes</text>
-      <rect class="chip" x="742" y="474" width="132" height="44" rx="22"/><text class="c" x="808" y="502" text-anchor="middle">artifacts</text>
-      <rect class="chip" x="884" y="474" width="118" height="44" rx="22"/><text class="c" x="943" y="502" text-anchor="middle">secrets</text>
-      <rect class="chip" x="1012" y="474" width="140" height="44" rx="22"/><text class="c" x="1082" y="502" text-anchor="middle">embeddings</text>
-    </g>
+    <rect class="box" x="380" y="220" width="260" height="90" rx="3"/>
+    <text class="t" x="510" y="274" text-anchor="middle">Pi</text>
 
-    <text class="label key" x="390" y="590">Firecracker task VMs</text>
-    <rect class="vm" x="390" y="610" width="250" height="180" rx="8"/>
-    <text class="t" x="414" y="664">desktop + pi</text>
-    <text class="s" x="414" y="692">fresh every task</text>
-    <rect class="vm" x="665" y="610" width="250" height="180" rx="8"/>
-    <text class="t" x="689" y="664">desktop + pi</text>
-    <rect class="vm" x="940" y="610" width="250" height="180" rx="8"/>
-    <text class="t" x="964" y="664">desktop + pi</text>
+    <rect class="box" x="380" y="350" width="110" height="60" rx="3"/>
+    <text class="m" x="435" y="388" text-anchor="middle">Croner</text>
+
+    <rect class="box" x="380" y="450" width="260" height="104" rx="3"/>
+    <rect class="box" x="396" y="482" width="72" height="58" rx="3"/><text class="m small" x="432" y="517" text-anchor="middle">crons</text>
+    <rect class="box" x="476" y="482" width="72" height="58" rx="3"/><text class="m small" x="512" y="517" text-anchor="middle">memory</text>
+    <rect class="box" x="556" y="482" width="72" height="58" rx="3"/><text class="m small" x="592" y="517" text-anchor="middle">vault</text>
+    <text class="s" x="510" y="472" text-anchor="middle">encrypted SQLite</text>
+
+    <rect class="vms" x="680" y="220" width="310" height="440" rx="3"/>
+    <text class="label key" x="698" y="252" style="font-size:19px">Firecracker VM (for computer use)</text>
+    <rect class="vm" x="698" y="270" width="274" height="180" rx="3"/>
+    <text class="t" x="835" y="352" text-anchor="middle">lightweight Debian</text>
+    <text class="t" x="835" y="384" text-anchor="middle">image w/ Cua</text>
+    <rect class="vm idle" x="698" y="470" width="129" height="170" rx="3"/>
+    <rect class="vm idle" x="843" y="470" width="129" height="170" rx="3"/>
+
+    <rect class="gate" x="1030" y="220" width="190" height="440" rx="3"/>
+    <text class="t" x="1125" y="449" text-anchor="middle">gate</text>
+
+    <!-- Plugins -->
+    <text class="label" x="380" y="728">plugins</text>
+    <rect class="plugin" x="380" y="748" width="200" height="56" rx="3"/><text class="p" x="480" y="783" text-anchor="middle">artifacts</text>
+    <rect class="plugin" x="600" y="748" width="170" height="56" rx="3"/><text class="p" x="685" y="783" text-anchor="middle">embeddings</text>
 
     <!-- Cloud -->
-    <text class="label" x="1280" y="232">Cloud</text>
-    <rect class="box" x="1280" y="256" width="260" height="96" rx="8"/>
-    <text class="t" x="1304" y="306">AI Gateway</text>
-    <text class="s" x="1304" y="332">DeepSeek V4.1 Flash</text>
-    <rect class="box" x="1280" y="440" width="260" height="96" rx="8"/>
-    <text class="t" x="1304" y="490">the web</text>
-    <text class="s" x="1304" y="516">Exa</text>
-    <rect class="box" x="1280" y="610" width="260" height="96" rx="8"/>
-    <text class="t" x="1304" y="660">your accounts</text>
-    <text class="s" x="1304" y="686">Google · GitHub</text>
+    <text class="label" x="1310" y="204">cloud</text>
+    <rect class="box" x="1310" y="220" width="230" height="72" rx="3"/><text class="t" x="1425" y="266" text-anchor="middle">llm provider</text>
+    <rect class="plugin" x="1310" y="316" width="230" height="72" rx="3"/><text class="p" x="1425" y="362" text-anchor="middle">Gmail</text>
+    <rect class="plugin" x="1310" y="412" width="230" height="72" rx="3"/><text class="p" x="1425" y="458" text-anchor="middle">Google Calendar</text>
+    <rect class="plugin" x="1310" y="508" width="230" height="72" rx="3"/><text class="p" x="1425" y="554" text-anchor="middle">GitHub</text>
+    <rect class="plugin" x="1310" y="604" width="230" height="72" rx="3"/><text class="p" x="1425" y="650" text-anchor="middle">Exa</text>
 
     <!-- Wires -->
-    <path class="wire" d="M180 352V440" marker-start="url(#a)" marker-end="url(#a)"/>
-    <path class="wire" d="M300 488H340V337H390" marker-start="url(#a)" marker-end="url(#a)"/>
-    <path class="wire" d="M300 742H372" marker-end="url(#a)"/>
-    <path class="wire key" d="M1190 304H1280" marker-end="url(#k)"/>
-    <path class="wire" d="M1190 344H1235V488H1280" marker-end="url(#a)"/>
-    <path class="wire" d="M1190 384H1255V658H1280" marker-end="url(#a)"/>
-    <!-- Task VMs reach the model and tools only through the gate. -->
-    <path class="wire key" d="M1171 610V412" marker-end="url(#k)"/>
+    <path class="wire" d="M180 192V220" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path class="wire" d="M300 265H380" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path class="wire" d="M416 482V410" marker-end="url(#a)"/>
+    <path class="wire" d="M450 350V310" marker-end="url(#a)"/>
+    <path class="wire" d="M540 310V450" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path class="wire" d="M640 265H680" marker-end="url(#a)"/>
+    <!-- pi and the VMs reach everything outside only through the gate. -->
+    <path class="wire key" d="M510 220V194H1125V220" marker-end="url(#k)"/>
+    <path class="wire key" d="M990 440H1030" marker-end="url(#k)"/>
+    <path class="wire key" d="M1220 256H1310" marker-end="url(#k)"/>
+    <path class="wire key" d="M1220 352H1310" marker-end="url(#k)"/>
+    <path class="wire key" d="M1220 448H1310" marker-end="url(#k)"/>
+    <path class="wire key" d="M1220 544H1310" marker-end="url(#k)"/>
+    <path class="wire key" d="M1220 640H1310" marker-end="url(#k)"/>
   </svg>
 </div>
