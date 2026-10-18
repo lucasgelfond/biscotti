@@ -109,7 +109,7 @@ async function run(task: string, slot: number, guidance: string) {
 
 const [model, guide = "none", ...only] = process.argv.slice(2);
 const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: model }, send: async () => {} });
-const servers = await Promise.all(SLOTS.map((slot) => gate.listen(`10.200.${slot}.1`, 80)));
+const servers = await Promise.all(SLOTS.map((slot) => gate.listen(`10.200.${slot}.1`, 80, { tasks: true })));
 const tasks = only.length ? only : Object.keys(TASKS);
 const dir = `${OUT}/${model.replace("/", "_")}-${guide}`;
 mkdirSync(dir, { recursive: true });

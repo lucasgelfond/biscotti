@@ -29,6 +29,8 @@ export interface Channel {
 export interface Tools {
   list(): Promise<Tool[]>;
   call(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
+  // The subset task VMs may use (untrusted: web content drives them). Without it, task VMs get none of these.
+  tasks?: Tools;
 }
 
 export interface Recall {
@@ -46,9 +48,14 @@ export interface Plugin {
 
 export const text = (s: string): CallToolResult => ({ content: [{ type: "text", text: s }] });
 
-export function localTools(
-  defs: { name: string; description: string; input: Tool["inputSchema"]; run(args: Record<string, unknown>): Promise<CallToolResult> }[],
-): Tools {
+export interface LocalTool {
+  name: string;
+  description: string;
+  input: Tool["inputSchema"];
+  run(args: Record<string, unknown>): Promise<CallToolResult>;
+}
+
+export function localTools(defs: LocalTool[]): Tools {
   return {
     list: async () => defs.map(({ name, description, input }) => ({ name, description, inputSchema: input })),
     call: async (name, args) => defs.find((d) => d.name === name)!.run(args),

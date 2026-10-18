@@ -20,7 +20,7 @@ choose; Contents, Issues and Pull requests: read and write) and paste it into th
     if (!pat) return { list: async () => [], call: async () => ({ content: [{ type: "text", text: "GitHub isn't connected." }] }) };
     const readOnly = new Set<string>();
     const tools = mcpTools(URL, { Authorization: `Bearer ${pat}`, "X-MCP-Toolsets": TOOLSETS }, async (client, name, args) => {
-      if (!readOnly.has(name) && !(await ctx.ask(`GitHub: ${name} with ${JSON.stringify(args).slice(0, 800)}?\n\nReply yes or no.`)))
+      if (!readOnly.has(name) && !(await ctx.ask(`GitHub: ${name} with ${JSON.stringify(args).slice(0, 3000)}${JSON.stringify(args).length > 3000 ? " […longer than shown]" : ""}?\n\nReply yes or no.`)))
         return { content: [{ type: "text", text: "The user declined." }] };
       return client.callTool({ name, arguments: args }) as never;
     });

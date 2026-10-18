@@ -65,7 +65,12 @@ as a separate message that expands into a card, so keep the rest of the reply to
     createServer((req, res) => {
       const name = NAME.exec(req.url ?? "")?.[1];
       if (!name || !existsSync(`${dir}/${name}`)) return void res.writeHead(404).end();
-      res.writeHead(200, { "Content-Type": name.endsWith(".html") ? "text/html; charset=utf-8" : "image/jpeg" });
+      // Public pages on the owner's hostname: sandboxed (no access to anything else on it) and kept out of search.
+      res.writeHead(200, {
+        "Content-Type": name.endsWith(".html") ? "text/html; charset=utf-8" : "image/jpeg",
+        "Content-Security-Policy": "sandbox allow-scripts allow-popups",
+        "X-Robots-Tag": "noindex",
+      });
       res.end(readFileSync(`${dir}/${name}`));
     }).listen(Number(process.env.PAGES_PORT ?? PORT), "127.0.0.1");
   },

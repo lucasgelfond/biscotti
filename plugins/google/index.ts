@@ -24,6 +24,8 @@ function body(part: { mimeType?: string; body?: { data?: string }; parts?: unkno
 }
 
 function rfc822(to: string, subject: string, text: string, inReplyTo?: string) {
+  // A line break in a header would add hidden headers (e.g. a Bcc) the owner never approved.
+  if (/[\r\n]/.test(to + subject + (inReplyTo ?? ""))) throw new Error("Line breaks aren't allowed in To, Subject or In-Reply-To.");
   const headers = [`To: ${to}`, `Subject: ${subject}`, "Content-Type: text/plain; charset=utf-8"];
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`);
   return Buffer.from(`${headers.join("\r\n")}\r\n\r\n${text}`).toString("base64url");
@@ -141,7 +143,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
         description: "Read one message in full by id (from gmail_search).",
         input: { type: "object", properties: { id: str }, required: ["id"] },
         async run({ id }: Args) {
-          const m = await call("GET", `/gmail/v1/users/me/messages/${id}?format=full`);
+          const m = await call("GET", `/gmail/v1/users/me/messages/${encodeURIComponent(String(id))}?format=full`);
           return text(`From: ${header(m, "From")}\nTo: ${header(m, "To")}\nDate: ${header(m, "Date")}\nSubject: ${header(m, "Subject")}\n\n${body(m.payload) || m.snippet}`);
         },
       },
@@ -159,8 +161,8 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
         description: "Send an email (asks the user first). To reply, pass reply_to with the message id being answered.",
         input: { type: "object", properties: { to: str, subject: str, body: str, reply_to: str }, required: ["to", "subject", "body"] },
         async run({ to, subject, body, reply_to }: Args) {
-          if (!(await confirm(`Send this email to ${to}?\nSubject: ${subject}\n\n${String(body).slice(0, 800)}`))) return declined;
-          const original = reply_to ? await call("GET", `/gmail/v1/users/me/messages/${reply_to}?format=metadata&metadataHeaders=Message-ID`) : undefined;
+          if (!(await confirm(`Send this email to ${to}?\nSubject: ${subject}\n\n${String(body).slice(0, 3000)}${String(body).length > 3000 ? "\n[…longer than shown]" : ""}`))) return declined;
+          const original = reply_to ? await call("GET", `/gmail/v1/users/me/messages/${encodeURIComponent(String(reply_to))}?format=metadata&metadataHeaders=Message-ID`) : undefined;
           const raw = rfc822(String(to), String(subject), String(body), original && header(original, "Message-ID"));
           const sent = await call("POST", "/gmail/v1/users/me/messages/send", { raw, ...(original ? { threadId: original.threadId } : {}) });
           return text(`Sent (${sent.id}).`);
@@ -210,7 +212,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
         async run({ id, title, start, end, location }: Args) {
           const changes = { ...(title ? { summary: title } : {}), ...(location ? { location } : {}), ...(start ? { start: { dateTime: start } } : {}), ...(end ? { end: { dateTime: end } } : {}) };
           if (!(await confirm(`Change calendar event ${id}: ${JSON.stringify(changes)}?`))) return declined;
-          await call("PATCH", `/calendar/v3/calendars/primary/events/${id}`, changes);
+          await call("PATCH", `/calendar/v3/calendars/primary/events/${encodeURIComponent(String(id))}`, changes);
           return text("Updated.");
         },
       },
@@ -219,9 +221,9 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
         description: "Delete an event by id (asks the user first).",
         input: { type: "object", properties: { id: str }, required: ["id"] },
         async run({ id }: Args) {
-          const event = await call("GET", `/calendar/v3/calendars/primary/events/${id}`);
+          const event = await call("GET", `/calendar/v3/calendars/primary/events/${encodeURIComponent(String(id))}`);
           if (!(await confirm(`Delete "${event.summary}" (${event.start?.dateTime ?? event.start?.date}) from your calendar?`))) return declined;
-          await call("DELETE", `/calendar/v3/calendars/primary/events/${id}`);
+          await call("DELETE", `/calendar/v3/calendars/primary/events/${encodeURIComponent(String(id))}`);
           return text("Deleted.");
         },
       },

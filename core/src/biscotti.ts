@@ -39,7 +39,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const gateServer = await gate.listen("127.0.0.1", opts.gatePort ?? 0);
   const gateUrl = `http://127.0.0.1:${(gateServer.address() as AddressInfo).port}`;
   const vmDir = process.env.VM_DIR;
-  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80);
+  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { tasks: true });
 
   let latest: Message | undefined;
   const react = defineTool({

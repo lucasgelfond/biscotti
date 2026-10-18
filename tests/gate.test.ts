@@ -2,6 +2,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { expect, test } from "vitest";
 import { localTools, text, type Plugin } from "../core/src/plugin.ts";
+import { request } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createGate } from "../core/src/gate.ts";
 import { boot } from "./support.ts";
 
 async function mcp(url: string) {
@@ -63,4 +66,27 @@ test("lists every plugin's tools at the gate's /mcp", async () => {
   await gate.close();
 
   expect(names).toEqual(expect.arrayContaining(["send_postcard", "schedule", "list_wakes", "cancel_wake"]));
+});
+
+test("gives task VMs only the tools plugins allow them, and only when addressed as the gate", async () => {
+  const tool = (name: string) => localTools([{ name, description: name, input: { type: "object" }, run: async () => text(name) }]);
+  const gate = createGate({ llm: { url: "http://127.0.0.1:1", key: "unused" }, models: {}, send: async () => {} });
+  gate.add({ ...tool("gmail_read"), tasks: undefined });
+  gate.add({ ...tool("web_search"), tasks: tool("web_search") });
+  const server = await gate.listen("127.0.0.1", 0, { tasks: true });
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
+
+  const client = await mcp(url);
+  const names = (await client.listTools()).tools.map((t) => t.name);
+  const hidden = client.callTool({ name: "gmail_read", arguments: {} });
+  await expect(hidden).rejects.toThrow("no tool gmail_read");
+  await client.close();
+  // As a page in the VM's browser would, through a DNS name rebound to the gate.
+  const rebound = await new Promise<number>((resolve) =>
+    request(url, { method: "POST", headers: { Host: "evil.example" } }, (res) => resolve(res.statusCode!)).end(),
+  );
+  server.close();
+
+  expect(names).toEqual(["web_search"]);
+  expect(rebound).toBe(403);
 });

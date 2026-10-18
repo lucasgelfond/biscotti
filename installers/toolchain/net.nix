@@ -54,6 +54,12 @@ in
       ${host "filter" "DOCKER-USER" "-o veth-fc+ -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"}
       ${lib.concatMapStrings (net: host "filter" "DOCKER-USER" "-i veth-fc+ -d ${net} -j DROP" + "\n")
         [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" ]}
+      # The same drops before routing, so they hold whatever order Docker and Tailscale put FORWARD's chains in
+      # (Tailscale's accepts traffic out tailscale0): anything from a VM that isn't for the host itself or the internet.
+      ${lib.concatMapStrings (net: host "raw" "PREROUTING" "-i veth-fc+ -d ${net} -j DROP" + "\n")
+        [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" ]}
+      ${host "raw" "PREROUTING" "-i veth-fc+ -m addrtype --dst-type LOCAL -j RETURN"}
+      ip6tables -t raw -C PREROUTING -i veth-fc+ -j DROP 2>/dev/null || ip6tables -t raw -I PREROUTING -i veth-fc+ -j DROP
       # Traffic to the host itself: only the gate.
       ${host "filter" "INPUT" "-i veth-fc+ -j DROP"}
       ${host "filter" "INPUT" "-i veth-fc+ -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"}

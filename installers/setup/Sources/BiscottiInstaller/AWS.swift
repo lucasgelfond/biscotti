@@ -125,6 +125,8 @@ extension AWS {
             "ImageId": image.id, "InstanceType": "m8i.large", "MinCount": "1", "MaxCount": "1", "KeyName": keyName,
             "SecurityGroupId.1": group, "UserData": Data(userData.utf8).base64EncodedString(),
             "CpuOptions.NestedVirtualization": "enabled",
+            // IMDSv2 only, one hop: task VMs behind the host can't reach the instance's credentials endpoint.
+            "MetadataOptions.HttpTokens": "required", "MetadataOptions.HttpPutResponseHopLimit": "1",
             "BlockDeviceMapping.1.DeviceName": image.root, "BlockDeviceMapping.1.Ebs.VolumeSize": "40",
             "BlockDeviceMapping.1.Ebs.VolumeType": "gp3",
             "TagSpecification.1.ResourceType": "instance", "TagSpecification.1.Tag.1.Key": "Name", "TagSpecification.1.Tag.1.Value": "biscotti",

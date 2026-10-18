@@ -76,7 +76,8 @@ export function taskVms(vmDir: string, firecracker: string) {
 export async function restore(vmDir: string, firecracker: string, slot: number): Promise<Vm> {
   const sock = `/tmp/fc-${slot}.sock`;
   rmSync(sock, { force: true });
-  const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, firecracker, "--api-sock", sock], { stdio: "ignore" });
+  // No secrets from our environment for Firecracker: only the PATH.
+  const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, firecracker, "--api-sock", sock], { stdio: "ignore", env: { PATH: process.env.PATH } });
   // The next VM in this slot can't open the tap until this one has exited.
   const stop = async () => {
     const exited = once(vm, "exit");
@@ -118,11 +119,12 @@ function runPi(host: string, goal: string) {
     let report = "";
     let screenshot: Buffer | undefined;
     createInterface({ input: socket }).on("line", (line) => {
-      const event = JSON.parse(line) as {
-        type: string;
-        png?: string;
-        message?: { role: string; content: { type: string; text?: string }[] };
-      };
+      let event: { type: string; png?: string; message?: { role: string; content: { type: string; text?: string }[] } };
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
       if (event.type === "screenshot") screenshot = Buffer.from(event.png!, "base64");
       if (event.type !== "message_end" || event.message?.role !== "assistant") return;
       const text = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");

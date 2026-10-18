@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { localTools, text, type Plugin } from "./plugin.ts";
+import { localTools, text, type LocalTool, type Plugin } from "./plugin.ts";
 import { eq } from "drizzle-orm";
 import { vault } from "./schema.ts";
 
@@ -49,8 +49,7 @@ repeat full passwords or card numbers in texts. To save a new one, \`vault_reque
       void ctx.deliver(`"${pending.name}" was saved to the vault by the user.`);
     }).listen(Number(process.env.VAULT_PORT ?? PORT), "127.0.0.1"));
 
-    return localTools([
-      {
+    const list: LocalTool = {
         name: "vault_list",
         description: "List saved secrets (logins, cards, licenses): their names and fields, not their values.",
         input: { type: "object", properties: {} },
@@ -59,8 +58,9 @@ repeat full passwords or card numbers in texts. To save a new one, \`vault_reque
           if (!rows.length) return text("No secrets saved.");
           return text(rows.map((r) => `${r.name}: ${r.fields.join(", ")}${r.confirm ? " (asks the user first)" : ""}`).join("\n"));
         },
-      },
-      {
+      };
+    // From a task VM (untrusted: web content drives it), every use asks, and the question says it's a task asking.
+    const get = (task: boolean): LocalTool => ({
         name: "vault_get",
         description: "Get a saved secret's values by name (from vault_list), to fill a login or checkout. Some ask the user first.",
         input: {
@@ -68,14 +68,15 @@ repeat full passwords or card numbers in texts. To save a new one, \`vault_reque
           properties: { name: { type: "string" }, why: { type: "string", description: "What it's for, shown to the user when they're asked, e.g. 'checkout for 2 train tickets, $34'." } },
           required: ["name", "why"],
         },
-        async run({ name, why }) {
+        async run({ name, why }: Record<string, unknown>) {
           const row = db.select().from(vault).where(eq(vault.name, name as string)).get();
           if (!row) return text(`No secret named "${name}".`);
-          if (row.confirm && !(await ctx.ask(`Use "${row.name}" for ${why}? Reply yes or no.`))) return text("The user declined.");
+          const question = `${task ? "A task wants to use" : "Use"} "${row.name}" for ${String(why).slice(0, 200)}? Reply yes or no.`;
+          if ((task || row.confirm) && !(await ctx.ask(question))) return text("The user declined.");
           return text(JSON.stringify(row.value));
         },
-      },
-      {
+      });
+    const request: LocalTool = {
         name: "vault_request",
         description: "Get a one-time link to a form where the user enters a new secret (or replaces one). Text the link; you'll get a message once it's saved.",
         input: {
@@ -93,7 +94,7 @@ repeat full passwords or card numbers in texts. To save a new one, \`vault_reque
           setTimeout(() => forms.delete(token), FORM_TTL_MS);
           return text(`${process.env.VAULT_URL ?? `https://${ctx.env("TAILNET_HOST")}:9443`}/${token}`);
         },
-      },
-    ]);
+      };
+    return { ...localTools([list, get(false), request]), tasks: localTools([list, get(true)]) };
   },
 } satisfies Plugin;
