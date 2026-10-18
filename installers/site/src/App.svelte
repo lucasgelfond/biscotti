@@ -1,5 +1,5 @@
 <script>
-  import architecture from "../../../docs/architecture.txt?raw";
+  import architecture from "../../../docs/architecture.svg?url";
   const version = __VERSION__;
   const biscotti = String.raw`
         _.-~~~~~~~~~~~~~~~~~~~~-._
@@ -27,7 +27,13 @@
 
   <details open>
     <summary>Design</summary>
-    <pre class="diagram" aria-label="biscotti's architecture">{architecture}</pre>
+    <img
+      class="demo arch"
+      src={architecture}
+      width="1600"
+      height="900"
+      alt="biscotti's architecture: iMessage through Photon to Pi on NixOS behind Tailscale. The core holds Pi, Croner, an encrypted SQLite store (crons, memory, vault), Firecracker VMs for computer use (Debian with Cua and noVNC) and the gate, through which every call to the llm provider, Gmail, Google Calendar, GitHub and Exa goes. Plugins: artifacts, embeddings, Executor.sh."
+    />
   </details>
 
   <details open>

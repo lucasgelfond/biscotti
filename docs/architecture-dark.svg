@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
+  <!-- biscotti's architecture (dark), drawn like a terminal diagram. Dashed boxes are plugins. -->
+  <style>
+    text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; fill: #e8e8e8; }
+    .l { font-size: 22px; text-anchor: middle; }
+    .s { font-size: 15px; text-anchor: middle; }
+    .h { font-size: 20px; }
+    .n { font-size: 15px; fill: #a8a8a8; }
+    rect, path { fill: none; stroke: #e8e8e8; stroke-width: 1; shape-rendering: crispEdges; }
+    rect.b { fill: #111; }
+    .vm { stroke: #b8701f; }
+    .fc { fill: #b8701f; }
+    .d { stroke-dasharray: 6 5; }
+    .w { stroke-width: 1.5; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10" style="stroke-width: 1.5; shape-rendering: auto"/>
+    </marker>
+    <pattern id="hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <path d="M0 0V10" style="stroke: #fff; stroke-opacity: 0.09; shape-rendering: auto"/>
+    </pattern>
+    <pattern id="fchatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" style="fill: #22180d; stroke: none"/>
+      <path d="M0 0V8" style="stroke: #b8701f; stroke-opacity: 0.35; shape-rendering: auto"/>
+    </pattern>
+  </defs>
+  <rect x="0" y="0" width="1600" height="900" style="fill: #111; stroke: none"/>
+
+  <text x="60" y="78" style="font-size: 44px; font-weight: 700">biscotti</text>
+
+  <!-- iMessage and Photon -->
+  <rect x="60" y="128" width="240" height="64"/><text class="l" x="180" y="168">iMessage</text>
+  <rect x="60" y="220" width="240" height="90"/><text class="l" x="180" y="273">Photon</text>
+
+  <!-- NixOS frame -->
+  <rect class="w" x="340" y="110" width="920" height="740"/>
+  <text class="h" x="362" y="145">NixOS behind Tailscale</text>
+  <text class="n" x="640" y="145">(running on Raspberry Pi or virtualized on Mac / the cloud)</text>
+
+  <!-- core -->
+  <rect class="d" x="360" y="172" width="880" height="508" style="fill: url(#hatch)"/>
+  <text class="h" x="380" y="203">core</text>
+
+  <rect class="b" x="380" y="220" width="260" height="90"/><text class="l" x="510" y="273">Pi</text>
+  <rect class="b" x="380" y="350" width="110" height="60"/><text class="l" x="435" y="387">Croner</text>
+
+  <rect class="b" x="380" y="450" width="260" height="104"/>
+  <text class="s" x="510" y="473">encrypted SQLite</text>
+  <rect class="b" x="396" y="484" width="72" height="56"/><text class="s" x="432" y="517">crons</text>
+  <rect class="b" x="476" y="484" width="72" height="56"/><text class="s" x="512" y="517">memory</text>
+  <rect class="b" x="556" y="484" width="72" height="56"/><text class="s" x="592" y="517">vault</text>
+
+  <rect class="vm" x="680" y="220" width="310" height="440" style="fill: url(#fchatch); stroke-width: 1.5"/>
+  <text class="s fc" x="835" y="248">Firecracker VM</text>
+  <text class="s fc" x="835" y="268">(for computer use)</text>
+  <rect class="b vm" x="698" y="284" width="274" height="166"/>
+  <text class="l" x="835" y="340">lightweight Debian</text>
+  <text class="l" x="835" y="372">image w/ Cua</text>
+  <text class="l" x="835" y="404">and noVNC</text>
+  <rect class="d b vm" x="698" y="470" width="129" height="170"/>
+  <rect class="d b vm" x="843" y="470" width="129" height="170"/>
+
+  <rect class="b" x="1030" y="220" width="190" height="440"/><text class="l" x="1125" y="447">gate</text>
+
+  <!-- plugins -->
+  <text class="h" x="380" y="728">plugins</text>
+  <rect class="d" x="380" y="748" width="200" height="56"/><text class="l" x="480" y="783">artifacts</text>
+  <rect class="d" x="600" y="748" width="190" height="56"/><text class="l" x="695" y="783">embeddings</text>
+  <rect class="d" x="810" y="748" width="200" height="56"/><text class="l" x="910" y="783">Executor.sh</text>
+
+  <!-- cloud -->
+  <text class="h" x="1310" y="203">cloud</text>
+  <rect x="1310" y="220" width="250" height="72"/><text class="l" x="1435" y="263">llm provider</text>
+  <rect class="d" x="1310" y="316" width="250" height="72"/><text class="l" x="1435" y="359">Gmail</text>
+  <rect class="d" x="1310" y="412" width="250" height="72"/><text class="l" x="1435" y="455">Google Calendar</text>
+  <rect class="d" x="1310" y="508" width="250" height="72"/><text class="l" x="1435" y="551">GitHub</text>
+  <rect class="d" x="1310" y="604" width="250" height="72"/><text class="l" x="1435" y="647">Exa</text>
+
+  <!-- wires; pi and the VMs reach everything outside only through the gate -->
+  <path d="M180 192V220" marker-start="url(#a)" marker-end="url(#a)"/>
+  <path d="M300 265H380" marker-start="url(#a)" marker-end="url(#a)"/>
+  <path d="M416 484V410" marker-end="url(#a)"/>
+  <path d="M450 350V310" marker-end="url(#a)"/>
+  <path d="M560 310V450" marker-start="url(#a)" marker-end="url(#a)"/>
+  <path d="M640 265H680" marker-end="url(#a)"/>
+  <path d="M510 220V194H1125V220" marker-end="url(#a)"/>
+  <path d="M990 440H1030" marker-end="url(#a)"/>
+  <path d="M1220 256H1310" marker-end="url(#a)"/>
+  <path d="M1220 352H1310" marker-end="url(#a)"/>
+  <path d="M1220 448H1310" marker-end="url(#a)"/>
+  <path d="M1220 544H1310" marker-end="url(#a)"/>
+  <path d="M1220 640H1310" marker-end="url(#a)"/>
+</svg>
