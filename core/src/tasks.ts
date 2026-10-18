@@ -47,8 +47,10 @@ export function taskVms(vmDir: string, firecracker: string) {
   }
 
   async function take() {
-    const ready = warm && (await warm.catch(() => undefined));
+    // Claimed before any await, so tasks starting together never share it.
+    const claimed = warm;
     warm = undefined;
+    const ready = claimed && (await claimed.catch(() => undefined));
     return ready ?? restore(vmDir, firecracker, await acquire());
   }
 
