@@ -32,7 +32,7 @@ configuration.
 6. **Network settings**: **Allow SSH traffic** only (leave HTTP/HTTPS unchecked).
 7. **Configure storage**: 40 GiB gp3.
 8. Expand **Advanced details**. Set **Nested virtualization** to **Enable**. In **User data**, paste the contents of
-   `installers/setup/aws/user-data.nix` with `REV` replaced by a commit of this repo (the repo is private for now, so the
+   `installer/aws/user-data.nix` with `REV` replaced by a commit of this repo (the repo is private for now, so the
    download fails until it's public; until then use the AMI below).
 9. Click **Launch instance**, then **View all instances**, and copy the instance's **Public IPv4 address**.
 10. On your computer, copy your settings in (replace `IP`):

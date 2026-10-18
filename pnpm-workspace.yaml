@@ -3,4 +3,4 @@ packages:
   - plugins/*
   - plugins/*/*
   - tests
-  - installers/site
+  - site

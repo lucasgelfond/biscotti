@@ -2,5 +2,5 @@
 # with EC2 describe access and by every process on the instance.
 { ... }:
 {
-  imports = [ "${builtins.fetchTarball "https://github.com/lucasgelfond/biscotti/archive/REV.tar.gz"}/installers/setup/aws" ];
+  imports = [ "${builtins.fetchTarball "https://github.com/lucasgelfond/biscotti/archive/REV.tar.gz"}/installer/aws" ];
 }

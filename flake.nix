@@ -22,22 +22,22 @@
     nixosConfigurations = {
       pi5 = nixos-raspberrypi.lib.nixosSystem {
         inherit specialArgs;
-        modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/pi5.nix ];
+        modules = [ ./nix/biscotti.nix ./nix/pi5.nix ];
       };
       vm = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         inherit specialArgs;
-        modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/vm.nix ];
+        modules = [ ./nix/biscotti.nix ./nix/vm.nix ];
       };
       mac = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
         inherit specialArgs;
-        modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/mac.nix ];
+        modules = [ ./nix/biscotti.nix ./nix/mac.nix ];
       };
       aws = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         inherit specialArgs;
-        modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/aws.nix ];
+        modules = [ ./nix/biscotti.nix ./nix/aws.nix ];
       };
     };
 

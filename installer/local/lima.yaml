@@ -1,5 +1,5 @@
 # biscotti on a Mac (M3+): the biscotti-mac NixOS image in Lima, with nested virtualization for Firecracker. Plain mode:
-# the image has no Lima guest agent. `limactl start --name=biscotti installers/setup/local/lima.yaml`, then put .env and
+# the image has no Lima guest agent. `limactl start --name=biscotti installer/local/lima.yaml`, then put .env and
 # biscotti.json in /var/lib/biscotti (the setup app does this).
 vmType: vz
 plain: true

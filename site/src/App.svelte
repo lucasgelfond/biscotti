@@ -1,6 +1,6 @@
 <script>
   // Inlined, not an <img>: inside an image the system monospace (ui-monospace) doesn't resolve.
-  import architecture from "../../../docs/architecture.svg?raw";
+  import architecture from "../public/architecture.svg?raw";
   const version = __VERSION__;
   const biscotti = String.raw`
         _.-~~~~~~~~~~~~~~~~~~~~-._

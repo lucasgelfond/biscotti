@@ -6,4 +6,4 @@ The general design is a main Pi agent that dispatches tasks to little VMs. Acces
 
 I built a small setup wizard that should make it easy to deploy on Raspberry Pi, Mac (with nested virutalization because it needs KVM access), or on AWS. Open for PRs + feedback! 
 
-![biscotti](docs/tweet.png)
+![biscotti](site/public/tweet.png)

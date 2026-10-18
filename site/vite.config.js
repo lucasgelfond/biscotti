@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vite";
 
-const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const dl = `https://dl.biscotti.lucasgelfond.online/v${version}`;
 const files = ["installer.zip", "pi5.img.zst", "mac.qcow2.zst", "aws.vhd.zst"];
 

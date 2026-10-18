@@ -1,9 +1,9 @@
 **/node_modules
 .git
-docs
-installers
+installer
+nix
+site
 instinct-dump
-development
 tests
 !tests/package.json
 core/vm

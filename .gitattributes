@@ -1,5 +1,4 @@
 # Keep GitHub language stats to the agent itself.
-installers/setup/** linguist-vendored
-installers/site/** linguist-vendored
-docs/** linguist-documentation
+installer/** linguist-vendored
+site/** linguist-vendored
 *.html linguist-documentation

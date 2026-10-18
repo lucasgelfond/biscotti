@@ -2,7 +2,7 @@
 # Build "biscotti Installer.app" with the command-line tools (no Xcode project).
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION=$(plutil -extract version raw ../../package.json)
+VERSION=$(plutil -extract version raw ../package.json)
 swift build -c release
 APP="build/biscotti Installer.app"
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS"
