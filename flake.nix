@@ -22,6 +22,7 @@
       };
       vm = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
+        specialArgs = inputs;
         modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/vm.nix ];
       };
     };
