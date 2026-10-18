@@ -23,7 +23,7 @@
       "url": "http://gate/mcp",
       "exposure": "direct",
       "timeout": 900,
-      "description": "The owner's tools: web search, connected accounts (mail, calendar, GitHub, \u2026), saved secrets and more. Some wait for the owner's approval."
+      "description": "The owner's tools for tasks: web search and the vault (each vault use waits for the owner's approval)."
     }
   }
 }
