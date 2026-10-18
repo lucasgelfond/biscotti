@@ -1,10 +1,14 @@
 # A Lima VM on a Mac (M3 or later, nested KVM), run in Lima's plain mode (no guest agent). At boot, the user and SSH
 # key Lima puts on its cidata disk become a login, so `limactl shell` works.
-{ modulesPath, pkgs, ... }:
+{ lib, modulesPath, pkgs, ... }:
 {
   imports = [ "${modulesPath}/profiles/qemu-guest.nix" ];
   # Task VMs on 2M huge pages (768 per 1536 MiB VM, three at once): nested, every 4K page a VM first touches is slow.
   boot.kernelParams = [ "console=hvc0" "hugepagesz=2M" "hugepages=2304" ];
+  # As the image lays the disk out, so `nixos-rebuild switch --flake .#mac` can update a running Mac VM in place.
+  fileSystems."/" = lib.mkDefault { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; autoResize = true; };
+  fileSystems."/boot" = lib.mkDefault { device = "/dev/disk/by-label/ESP"; fsType = "vfat"; };
+  boot.loader.systemd-boot.enable = lib.mkDefault true;
   # Lima runs its scripts with /bin/bash.
   systemd.tmpfiles.rules = [ "L+ /bin/bash - - - - ${pkgs.bash}/bin/bash" ];
 
