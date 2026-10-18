@@ -1,30 +1,24 @@
 import Darwin
 import Foundation
 
-/// Writes the image to the raw disk. Like Raspberry Pi Imager, it asks macOS's `authopen` for the device: the user
-/// authorizes once, and authopen passes back an open file descriptor over a socket.
+/// Writes the image (raw, or zstd-compressed as published) to the raw disk. Like Raspberry Pi Imager, it asks macOS's
+/// `authopen` for the device: the user authorizes once, and authopen passes back an open file descriptor over a socket.
 func writeImage(_ image: URL, to disk: Disk, progress: @escaping (Double) -> Void) throws {
     try run("/usr/sbin/diskutil", ["unmountDisk", "/dev/\(disk.id)"])
     let fd = try authorizedOpen("/dev/r\(disk.id)")
     defer { close(fd) }
 
-    let input = try FileHandle(forReadingFrom: image)
-    defer { try? input.close() }
-    let total = Double((try FileManager.default.attributesOfItem(atPath: image.path)[.size] as? NSNumber)?.int64Value ?? 1)
-    var written = 0.0
-    while let chunk = try input.read(upToCount: 4 << 20), !chunk.isEmpty {
-        try chunk.withUnsafeBytes { buffer in
-            var offset = 0
-            while offset < buffer.count {
-                let n = Darwin.write(fd, buffer.baseAddress! + offset, buffer.count - offset)
-                guard n > 0 else { throw InstallerError("Writing to the card failed: \(String(cString: strerror(errno)))") }
-                offset += n
-            }
-        }
-        written += Double(chunk.count)
-        progress(written / total)
-    }
+    try readImage(image, progress: progress) { try writeAll(fd, $0) }
     guard fsync(fd) == 0 else { throw InstallerError("Flushing the card failed") }
+}
+
+private func writeAll(_ fd: Int32, _ buffer: UnsafeRawBufferPointer) throws {
+    var offset = 0
+    while offset < buffer.count {
+        let n = Darwin.write(fd, buffer.baseAddress! + offset, buffer.count - offset)
+        guard n > 0 else { throw InstallerError("Writing to the card failed: \(String(cString: strerror(errno)))") }
+        offset += n
+    }
 }
 
 /// Runs `authopen -stdoutpipe` on one end of a socket pair and receives the descriptor it sends (SCM_RIGHTS).

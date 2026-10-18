@@ -1,10 +1,13 @@
-# Lima VM for running Firecracker on Apple Silicon (M3+) via nested virtualization.
+# biscotti on a Mac (M3+): the biscotti-mac NixOS image in Lima, with nested virtualization for Firecracker. Plain mode:
+# the image has no Lima guest agent. `limactl start --name=biscotti installers/local/lima.yaml`, then put .env and
+# biscotti.json in /var/lib/biscotti (the setup app does this).
 vmType: vz
+plain: true
 nestedVirtualization: true
 cpus: 4
 memory: 6GiB
 disk: 20GiB
 images:
-  - location: https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img
+  - location: https://biscotti.lucasgelfond.online/biscotti-mac.qcow2.zst
     arch: aarch64
 mounts: []

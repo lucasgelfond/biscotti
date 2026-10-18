@@ -1,9 +1,9 @@
-# The biscotti host, shared by every target (Pi 5, VM, later Hetzner).
-{ pkgs, self, ... }:
+# The biscotti host, shared by every target (Pi 5, VM, AWS).
+{ pkgs, self, version, ... }:
 let
-  # Firecracker with the GICv2 snapshot-restore fixes (lucasgelfond/firecracker@biscotti-gicv2, upstream #6300 and
-  # #6301), which the Pi 5's interrupt controller needs.
-  firecracker = pkgs.firecracker.overrideAttrs (old: {
+  # On ARM, Firecracker with the GICv2 snapshot-restore fixes (lucasgelfond/firecracker@biscotti-gicv2, upstream
+  # #6300 and #6301), which the Pi 5's interrupt controller needs. Stock on x86.
+  firecracker = if !pkgs.stdenv.hostPlatform.isAarch64 then pkgs.firecracker else pkgs.firecracker.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ [
       (pkgs.fetchpatch {
         url = "https://github.com/lucasgelfond/firecracker/compare/e786ba84fd5e0db878392a6a1f234e1b17fcaeb2...4f39c49fbe249592ccfb9ab20f29850ca1a66df7.diff";
@@ -20,6 +20,7 @@ in
   _module.args = { inherit repo firecracker; };
 
   networking.hostName = "biscotti";
+  system.nixos.label = "biscotti-v${version}";
   time.timeZone = "UTC";
 
   # A generic user: each installer provides their own SSH key (see the target files).

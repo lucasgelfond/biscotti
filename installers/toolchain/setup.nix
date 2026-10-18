@@ -17,14 +17,14 @@
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      TimeoutStartSec = "2h";
+      TimeoutStartSec = "infinity";
     };
     script = ''
       STATE=/var/lib/biscotti
       ENV=$STATE/.env
       touch "$ENV" && chmod 600 "$ENV"
       get() { sed -n "s/^$1=//p" "$ENV"; }
-      set_default() { [ -n "$(get "$1")" ] || echo "$1=$2" >> "$ENV"; }
+      set_default() { [ -n "$(get "$1")" ] || { sed -i "/^$1=\$/d" "$ENV"; echo "$1=$2" >> "$ENV"; }; }
 
       # The installer app writes to the boot partition, which anyone with the card can read: move it all off.
       if [ -f /boot/firmware/biscotti.env ]; then
@@ -33,26 +33,25 @@
       fi
       [ -f /boot/firmware/biscotti.json ] && mv /boot/firmware/biscotti.json "$STATE/biscotti.json"
       [ -f "$STATE/biscotti.json" ] || cp ${repo}/biscotti.json "$STATE/biscotti.json"
+      # Or the settings are copied in over SSH (cloud): wait for them.
+      [ -n "$(get AI_GATEWAY_API_KEY)" ] && set_default LLM_API_KEY "$(get AI_GATEWAY_API_KEY)"
+      until [ -n "$(get LLM_API_KEY)" ]; do echo "waiting for settings in $ENV"; sleep 10; done
+      set_default LLM_BASE_URL https://ai-gateway.vercel.sh/v1
       set_default MODEL deepseek/deepseek-v4.1-flash-1017-fast
-      set_default TASK_MODEL deepseek/deepseek-v4.1-flash-1017-fast
+      set_default TASK_MODEL "$(get MODEL)"
       set_default TZ America/New_York
       set_default DB_KEY "$(openssl rand -hex 32)"
-      set_default EXECUTOR_ADMIN_PASSWORD "$(openssl rand -base64 18 | tr -d '/+=')"
       set_default FIRECRACKER_BIN ${firecracker}/bin/firecracker
 
       docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
       notify() { docker run --rm --network host --env-file "$ENV" biscotti/agent node plugins/channels/spectrum/notify.ts "$1" || true; }
 
-      # Tailscale: with an auth key from the installer, join directly; otherwise text the owner the login link.
+      # Tailscale: text the owner the login link.
       if ! tailscale status >/dev/null 2>&1; then
-        if [ -n "$(get TS_AUTHKEY)" ]; then
-          tailscale up --hostname=biscotti --auth-key="$(get TS_AUTHKEY)"
-        else
-          tailscale up --hostname=biscotti > "$STATE/tailscale-up.log" 2>&1 &
-          until url=$(grep -o 'https://login.tailscale.com/[^ ]*' "$STATE/tailscale-up.log"); do sleep 1; done
-          notify "Hi, it's biscotti! To finish setting me up, open this link and add me to your Tailscale: $url"
-          until tailscale status >/dev/null 2>&1; do sleep 5; done
-        fi
+        tailscale up --hostname=biscotti > "$STATE/tailscale-up.log" 2>&1 &
+        until url=$(grep -o 'https://login.tailscale.com/[^ ]*' "$STATE/tailscale-up.log"); do sleep 1; done
+        notify "Hi, it's biscotti! To finish setting me up, open this link and add me to your Tailscale: $url"
+        until tailscale status >/dev/null 2>&1; do sleep 5; done
       fi
       set_default TAILNET_HOST "$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")')"
 
@@ -64,7 +63,6 @@
       # The vault's one-time forms, and Google's sign-in callback.
       tailscale serve --bg --https=9443 http://127.0.0.1:4791
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
-      if has executor; then tailscale serve --bg --https=8443 http://127.0.0.1:4788; fi
       if has artifacts; then tailscale funnel --bg --https=443 http://127.0.0.1:8082; fi
 
       # The agent, plus the services of the plugins that bring one. Nix-built binaries mounted into the agent (the

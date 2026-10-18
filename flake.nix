@@ -14,19 +14,36 @@
     nixpkgs.follows = "nixos-raspberrypi/nixpkgs";
   };
 
-  outputs = { self, nixpkgs, nixos-raspberrypi, ... }@inputs: {
+  outputs = { self, nixpkgs, nixos-raspberrypi, ... }@inputs:
+  let
+    version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
+    specialArgs = inputs // { inherit version; };
+  in {
     nixosConfigurations = {
       pi5 = nixos-raspberrypi.lib.nixosSystem {
-        specialArgs = inputs;
+        inherit specialArgs;
         modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/pi5.nix ];
       };
       vm = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
-        specialArgs = inputs;
+        inherit specialArgs;
         modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/vm.nix ];
+      };
+      mac = nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        inherit specialArgs;
+        modules = [ ./installers/toolchain/biscotti.nix ./installers/local/mac.nix ];
+      };
+      aws = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        inherit specialArgs;
+        modules = [ ./installers/toolchain/biscotti.nix ./installers/aws/aws.nix ];
       };
     };
 
     packages.aarch64-linux.pi5-sd-image = self.nixosConfigurations.pi5.config.system.build.sdImage;
+    packages.aarch64-linux.mac-image = self.nixosConfigurations.mac.config.system.build.images.qemu-efi;
+    # A ready AMI, for uploading with `aws ec2 import-snapshot` instead of the user-data route.
+    packages.x86_64-linux.aws-image = self.nixosConfigurations.aws.config.system.build.images.amazon;
   };
 }

@@ -11,23 +11,37 @@ struct Disk: Identifiable, Hashable {
     }
 }
 
-func diskutil(_ args: String...) throws -> [String: Any] {
-    let out = try run("/usr/sbin/diskutil", args + ["-plist"])
+func diskutil(_ verb: String, _ args: String...) throws -> [String: Any] {
+    let out = try run("/usr/sbin/diskutil", [verb, "-plist"] + args)
     return try PropertyListSerialization.propertyList(from: out, format: nil) as? [String: Any] ?? [:]
 }
 
 @discardableResult
-func run(_ tool: String, _ args: [String]) throws -> Data {
+func run(_ tool: String, _ args: [String], input: Data? = nil) throws -> Data {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: tool)
     process.arguments = args
-    let pipe = Pipe()
-    process.standardOutput = pipe
+    let stdout = Pipe(), stderr = Pipe(), stdin = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+    if input != nil { process.standardInput = stdin }
     try process.run()
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    if let input {
+        stdin.fileHandleForWriting.write(input)
+        try stdin.fileHandleForWriting.close()
+    }
+    // Both pipes drain at once, so a chatty stderr (limactl's) can't fill up and stall the process.
+    var errorData = Data()
+    let drained = DispatchGroup()
+    drained.enter()
+    DispatchQueue.global().async { errorData = stderr.fileHandleForReading.readDataToEndOfFile(); drained.leave() }
+    let data = stdout.fileHandleForReading.readDataToEndOfFile()
+    drained.wait()
+    let errors = String(decoding: errorData, as: UTF8.self)
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {
-        throw InstallerError("\(URL(fileURLWithPath: tool).lastPathComponent) \(args.joined(separator: " ")) failed")
+        let last = errors.split(separator: "\n").last.map { ": \($0)" } ?? ""
+        throw InstallerError("\(URL(fileURLWithPath: tool).lastPathComponent) \(args.first ?? "") failed\(last)")
     }
     return data
 }
