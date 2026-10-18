@@ -80,8 +80,13 @@ const agent = await createAgent({
       : []),
     ...(process.env.VM_DIR
       ? [
-          taskTool(process.env.VM_DIR, env("FIRECRACKER"), (goal, { report, screenshot }) =>
-            deliver(`Task report (${goal}):\n${report}`, screenshot),
+          taskTool(
+            process.env.VM_DIR,
+            env("FIRECRACKER"),
+            (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot),
+            (_, slot) =>
+              process.env.LIVE_DESKTOP_URL &&
+              void ownerSpace?.send(`Working on it. Watch or take over: ${process.env.LIVE_DESKTOP_URL}:${10440 + slot}/vnc.html`),
           ),
         ]
       : []),

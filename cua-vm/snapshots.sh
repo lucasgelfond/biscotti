@@ -18,20 +18,21 @@ echo "$sum  $OUT/vmlinux" | sha256sum -c -
 docker build -t biscotti/cua-desktop .
 ./rootfs.sh biscotti/cua-desktop "$OUT/rootfs.ext4"
 
-# Boot once on the task tap, wait until the task listener, noVNC and cua-spacesd are up, then snapshot.
-sock=/tmp/fc-snapshot.sock ip=172.16.0.2
+# Boot once in slot 1 (deploy/sandbox-net.sh), wait until the task listener, noVNC and cua-spacesd answer, then
+# snapshot. Every slot looks the same from inside, so the snapshot restores in any of them.
+sock=/tmp/fc-snapshot.sock slot=10.200.1.2
 rm -f "$sock"
-"$FC" --api-sock "$sock" >"$OUT/snapshot.log" 2>&1 &
+ip netns exec fc1 "$FC" --api-sock "$sock" >"$OUT/snapshot.log" 2>&1 &
 pid=$!
 until [ -S "$sock" ]; do sleep 0.05; done
 api() { curl -sf --unix-socket "$sock" -X "$1" "http://localhost$2" -H 'Content-Type: application/json' -d "$3"; }
-api PUT /boot-source "{\"kernel_image_path\":\"$OUT/vmlinux\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 ro init=/sbin/biscotti-init ip=$ip::172.16.0.1:255.255.255.0::eth0:off\"}"
+api PUT /boot-source "{\"kernel_image_path\":\"$OUT/vmlinux\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 ro init=/sbin/biscotti-init ip=172.16.0.2::172.16.0.1:255.255.255.0::eth0:off\"}"
 api PUT /drives/rootfs "{\"drive_id\":\"rootfs\",\"path_on_host\":\"$OUT/rootfs.ext4\",\"is_root_device\":true,\"is_read_only\":true}"
-api PUT /machine-config '{"vcpu_count":2,"mem_size_mib":2048}'
+api PUT /machine-config '{"vcpu_count":2,"mem_size_mib":1280}'
 api PUT /network-interfaces/eth0 '{"iface_id":"eth0","host_dev_name":"fc-task"}'
 api PUT /actions '{"action_type":"InstanceStart"}'
 for port in 4000 6901 3211; do
-  until (exec 3<>"/dev/tcp/$ip/$port") 2>/dev/null; do sleep 0.2; done
+  until (exec 3<>"/dev/tcp/$slot/$port") 2>/dev/null; do sleep 0.2; done
 done
 api PATCH /vm '{"state":"Paused"}'
 api PUT /snapshot/create "{\"snapshot_type\":\"Full\",\"snapshot_path\":\"$OUT/desktop.snap\",\"mem_file_path\":\"$OUT/desktop.mem\"}"

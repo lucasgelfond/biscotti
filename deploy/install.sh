@@ -23,7 +23,7 @@ secret EXECUTOR_ADMIN_PASSWORD
 sudo docker compose up -d
 sudo tailscale serve --bg --https=8443 http://127.0.0.1:4788
 sudo tailscale serve --bg --https=9443 http://127.0.0.1:8081
-# The running task VM's desktop (noVNC), to watch or take over.
-sudo tailscale serve --bg --https=10443 http://172.16.0.2:6901
+# Each task VM slot's desktop (noVNC), to watch or take over: :10441, :10442, :10443.
+for n in 1 2 3; do sudo tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
 # Pages the agent publishes.
 sudo tailscale serve --bg --https=8445 http://127.0.0.1:8082

@@ -29,13 +29,20 @@ services:
       VAULT_PASSWORD: ${VAULT_PASSWORD:?}
       TZ: ${TZ:-America/New_York}
       PAGES_URL: https://${TAILNET_HOST:?}:8445
+      LIVE_DESKTOP_URL: https://${TAILNET_HOST:?}
       VM_DIR: /var/lib/biscotti/vm
       FIRECRACKER: /usr/local/bin/firecracker
-    # Task VMs: KVM, the fc-task tap (opening it needs NET_ADMIN), the patched Firecracker and the snapshot.
+    # Task VMs: KVM, the slots' network namespaces (entering one needs SYS_ADMIN, opening its tap NET_ADMIN), the
+    # patched Firecracker and the snapshot.
     devices: [/dev/kvm, /dev/net/tun]
-    cap_add: [NET_ADMIN]
+    cap_add: [NET_ADMIN, SYS_ADMIN]
     volumes:
       - agent:/data
+      - type: bind
+        source: /run/netns
+        target: /run/netns
+        read_only: true
+        bind: { propagation: rslave }
       - /var/lib/biscotti/vm:/var/lib/biscotti/vm:ro
       - ${FIRECRACKER_BIN:-/usr/local/bin/firecracker}:/usr/local/bin/firecracker:ro
     restart: unless-stopped

@@ -7,12 +7,15 @@ import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import { Type } from "typebox";
 
-// Task VMs: each task restores a fresh desktop VM from the snapshot (cua-vm/snapshots.sh), runs one pi task in it, and
-// throws it away. The snapshot has a fixed guest address, so one VM runs at a time and other tasks queue.
+// Task VMs: each task restores a fresh desktop VM from the snapshot (cua-vm/snapshots.sh) in a free slot, runs one pi
+// task in it, and throws it away. Slots are network namespaces (deploy/sandbox-net.sh) in which every VM looks the
+// same, so up to three run at once; further tasks wait for a slot.
 
-const GUEST = "172.16.0.2";
 const TASK_TIMEOUT_MS = 30 * 60_000;
-let queue: Promise<unknown> = Promise.resolve();
+const free = [1, 2, 3];
+const waiting: ((slot: number) => void)[] = [];
+const acquire = () => new Promise<number>((resolve) => (free.length ? resolve(free.shift()!) : waiting.push(resolve)));
+const release = (slot: number) => (waiting.length ? waiting.shift()!(slot) : free.push(slot));
 
 export interface TaskResult {
   report: string;
@@ -20,16 +23,21 @@ export interface TaskResult {
   screenshot?: Buffer;
 }
 
-export function runTask(vmDir: string, firecracker: string, goal: string): Promise<TaskResult> {
-  const run = queue.then(() => runInVm(vmDir, firecracker, goal));
-  queue = run.catch(() => {});
-  return run;
+// `onStart` hears which slot the task got, e.g. to share its live desktop.
+export async function runTask(vmDir: string, firecracker: string, goal: string, onStart?: (slot: number) => void) {
+  const slot = await acquire();
+  try {
+    onStart?.(slot);
+    return await runInVm(vmDir, firecracker, goal, slot);
+  } finally {
+    release(slot);
+  }
 }
 
-async function runInVm(vmDir: string, firecracker: string, goal: string) {
-  const sock = "/tmp/fc-task.sock";
+async function runInVm(vmDir: string, firecracker: string, goal: string, slot: number): Promise<TaskResult> {
+  const sock = `/tmp/fc-${slot}.sock`;
   rmSync(sock, { force: true });
-  const vm = spawn(firecracker, ["--api-sock", sock], { stdio: "ignore" });
+  const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, firecracker, "--api-sock", sock], { stdio: "ignore" });
   try {
     while (!existsSync(sock)) await new Promise((r) => setTimeout(r, 20));
     await api(sock, "PUT", "/snapshot/load", {
@@ -37,7 +45,7 @@ async function runInVm(vmDir: string, firecracker: string, goal: string) {
       mem_backend: { backend_type: "File", backend_path: `${vmDir}/desktop.mem` },
       resume_vm: true,
     });
-    return await runPi(GUEST, goal);
+    return await runPi(`10.200.${slot}.2`, goal);
   } finally {
     // Wait for the exit too: the next VM can't open the tap until this one has let go of it.
     const exited = once(vm, "exit");
@@ -83,7 +91,12 @@ function runPi(host: string, goal: string) {
 }
 
 // Starts a task and returns right away; `onReport` gets the report when the task ends.
-export function taskTool(vmDir: string, firecracker: string, onReport: (goal: string, result: TaskResult) => void) {
+export function taskTool(
+  vmDir: string,
+  firecracker: string,
+  onReport: (goal: string, result: TaskResult) => void,
+  onStart?: (goal: string, slot: number) => void,
+) {
   return defineTool({
     name: "task",
     label: "Task",
@@ -91,7 +104,7 @@ export function taskTool(vmDir: string, firecracker: string, onReport: (goal: st
       "Start a task in a fresh, disposable Linux VM with a desktop, browser, shell and internet, for anything that needs a website, a program or files. Returns right away; the report arrives later as a message starting 'Task report'. The task agent sees only the goal, so make it complete.",
     parameters: Type.Object({ goal: Type.String() }),
     async execute(_id, { goal }) {
-      runTask(vmDir, firecracker, goal).then(
+      runTask(vmDir, firecracker, goal, (slot) => onStart?.(goal, slot)).then(
         (result) => onReport(goal, result),
         (err) => onReport(goal, { report: `The task failed: ${err.message}` }),
       );

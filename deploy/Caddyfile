@@ -10,8 +10,9 @@ http://:8082 {
 	file_server
 }
 
-http://172.16.0.1:80 {
-	bind 172.16.0.1
+# Each task VM slot reaches this as 172.16.0.1; its namespace forwards to the slot's host address.
+http://:80 {
+	bind 10.200.1.1 10.200.2.1 10.200.3.1
 
 	handle_path /llm/* {
 		reverse_proxy https://ai-gateway.vercel.sh {
