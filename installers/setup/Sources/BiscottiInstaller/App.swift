@@ -7,7 +7,7 @@ struct BiscottiInstaller: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
     var body: some Scene {
-        WindowGroup("biscotti Installer") { InstallerView() }
+        WindowGroup("Installer") { InstallerView() }
             .windowResizability(.contentSize)
     }
 }
