@@ -7,6 +7,8 @@
   ];
 
   boot.loader.raspberry-pi.bootloader = "kernel";
+  # A plain .img, which the installer app writes as is.
+  sdImage.compressImage = false;
 
   # Nothing personal lives in the image: SSH keys and Wi-Fi credentials are read from the boot
   # partition, so anyone can drop their own `authorized_keys` and `wpa_supplicant.conf` there.
