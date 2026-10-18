@@ -4,10 +4,9 @@ import { boot, toolCalls } from "./support.ts";
 
 // The secrets plugin: the owner fills a one-time form, and the agent reads the secret back (asking first if marked).
 process.env.SECRETS_KEY = randomBytes(32).toString("hex");
-process.env.SECRETS_URL = "http://127.0.0.1:4791";
 const biscotti = boot(["secrets/sqlite"]);
 
-const formLink = (sent: string[]) => sent.join("\n").match(/http:\/\/127\.0\.0\.1:4791\/[0-9a-f]{32}/)?.[0];
+const formLink = (sent: string[]) => sent.join("\n").match(/http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}/)?.[0];
 
 test("saves a login through a one-time form and fills it back in", async () => {
   const { say, sent, db } = await biscotti;

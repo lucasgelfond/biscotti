@@ -11,8 +11,8 @@ test("publishes a page with link-preview tags, texts its link on its own, and se
   const pages = join(biscotti.dir, "pages");
   const files = readdirSync(pages).filter((f) => f.endsWith(".html"));
   const page = readFileSync(join(pages, files[0]), "utf8");
-  const served = await fetch(`http://127.0.0.1:8082/${files[0]}`);
-  const listing = await fetch("http://127.0.0.1:8082/");
+  const served = await fetch(`http://127.0.0.1:${process.env.PAGES_PORT}/${files[0]}`);
+  const listing = await fetch(`http://127.0.0.1:${process.env.PAGES_PORT}/`);
   expect(files).toHaveLength(1);
   expect(page.toLowerCase()).toContain("madeleine");
   expect(page).toContain('<meta property="og:title"');

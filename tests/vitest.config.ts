@@ -13,6 +13,10 @@ export default defineConfig({
       EXECUTOR_URL: "http://127.0.0.1:8095",
       EXECUTOR_ORIGIN: "http://127.0.0.1:8095",
       TAILNET_HOST: "biscotti.example.ts.net",
+      // Clear of a live biscotti on the same machine.
+      PAGES_PORT: "8182",
+      SECRETS_PORT: "4891",
+      SECRETS_URL: "http://127.0.0.1:4891",
     },
   },
 });
