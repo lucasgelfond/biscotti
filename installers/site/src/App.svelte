@@ -35,7 +35,7 @@
     <summary>Setup</summary>
     <p>
       You can install biscotti on all targets (M3+ Macs, Raspberry Pis, or on dedicated cloud machines, i.e. those with
-      KVM access) using the install wizard.
+      KVM access) using the Mac install wizard.
     </p>
     <img class="demo" src="img/installer-pi.gif" width="1000" height="1019" alt="The install wizard, setting up a Raspberry Pi" />
   </details>

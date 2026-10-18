@@ -52,12 +52,10 @@
   <rect class="b" x="556" y="484" width="72" height="56"/><text class="s" x="592" y="517">vault</text>
 
   <rect class="vm" x="680" y="220" width="310" height="440" style="fill: url(#fchatch); stroke-width: 1.5"/>
-  <text class="s fc" x="835" y="248">Firecracker VM</text>
-  <text class="s fc" x="835" y="268">(for computer use)</text>
+  <text class="s fc" x="835" y="258">Firecracker</text>
   <rect class="b vm" x="698" y="284" width="274" height="166"/>
-  <text class="l" x="835" y="340">lightweight Debian</text>
-  <text class="l" x="835" y="372">image w/ Cua</text>
-  <text class="l" x="835" y="404">and noVNC</text>
+  <text class="l" x="835" y="356">light Debian VM</text>
+  <text class="l" x="835" y="388">w/ Cua and noVNC</text>
   <rect class="d b vm" x="698" y="470" width="129" height="170"/>
   <rect class="d b vm" x="843" y="470" width="129" height="170"/>
 
