@@ -1,6 +1,6 @@
 # biscotti — design decisions & plan
 
-Architecture diagram: [`docs/architecture.html`](docs/architecture.html) (open in a browser).
+Architecture diagrams (open in a browser): [today](docs/architecture.html) and [the permission-gate design](docs/architecture-future.html), where every tool call from a task VM goes through one gate on the Pi.
 
 A self-hosted personal assistant you text. It handles your accounts, can use a
 real desktop, and keeps your credentials on hardware you own. The design follows
