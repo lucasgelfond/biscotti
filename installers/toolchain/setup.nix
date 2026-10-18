@@ -87,12 +87,13 @@ in
         echo "    volumes: [ /nix/store:/nix/store:ro${lib.optionalString containers ", /var/run/docker.sock:/var/run/docker.sock"} ]"
         ${lib.optionalString containers ''echo "    environment: { TASK_BACKEND: container }"; echo "    devices: !reset []"''}
       } > "$STATE/compose.plugins.yaml"
-      docker compose --env-file "$ENV" -f ${repo}/core/host/compose.yaml -f "$STATE/compose.plugins.yaml" up -d --build --remove-orphans
-
+      # Texted before the agent starts: a second Photon connection takes the agent's incoming messages away.
       if [ ! -f "$STATE/ready" ]; then
         notify "I'm all set up. Text me anything!"
         touch "$STATE/ready"
       fi
+      docker compose --env-file "$ENV" -f ${repo}/core/host/compose.yaml -f "$STATE/compose.plugins.yaml" up -d --build --remove-orphans
+
     '';
   };
 }
