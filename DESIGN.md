@@ -5,8 +5,8 @@ own. Diagram: [docs/architecture.html](docs/architecture.html) (PNGs next to it)
 
 ## Principles
 
-1. **A small core, features as plugins.** The core is what everything needs: the agent, memory, the gate and task VMs
-   (~650 lines). Everything else is a plugin that `biscotti.json` turns on.
+1. **A small core, features as plugins.** The core is what everything needs: the agent, an encrypted store (memory,
+   crons, vault), the gate and task VMs (~850 lines). Everything else is a plugin that `biscotti.json` turns on.
 2. **Off-the-shelf first.** pi for agents, Photon for iMessage, Firecracker for VMs, Tailscale for access, NixOS for the
    host, SQLite for state.
 3. **The gate holds every key.** The main agent and task VMs reach the model and every tool only through it, and it asks
@@ -17,8 +17,8 @@ own. Diagram: [docs/architecture.html](docs/architecture.html) (PNGs next to it)
 ## Layout
 
 ```
-core/            agent, memory, gate, task VMs, plugin API (src/); VM image (vm/); compose for the agent (host/)
-plugins/         channels/spectrum, connectors/executor, exa, wakes, artifacts, embedding, secrets/sqlite
+core/            agent, memory, crons, vault, gate, task VMs, plugin API (src/); VM image (vm/); compose (host/)
+plugins/         channels/spectrum, exa, google, github, artifacts, embedding
 installers/      toolchain (NixOS modules + Pi image), setup-app (macOS card writer), local (Lima on a Mac)
 tests/           end-to-end tests; compose.yaml for their services
 biscotti.json    which plugins load
@@ -28,8 +28,13 @@ biscotti.json    which plugins load
 
 - **Agent:** pi SDK, one long conversation rebuilt from the `transcripts` table and compacted by pi. A message that
   arrives mid-reply steers it. Tools: memory, `react` (tapback), `task`, plus every plugin tool through the gate's MCP.
-- **Memory:** SQLite (Drizzle migrations). `remember` / `recall` / `forget` over `memories`, `search_transcript` over
+- **Store:** one SQLite file encrypted at rest (SQLite3 Multiple Ciphers, `DB_KEY` generated on first boot; an older
+  plaintext database is encrypted in place).
+- **Memory:** `remember` / `recall` / `forget` over `memories`, `search_transcript` over
   every message. FTS5 keyword search, with Recall plugins (embeddings) fused in by reciprocal rank.
+- **Crons:** prompts the agent schedules for itself (cron or once, `croner`); when due they come back as a message.
+- **Vault:** logins, cards and licenses, entered through one-time forms on the tailnet, never in chat; ones marked
+  "ask me" need the owner's yes per use.
 - **Gate:** `/llm` maps model names (`main`, `task`) to AI Gateway ids and adds the key; `/mcp` serves every plugin's
   tools; `ask()` texts the owner a yes-or-no question (one at a time, one yes per request, 10-minute timeout).
 - **Task VMs:** Firecracker (patched for the Pi 5's GICv2: `lucasgelfond/firecracker@biscotti-gicv2`). A fresh VM per
@@ -47,11 +52,10 @@ A plugin is `plugins/<name>/index.ts` default-exporting `{ prompt?, channel?, to
 |---|---|
 | channels/spectrum | iMessage through Photon; only the owner's texts come through |
 | exa | web search and fetch (Exa's hosted MCP) |
-| wakes | prompts the agent schedules for itself (cron or once); `croner` |
+| google | Gmail and Calendar over Google's REST APIs with the owner's OAuth client (sign-in link texted; offline refresh token in the store); sending and calendar changes ask first |
+| github | GitHub's remote MCP server with a fine-grained token; anything not marked read-only asks first |
 | artifacts | HTML pages texted as links; public over Funnel under unguessable names so iMessage shows a preview card |
 | embedding | bge-small on llama.cpp, on device; recall by meaning |
-| secrets/sqlite | logins and cards, AES-256-GCM in SQLite; entered through one-time forms on the tailnet; "ask me" secrets need a yes per use |
-| connectors/executor | Google and GitHub through Executor; paused calls resume with the owner's answer |
 
 ## Host
 
@@ -60,16 +64,23 @@ from the installer, generated secrets, Tailscale with a texted login link, the s
 snapshot, a "ready" text). The Pi image reads Wi-Fi and SSH keys from the boot partition; nothing personal is baked in.
 State lives in `/var/lib/biscotti` (`.env`, `biscotti.json`, `data/`, `vm/`).
 
-## Connectors: replacing Executor (recommendation)
+## Connectors
 
-From a sweep of pi, OpenClaw/mcporter and Hermes: a ~300-line `connectors/mcp` plugin on the MCP SDK we already use.
-- Config: a list of MCP servers (`{url, headers}`, `{url, oauth}`, or `{command, args}`).
-- OAuth with our own SDK `OAuthClientProvider`, tokens in the secrets store; the sign-in link is texted, the callback
-  lands on the tailnet. Google needs `access_type=offline` added for refresh tokens.
-- Approvals in the gate from MCP hints (`destructiveHint`, or not `readOnlyHint`), with per-tool overrides.
-- Google: `gog mcp` (stdio, has hints; Calendar and Drive are read-only, so add a few small tools) or Google's
-  Workspace MCP endpoints (developer preview). GitHub: `api.githubcopilot.com/mcp/` with a fine-grained PAT.
-- We'd lose Executor's UI, catalog and multi-account routing; we'd drop a 659 MB beta container.
+Executor is gone (a 659 MB beta container with its own UI). From a sweep of pi, OpenClaw/mcporter and Hermes, the
+lightweight path: small plugins per service, approvals in the plugin through the gate's `ask`. Google is our own REST
+tools (~200 lines); GitHub is its official remote MCP server (~30 lines). More services: a remote MCP server with a
+token, or a few REST tools.
+
+## Cloud (no Pi)
+
+Task VMs need KVM, so the host must be bare metal or a VM with nested virtualization:
+- **Works:** AWS C8i/M8i/R8i (nested virtualization on virtual instances since Feb 2026, later C7i/M7i/R7i too;
+  m8i.large is ~$0.14/h), GCP (N2 and others, with the nested-virtualization flag), Azure (Dv5/Ev5 and AMD v6), Hetzner
+  dedicated and auction servers (~€40/mo). DigitalOcean exposes nested KVM but calls it unsupported.
+- **Doesn't:** Hetzner Cloud, Linode, Fly.io, Railway (no `/dev/kvm`).
+- **Plan:** an `x86_64` NixOS target (no GICv2 patch needed there), built as a cloud image, plus a one-command
+  installer per provider. A no-KVM fallback would run the desktop in a container (gVisor/runc) instead of Firecracker:
+  slower and no snapshots, but any VPS.
 
 ## To-dos
 
@@ -77,8 +88,8 @@ From a sweep of pi, OpenClaw/mcporter and Hermes: a ~300-line `connectors/mcp` p
   first to check `net.nix` and `setup.nix`.
 - Setup app: plugin checkboxes that write `biscotti.json` to the boot partition.
 - `installers/local`: Lima on a Mac with nested KVM (stock Firecracker works there, GICv3).
-- Connectors plugin (above), event wakes, a per-role permission table, a pre-compaction memory nudge.
-- Encrypt the whole database at rest (SQLCipher) if backups leave the box.
+- Google sign-in: add `https://<TAILNET_HOST>:9443/oauth/callback` to the OAuth client's redirect URIs.
+- Cloud target (above), event wakes, a per-role permission table, a pre-compaction memory nudge.
 
 ## Field notes
 
