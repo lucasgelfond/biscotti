@@ -135,6 +135,9 @@ struct SettingsView: View {
                 SecureField("Photon project secret", text: $settings.photonSecret)
                 SecureField("Exa API key (for web search)", text: $settings.exaKey)
                 SecureField("Tailscale auth key (optional: otherwise biscotti texts you a sign-in link)", text: $settings.tailscaleKey)
+                TextField("Google OAuth client ID (for Gmail and Calendar)", text: $settings.googleClientID)
+                SecureField("Google OAuth client secret", text: $settings.googleClientSecret)
+                SecureField("GitHub token (fine-grained)", text: $settings.githubToken)
                 Button("Load keys from a file…") { loadingKeys = true }
             }
             Section("Plugins") {

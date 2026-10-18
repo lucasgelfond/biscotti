@@ -15,16 +15,18 @@ struct Settings {
     var photonSecret = ""
     var exaKey = ""
     var tailscaleKey = ""
+    var googleClientID = ""
+    var googleClientSecret = ""
+    var githubToken = ""
     var plugins = Set(Settings.optionalPlugins.map(\.id))
 
     /// The plugins biscotti.json can turn on; iMessage (channels/spectrum) is always on.
     static let optionalPlugins = [
         (id: "exa", name: "Web search (Exa)"),
-        (id: "wakes", name: "Reminders and schedules"),
+        (id: "google", name: "Gmail and Google Calendar"),
+        (id: "github", name: "GitHub"),
         (id: "artifacts", name: "Web pages"),
         (id: "embedding", name: "Memory by meaning (on device)"),
-        (id: "secrets/sqlite", name: "Secrets (logins, cards)"),
-        (id: "connectors/executor", name: "Google and GitHub (Executor)"),
     ]
 
     var isComplete: Bool {
@@ -59,6 +61,9 @@ struct Settings {
             case "SPECTRUM_PROJECT_SECRET": photonSecret = parts[1]
             case "EXA_API_KEY": exaKey = parts[1]
             case "TS_AUTHKEY": tailscaleKey = parts[1]
+            case "GOOGLE_CLIENT_ID": googleClientID = parts[1]
+            case "GOOGLE_CLIENT_SECRET": googleClientSecret = parts[1]
+            case "GITHUB_TOKEN": githubToken = parts[1]
             default: break
             }
         }
@@ -81,6 +86,7 @@ struct Settings {
             ("OWNER", phone), ("OWNER_EMAIL", email), ("AI_GATEWAY_API_KEY", gatewayKey),
             ("SPECTRUM_PROJECT_ID", photonID), ("SPECTRUM_PROJECT_SECRET", photonSecret),
             ("EXA_API_KEY", exaKey), ("TS_AUTHKEY", tailscaleKey), ("TZ", TimeZone.current.identifier),
+            ("GOOGLE_CLIENT_ID", googleClientID), ("GOOGLE_CLIENT_SECRET", googleClientSecret), ("GITHUB_TOKEN", githubToken),
         ].filter { !$0.1.isEmpty }.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
 
         try wpa.write(to: boot.appending(path: "wpa_supplicant.conf"), atomically: true, encoding: .utf8)
