@@ -4,4 +4,5 @@ import { connect } from "./index.ts";
 
 const channel = await connect((name) => process.env[name] ?? "");
 await channel.send({ text: process.argv[2] });
+await channel.close();
 process.exit(0);

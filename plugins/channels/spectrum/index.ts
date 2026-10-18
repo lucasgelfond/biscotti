@@ -3,7 +3,7 @@ import { attachment, Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 
 // iMessage through Photon's Spectrum. Only the owner's texts come through.
-export async function connect(env: (name: string) => string): Promise<Channel> {
+export async function connect(env: (name: string) => string): Promise<Channel & { close(): Promise<void> }> {
   const app = await Spectrum({
     projectId: env("SPECTRUM_PROJECT_ID"),
     projectSecret: env("SPECTRUM_PROJECT_SECRET"),
@@ -24,7 +24,12 @@ export async function connect(env: (name: string) => string): Promise<Channel> {
     }
   }
 
+  // Close the connection on shutdown: Photon keeps delivering to a dropped one for a while, so the next one hears nothing.
+  const close = () => app.stop();
+  for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => void close().finally(() => process.exit(0)));
+
   return {
+    close,
     messages: messages(),
     async send(m) {
       await space.send("text" in m ? m.text : attachment(m.image, { mimeType: "image/png", name: "screen.png" }));
