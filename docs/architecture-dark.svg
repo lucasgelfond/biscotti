@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
   <!-- biscotti's architecture (dark), drawn like a terminal diagram. Dashed boxes are plugins. -->
   <style>
-    text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; fill: #e8e8e8; }
+    text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; letter-spacing: -0.01em; fill: #e8e8e8; }
     .l { font-size: 22px; text-anchor: middle; }
     .s { font-size: 15px; text-anchor: middle; }
     .h { font-size: 20px; }

@@ -27,4 +27,4 @@ details:last-of-type { border-bottom: 1px solid #000; }
 summary { cursor: pointer; font-weight: 600; }
 details > :not(summary) { margin: 12px 0 0; }
 .demo { display: block; width: 100%; max-width: 520px; height: auto; border: 1px solid #000; }
-.demo.arch { max-width: 100%; border: 0; }
+.arch svg { display: block; width: 100%; height: auto; }
