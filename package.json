@@ -30,5 +30,6 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.20.5",
     "typescript": "^7.0.2"
-  }
+  },
+  "license": "MIT"
 }
