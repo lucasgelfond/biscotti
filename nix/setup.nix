@@ -79,6 +79,7 @@
         echo "  agent:"
         echo "    volumes: [ /nix/store:/nix/store:ro ]"
         [ -z "$huge" ] || echo "    environment: { UFFD_HANDLER: ${faultAll}/bin/fault-all }"
+        [ -z "$huge" ] || echo "    devices: [ /dev/userfaultfd ]"
       } > "$STATE/compose.plugins.yaml"
       # Texted before the agent starts: a second Photon connection takes the agent's incoming messages away.
       if [ ! -f "$STATE/ready" ]; then
