@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { boot, toolCalls } from "./support.ts";
 
-// The vault: the owner fills a one-time form, and the agent reads the secret back (asking first if marked).
 const biscotti = boot([]);
 
 const formLink = (sent: string[]) => sent.join("\n").match(/http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}/)?.[0];

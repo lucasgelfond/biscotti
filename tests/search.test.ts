@@ -1,7 +1,6 @@
 import { expect, test } from "vitest";
 import { boot, toolCalls } from "./support.ts";
 
-// Exa's hosted MCP server with the owner's key, through the gate.
 const hasKey = !!process.env.EXA_API_KEY;
 
 test.skipIf(!hasKey)("answers a question that needs the web with Exa", async () => {

@@ -2,7 +2,6 @@ import { expect, test } from "vitest";
 import { startFakeGoogle } from "./fakes/google.ts";
 import { boot, toolCalls } from "./support.ts";
 
-// The Google plugin against a fake Google: sign-in by texted link, reads, and writes that wait for the owner's yes.
 const FAKE_PORT = 8097;
 const CALLBACK_PORT = 4892;
 Object.assign(process.env, {
@@ -16,7 +15,6 @@ Object.assign(process.env, {
 const google = startFakeGoogle(FAKE_PORT);
 const biscotti = boot(["google"]);
 
-// As after a sign-in, for tests that don't do one.
 async function connected() {
   const b = await biscotti;
   b.db.$client.prepare("INSERT OR REPLACE INTO google_auth VALUES (1, 'fake-refresh')").run();

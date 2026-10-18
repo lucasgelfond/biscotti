@@ -1,5 +1,5 @@
 # Services the end-to-end tests run against: the on-device embeddings model (chat goes to the AI Gateway, as in
-# production) and a fresh Executor (optional plugin) each run (--renew-anon-volumes), so first-run setup can be tested.
+# production).
 name: biscotti-tests
 
 services:
@@ -12,11 +12,3 @@ services:
       interval: 2s
       retries: 60
 
-  executor:
-    image: ghcr.io/usefulsoftwareco/executor-selfhost:2.0.0-beta.24@sha256:39d8ce360adf86df46e953f43551dad4440d04d7246d30fc7b0d6f3f5cfed3f7
-    environment:
-      BETTER_AUTH_URL: http://127.0.0.1:8095
-      EXECUTOR_CATALOG_URL: https://catalog.executor.sh/index.json
-      DO_NOT_TRACK: "1"
-      EXECUTOR_DISABLE_ANALYTICS: "1"
-    ports: ["127.0.0.1:8095:4400"]

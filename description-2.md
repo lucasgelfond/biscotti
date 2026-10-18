@@ -1,1 +1,0 @@
-i got spooked about Instinct's privacy so i rolled my own - biscotti is a lightweight (~800 LOC) iMessage agent built on off-the-shelf tools (Pi, Firecracker VMs, Nix, Tailscale) to support computer use. i'm daily driving it on my Raspberry Pi and don't miss anything!

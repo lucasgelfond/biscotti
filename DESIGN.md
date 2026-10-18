@@ -18,9 +18,10 @@ own. Diagram: [docs/architecture.html](docs/architecture.html) (PNGs next to it)
 
 ```
 core/            agent, memory, crons, vault, gate, task VMs, plugin API (src/); VM image (vm/); compose (host/)
-plugins/         channels/spectrum, exa, google, github, artifacts, embedding, executor
-installers/      toolchain (NixOS modules + Pi image), setup-app (macOS card writer), local (Lima on a Mac)
-tests/           end-to-end tests; compose.yaml for their services
+plugins/         channels/spectrum, exa, google, github, artifacts, embedding
+installers/      toolchain (NixOS modules), setup-app (the macOS installer for every target), local (Lima on a Mac),
+                 aws, site (biscotti.lucasgelfond.online)
+tests/           end-to-end tests, compose.yaml for their services, bench/ (computer-use benchmark)
 biscotti.json    which plugins load
 ```
 
@@ -35,7 +36,7 @@ biscotti.json    which plugins load
 - **Crons:** prompts the agent schedules for itself (cron or once, `croner`); when due they come back as a message.
 - **Vault:** logins, cards and licenses, entered through one-time forms on the tailnet, never in chat; ones marked
   "ask me" need the owner's yes per use.
-- **Gate:** `/llm` maps model names (`main`, `task`) to AI Gateway ids and adds the key; `/mcp` serves every plugin's
+- **Gate:** `/llm` forwards to any OpenAI-compatible API (`LLM_BASE_URL`), mapping model names (`main`, `task`) to its ids and adding the key; `/mcp` serves every plugin's
   tools; `ask()` texts the owner a yes-or-no question (one at a time, one yes per request, 10-minute timeout).
 - **Task VMs:** Firecracker (patched for the Pi 5's GICv2: `lucasgelfond/firecracker@biscotti-gicv2`). A fresh VM per
   task, restored from a snapshot of a ready desktop in ~40 ms, in one of three slots (network namespaces where every VM
@@ -56,7 +57,6 @@ A plugin is `plugins/<name>/index.ts` default-exporting `{ prompt?, channel?, to
 | github | GitHub's remote MCP server with a fine-grained token; anything not marked read-only asks first |
 | artifacts | HTML pages texted as links; public over Funnel under unguessable names so iMessage shows a preview card |
 | embedding | bge-small on llama.cpp, on device; recall by meaning |
-| executor | optional: Executor's catalog of apps over MCP, with its paused calls approved by text (off by default; a 659 MB container) |
 
 ## Host
 
@@ -67,36 +67,25 @@ State lives in `/var/lib/biscotti` (`.env`, `biscotti.json`, `data/`, `vm/`).
 
 ## Connectors
 
-Executor is an optional plugin, off by default (a 659 MB beta container with its own UI). From a sweep of pi, OpenClaw/mcporter and Hermes, the
-lightweight path: small plugins per service, approvals in the plugin through the gate's `ask`. Google is our own REST
-tools (~200 lines); GitHub is its official remote MCP server (~30 lines). More services: a remote MCP server with a
-token, or a few REST tools.
+Small plugins per service, approvals in the plugin through the gate's `ask`: Google is our own REST tools, GitHub its
+official remote MCP server. More services: a remote MCP server with a token, or a few REST tools.
 
 ## Cloud (no Pi)
 
-Task VMs need KVM, so the host must be bare metal or a VM with nested virtualization:
-- **Works:** AWS C8i/M8i/R8i (nested virtualization on virtual instances since Feb 2026, later C7i/M7i/R7i too;
-  m8i.large is ~$0.14/h), GCP (N2 and others, with the nested-virtualization flag), Azure (Dv5/Ev5 and AMD v6), Hetzner
-  dedicated and auction servers (~€40/mo). DigitalOcean exposes nested KVM but calls it unsupported.
-- **Doesn't:** Hetzner Cloud, Linode, Fly.io, Railway (no `/dev/kvm`).
-- **Plan:** an `x86_64` NixOS target (no GICv2 patch needed there), built as a cloud image, plus a one-command
-  installer per provider. A no-KVM fallback would run the desktop in a container (gVisor/runc) instead of Firecracker:
-  slower and no snapshots, but any VPS.
+Task VMs need KVM: bare metal or a VM with nested virtualization. AWS is the cloud target (`flake.nix#aws`, stock
+Firecracker on x86); the installer launches it ([installers/aws/README.md](installers/aws/README.md)).
 
 ## To-dos
 
-- New card: build the NixOS image, flash it with the setup app, first boot end to end; boot the `vm` config in Lima
-  first to check `net.nix` and `setup.nix`.
-- Setup app: plugin checkboxes that write `biscotti.json` to the boot partition.
-- `installers/local`: Lima on a Mac with nested KVM (stock Firecracker works there, GICv3).
-- Google sign-in: add `https://<TAILNET_HOST>:9443/oauth/callback` to the OAuth client's redirect URIs.
-- Cloud target (above), event wakes, a per-role permission table, a pre-compaction memory nudge.
+- Cold restores: prefetch the pages a task touches (userfaultfd handler or a recorded hot set).
+- Event wakes, a per-role permission table, a pre-compaction memory nudge.
 
 ## Field notes
 
 - The Pi 5 can't join a DFS 5 GHz channel on a cold boot (regulatory domain "world"); keep a 2.4 GHz network, or set
   the domain before Wi-Fi starts (`pi5.nix` does).
 - Restored VMs get the host's time from chrony on KVM's PTP clock within ~2 s.
-- Firefox in the VM renders black with user namespaces on; the VM init turns them off.
+- The VM runs with user namespaces off (a namespace-sandboxed browser rendered black in this guest kernel); Chromium
+  uses its setuid sandbox.
 - The first task after boot is slow (~15 s) when the snapshot's memory isn't in the page cache; the agent reads it in at
   start.

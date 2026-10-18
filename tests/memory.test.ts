@@ -2,7 +2,6 @@ import { expect, test } from "vitest";
 import { memories, transcripts } from "../core/src/schema.ts";
 import { boot, newDataDir } from "./support.ts";
 
-// Memory with the embedding plugin's meaning-based recall (the on-device model from tests/compose.yaml).
 const PLUGINS = ["embedding"];
 
 test("replies to a greeting", async () => {

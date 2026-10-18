@@ -1,7 +1,6 @@
 import { expect, test } from "vitest";
 import { boot, toolCalls } from "./support.ts";
 
-// GitHub's remote MCP server with the owner's token (GITHUB_TOKEN). Reads go through; anything else asks first.
 const hasToken = !!process.env.GITHUB_TOKEN;
 
 test.skipIf(!hasToken)("reads from GitHub without asking", async () => {
