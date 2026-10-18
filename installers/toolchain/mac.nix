@@ -4,6 +4,8 @@
 {
   imports = [ "${modulesPath}/profiles/qemu-guest.nix" ];
   boot.kernelParams = [ "console=hvc0" ];
+  # Nested virtualization on a Mac makes Firecracker VMs ~100x slower; the Lima VM is the boundary, so containers.
+  biscotti.tasks = "container";
   # Lima runs its scripts with /bin/bash.
   systemd.tmpfiles.rules = [ "L+ /bin/bash - - - - ${pkgs.bash}/bin/bash" ];
 
