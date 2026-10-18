@@ -24,3 +24,16 @@ test.skipIf(!onThePi)("starts every task from a clean VM", async () => {
 
   expect(report).toContain("MISSING");
 });
+
+test.skipIf(!onThePi)("runs three tasks at once, each in its own slot", async () => {
+  const slots: number[] = [];
+  const goal = (n: number) => `Run \`echo task-${n}\` in a shell and report exactly what it printed.`;
+
+  const started = Date.now();
+  const reports = await Promise.all([1, 2, 3].map((n) => runTask(VM_DIR, FIRECRACKER, goal(n), (slot) => slots.push(slot))));
+  const seconds = (Date.now() - started) / 1000;
+
+  expect([...slots].sort()).toEqual([1, 2, 3]);
+  reports.forEach(({ report }, i) => expect(report).toContain(`task-${i + 1}`));
+  expect(seconds).toBeLessThan(90);
+});
