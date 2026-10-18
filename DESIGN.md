@@ -152,6 +152,8 @@ Every installer must get their own SSH key and Wi-Fi in; nothing personal is bak
 
 ## Core and leaves (plan)
 
+The opinion, with measured footprints and a line budget: [`docs/core-and-leaves.html`](docs/core-and-leaves.html).
+
 biscotti should be a **small core that's easy to build around**, in the spirit of pi: the core does the few things
 everything else needs, and features live in leaves (plugins or separate packages) with their own dependencies.
 
