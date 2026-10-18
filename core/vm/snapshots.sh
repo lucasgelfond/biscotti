@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build what task VMs start from: the guest kernel, the read-only disk, and a snapshot of the desktop VM taken once it
-# is ready for a task. Usage: sudo core/vm/snapshots.sh [dir]   (FC_BIN picks the Firecracker binary)
+# is ready for a task. Usage: sudo core/vm/snapshots.sh [dir]   (FC_BIN picks the Firecracker binary;
+# HUGE_PAGES=2M puts the VM on huge pages)
 set -euo pipefail
 cd "$(dirname "$0")"
 OUT=${1:-/var/lib/biscotti/vm}
@@ -28,7 +29,7 @@ until [ -S "$sock" ]; do sleep 0.05; done
 api() { curl -sf --unix-socket "$sock" -X "$1" "http://localhost$2" -H 'Content-Type: application/json' -d "$3"; }
 api PUT /boot-source "{\"kernel_image_path\":\"$OUT/vmlinux\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 ro init=/sbin/biscotti-init ip=172.16.0.2::172.16.0.1:255.255.255.0::eth0:off\"}"
 api PUT /drives/rootfs "{\"drive_id\":\"rootfs\",\"path_on_host\":\"$OUT/rootfs.ext4\",\"is_root_device\":true,\"is_read_only\":true}"
-api PUT /machine-config '{"vcpu_count":2,"mem_size_mib":1280}'
+api PUT /machine-config "{\"vcpu_count\":2,\"mem_size_mib\":1280${HUGE_PAGES:+,\"huge_pages\":\"$HUGE_PAGES\"}}"
 api PUT /network-interfaces/eth0 '{"iface_id":"eth0","host_dev_name":"fc-task"}'
 api PUT /actions '{"action_type":"InstanceStart"}'
 for port in 4000 6901 3211; do

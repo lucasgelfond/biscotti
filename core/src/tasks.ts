@@ -78,17 +78,28 @@ export async function restore(vmDir: string, firecracker: string, slot: number):
   rmSync(sock, { force: true });
   // No secrets from our environment for Firecracker: only the PATH.
   const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, firecracker, "--api-sock", sock], { stdio: "ignore", env: { PATH: process.env.PATH } });
+  // A snapshot on huge pages (for nested virtualization, where every 4K page first touched is slow) can't be loaded
+  // from the file directly: the handler copies it all in at the first fault.
+  const handler = process.env.UFFD_HANDLER;
+  const uffd = `/tmp/uffd-${slot}.sock`;
+  let pager: ReturnType<typeof spawn> | undefined;
   // The next VM in this slot can't open the tap until this one has exited.
   const stop = async () => {
     const exited = once(vm, "exit");
     vm.kill("SIGKILL");
+    pager?.kill("SIGKILL");
     await exited;
   };
   try {
     while (!existsSync(sock)) await new Promise((r) => setTimeout(r, 20));
+    if (handler) {
+      rmSync(uffd, { force: true });
+      pager = spawn(handler, [uffd, `${vmDir}/desktop.mem`], { stdio: "ignore", env: {} });
+      while (!existsSync(uffd)) await new Promise((r) => setTimeout(r, 5));
+    }
     await api(sock, "PUT", "/snapshot/load", {
       snapshot_path: `${vmDir}/desktop.snap`,
-      mem_backend: { backend_type: "File", backend_path: `${vmDir}/desktop.mem` },
+      mem_backend: handler ? { backend_type: "Uffd", backend_path: uffd } : { backend_type: "File", backend_path: `${vmDir}/desktop.mem` },
       resume_vm: true,
     });
     return { slot, stop };
