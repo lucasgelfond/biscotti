@@ -58,14 +58,14 @@ test("answers from the inbox and the calendar", async () => {
 test("asks before sending an email, and sends it on a yes", async () => {
   const { say, sent } = await connected();
 
-  const replied = say("Send an email to sam@example.com saying I'm running 10 minutes late to dinner.");
+  const replied = say("Send an email to sam@example.com thanking them for lunch today.");
   await expect.poll(() => sent.join("\n"), { timeout: 60_000 }).toContain("Reply yes or no");
   await say("yes");
   await replied;
 
   expect(google.sent).toHaveLength(1);
   expect(google.sent[0]).toContain("To: sam@example.com");
-  expect(google.sent[0].toLowerCase()).toContain("late");
+  expect(google.sent[0].toLowerCase()).toContain("lunch");
 });
 
 test("asks before deleting an event, and keeps it on a no", async () => {
