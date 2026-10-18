@@ -32,7 +32,7 @@ const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | 
     pass: (r) => /cameron winter/i.test(r) && /seat/i.test(r) && !/(couldn't|could not|unable to) (find|get|open)/i.test(r),
   },
   seats: {
-    goal: "Open https://www.seatguru.com/airlines/Delta_Airlines/Delta_Airlines_Airbus_A321_new.php and give a general overview of the seat map: the cabins, roughly how many rows each, and which rows are exit rows.",
+    goal: "Open https://www.aerolopa.com/dl-321 (Delta A321 seat map) and give a general overview of the seat map: the cabins, roughly how many rows each, and which rows are exit rows.",
     pass: (r) => /first|comfort/i.test(r) && /exit/i.test(r),
   },
 };
