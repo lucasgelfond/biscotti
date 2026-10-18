@@ -32,11 +32,11 @@ const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | 
     pass: (r) => /\$\s?\d/.test(r) && /(am|a\.m\.|\d{1,2}:\d{2})/i.test(r) && !/(couldn't|could not|unable to)/i.test(r),
   },
   "cameron-village": {
-    goal: "On the Village East by Angelina (Angelika) website, find the next showing of the concert film \"Cameron Winter at Carnegie Hall\", open its seat selection, and give a general overview of the seat map: which areas are open, roughly how full, and the best 2 seats together left. Leave the seat map on screen. Don't buy anything.",
+    goal: "Starting at https://www.angelikafilmcenter.com/villageeast, find the next showing of the concert film \"Cameron Winter at Carnegie Hall\", open its seat selection, and give a general overview of the seat map: which areas are open, roughly how full, and the best 2 seats together left. Leave the seat map on screen. Don't buy anything.",
     pass: (r) => /seat/i.test(r) && !/(couldn't|could not|unable to) (find|get|open)/i.test(r),
   },
-  "cameron-alamo": {
-    goal: "On the Alamo Drafthouse Brooklyn website, find the next showing of the concert film \"Cameron Winter at Carnegie Hall\", open its seat selection, and give a general overview of the seat map: which areas are open, roughly how full, and the best 2 seats together left. Leave the seat map on screen. Don't buy anything.",
+  "cameron-bam": {
+    goal: "Starting at https://www.bam.org/film/2026/cameron-winter, find the next showing of the concert film \"Cameron Winter at Carnegie Hall\" at BAM Rose Cinemas and its seating: if seats are reserved, open seat selection and give a general overview of the seat map (which areas are open, roughly how full, the best 2 seats together left); if it's general admission, say so with the showtimes. Don't buy anything.",
     pass: (r) => /seat/i.test(r) && !/(couldn't|could not|unable to) (find|get|open)/i.test(r),
   },
   angelika: {
