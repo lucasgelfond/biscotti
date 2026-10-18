@@ -6,16 +6,15 @@
     .s { font-size: 15px; text-anchor: middle; }
     .h { font-size: 20px; }
     .n { font-size: 15px; fill: #444; }
-    rect, path { fill: none; stroke: #000; stroke-width: 1; shape-rendering: crispEdges; }
+    rect, path { fill: none; stroke: #000; stroke-width: 1; shape-rendering: crispEdges; vector-effect: non-scaling-stroke; }
     rect.b { fill: #fff; }
     .vm { stroke: #b8701f; }
     .fc { fill: #b8701f; }
     .d { stroke-dasharray: 6 5; }
-    .w { stroke-width: 1.5; }
   </style>
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M0 0L10 5L0 10" style="stroke-width: 1.5; shape-rendering: auto"/>
+      <path d="M0 0L10 5L0 10" style="shape-rendering: auto"/>
     </marker>
     <pattern id="hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
       <path d="M0 0V10" style="stroke: #000; stroke-opacity: 0.08; shape-rendering: auto"/>
@@ -33,7 +32,7 @@
   <rect x="60" y="220" width="240" height="90"/><text class="l" x="180" y="273">Photon</text>
 
   <!-- NixOS frame -->
-  <rect class="w" x="340" y="110" width="920" height="740"/>
+  <rect x="340" y="110" width="920" height="740"/>
   <text class="h" x="362" y="145">NixOS behind Tailscale</text>
   <text class="n" x="640" y="145">(running on Raspberry Pi or virtualized on Mac / the cloud)</text>
 
@@ -50,7 +49,7 @@
   <rect class="b" x="476" y="484" width="72" height="56"/><text class="s" x="512" y="517">memory</text>
   <rect class="b" x="556" y="484" width="72" height="56"/><text class="s" x="592" y="517">vault</text>
 
-  <rect class="vm" x="680" y="220" width="310" height="440" style="fill: url(#fchatch); stroke-width: 1.5"/>
+  <rect class="vm" x="680" y="220" width="310" height="440" style="fill: url(#fchatch)"/>
   <text class="s fc" x="835" y="258">Firecracker</text>
   <rect class="b vm" x="698" y="284" width="274" height="166"/>
   <text class="l" x="835" y="356">light Debian VM</text>
