@@ -69,12 +69,20 @@ export async function createAgent(opts: { db: Db; dir: string; gateUrl: string; 
         await session.steer(text);
         return undefined;
       }
+      const before = session.sessionManager.getEntries().length;
       try {
         await session.prompt(text);
       } finally {
         save();
       }
-      return session.getLastAssistantText();
+      // Everything said this turn, including text written before a later tool call.
+      return session.sessionManager
+        .getEntries()
+        .slice(before)
+        .map((e) => (e.type === "message" ? searchableText(e) : null))
+        .filter((t): t is string => !!t?.startsWith("assistant: "))
+        .map((t) => t.slice("assistant: ".length))
+        .join("\n\n");
     },
   };
 }

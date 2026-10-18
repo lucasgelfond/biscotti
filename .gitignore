@@ -1,2 +1,3 @@
 core/host/.env
 node_modules/
+.DS_Store
