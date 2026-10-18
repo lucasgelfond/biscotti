@@ -15,6 +15,17 @@ struct Settings {
     var photonSecret = ""
     var exaKey = ""
     var tailscaleKey = ""
+    var plugins = Set(Settings.optionalPlugins.map(\.id))
+
+    /// The plugins biscotti.json can turn on; iMessage (channels/spectrum) is always on.
+    static let optionalPlugins = [
+        (id: "exa", name: "Web search (Exa)"),
+        (id: "wakes", name: "Reminders and schedules"),
+        (id: "artifacts", name: "Web pages"),
+        (id: "embedding", name: "Memory by meaning (on device)"),
+        (id: "secrets/sqlite", name: "Secrets (logins, cards)"),
+        (id: "connectors/executor", name: "Google and GitHub (Executor)"),
+    ]
 
     var isComplete: Bool {
         ![wifiName, wifiPassword, sshKey, phone, email, gatewayKey, photonID, photonSecret].contains { $0.isEmpty }
@@ -75,6 +86,9 @@ struct Settings {
         try wpa.write(to: boot.appending(path: "wpa_supplicant.conf"), atomically: true, encoding: .utf8)
         try (sshKey + "\n").write(to: boot.appending(path: "authorized_keys"), atomically: true, encoding: .utf8)
         try env.write(to: boot.appending(path: "biscotti.env"), atomically: true, encoding: .utf8)
+        let enabled = ["channels/spectrum"] + Settings.optionalPlugins.map(\.id).filter(plugins.contains)
+        let config = try JSONSerialization.data(withJSONObject: ["plugins": enabled], options: [.prettyPrinted, .withoutEscapingSlashes])
+        try config.write(to: boot.appending(path: "biscotti.json"))
     }
 }
 

@@ -133,13 +133,25 @@ struct SettingsView: View {
                 SecureField("Vercel AI Gateway key", text: $settings.gatewayKey)
                 TextField("Photon project ID", text: $settings.photonID)
                 SecureField("Photon project secret", text: $settings.photonSecret)
-                SecureField("Exa API key (optional)", text: $settings.exaKey)
+                SecureField("Exa API key (for web search)", text: $settings.exaKey)
                 SecureField("Tailscale auth key (optional: otherwise biscotti texts you a sign-in link)", text: $settings.tailscaleKey)
                 Button("Load keys from a file…") { loadingKeys = true }
             }
+            Section("Plugins") {
+                ForEach(Settings.optionalPlugins, id: \.id) { plugin in
+                    Toggle(plugin.name, isOn: Binding(
+                        get: { settings.plugins.contains(plugin.id) },
+                        set: { if $0 { settings.plugins.insert(plugin.id) } else { settings.plugins.remove(plugin.id) } }
+                    ))
+                }
+                HStack {
+                    Button("All") { settings.plugins = Set(Settings.optionalPlugins.map(\.id)) }
+                    Button("None") { settings.plugins = [] }
+                }
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 620)
+        .frame(width: 560, height: 760)
         .toolbar { Button("Done") { dismiss() } }
         .fileImporter(isPresented: $loadingKeys, allowedContentTypes: [.data]) {
             if let url = try? $0.get(), url.startAccessingSecurityScopedResource() {
