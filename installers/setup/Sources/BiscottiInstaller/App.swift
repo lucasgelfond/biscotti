@@ -65,12 +65,12 @@ enum Step {
 /// The files the app can open: an image or a public key.
 enum Import { case image, sshKey }
 
-/// The phone numbers and emails on the macOS "Me" card, once the user allows Contacts access.
-func meCard() async -> (phones: [String], emails: [String]) {
+/// The phone numbers on the macOS "Me" card, once the user allows Contacts access.
+func meCard() async -> [String] {
     let store = CNContactStore()
-    let keys = [CNContactPhoneNumbersKey, CNContactEmailAddressesKey] as [CNKeyDescriptor]
-    guard (try? await store.requestAccess(for: .contacts)) == true, let me = try? store.unifiedMeContactWithKeys(toFetch: keys) else { return ([], []) }
-    return (me.phoneNumbers.map(\.value.stringValue), me.emailAddresses.map { $0.value as String })
+    let keys = [CNContactPhoneNumbersKey] as [CNKeyDescriptor]
+    guard (try? await store.requestAccess(for: .contacts)) == true, let me = try? store.unifiedMeContactWithKeys(toFetch: keys) else { return [] }
+    return me.phoneNumbers.map(\.value.stringValue)
 }
 
 /// One step per screen: the target, the settings a few at a time, a review, then the target's own install steps.
@@ -87,7 +87,7 @@ struct InstallerView: View {
     @State private var downloadError: String?
     @State private var disks = removableDisks()
     @State private var disk: Disk?
-    @State private var me: (phones: [String], emails: [String]) = ([], [])
+    @State private var myPhones: [String] = []
     @State private var importing = false
     @State private var importTarget = Import.image
     @State private var pasting = false
@@ -233,7 +233,7 @@ struct InstallerView: View {
                     Link("Install Tailscale", destination: Tailscale.downloadMac)
                 }
             }
-            TextField("biscotti's name on your tailnet", text: $settings.tailscaleName)
+            field("biscotti's name on your tailnet", $settings.tailscaleName)
             LabeledContent("On your phone") {
                 if let phone {
                     Label(phone, systemImage: "checkmark.circle.fill")
@@ -274,14 +274,14 @@ struct InstallerView: View {
     private var wifi: some View {
         Form {
             HStack {
-                TextField("Network", text: $settings.wifiName)
+                field("Network", $settings.wifiName)
                 if !networks.isEmpty {
                     Menu("Saved") { ForEach(networks, id: \.self) { name in Button(name) { settings.wifiName = name } } }
                         .menuStyle(.borderlessButton).fixedSize()
                 }
             }
             HStack {
-                TextField("Password", text: $settings.wifiPassword)
+                field("Password", $settings.wifiPassword)
                 if settings.wifiPassword.isEmpty {
                     // Wi-Fi passwords live in the System keychain, so macOS asks for the Mac's password; cancel leaves typing.
                     Button("From Keychain") { settings.wifiPassword = settings.savedWifiPassword() ?? "" }
@@ -289,28 +289,26 @@ struct InstallerView: View {
                         .help("macOS will ask for your password")
                 }
             }
-            TextField("Country code", text: $settings.wifiCountry)
+            field("Country code", $settings.wifiCountry)
         }
         .settingsForm()
     }
 
     private var you: some View {
         Form {
-            if me.phones.count > 1 {
-                Picker("Your phone number", selection: $settings.phone) { ForEach(me.phones, id: \.self) { Text($0) } }
+            if myPhones.count > 1 {
+                Picker("Your phone number", selection: $settings.phone) { ForEach(myPhones, id: \.self) { Text($0) } }
             } else {
-                TextField("Your phone number", text: $settings.phone)
+                field("Your phone number", $settings.phone)
             }
-            TextField("Your email", text: $settings.email)
         }
         .settingsForm()
         .task {
             // Contacts only to fill an empty number, once; if access is denied, it's just typed.
             guard settings.phone.isEmpty, !askedContacts, !Self.noAutofill else { return }
             askedContacts = true
-            me = await meCard()
-            if settings.phone.isEmpty { settings.phone = me.phones.first ?? "" }
-            if settings.email.isEmpty { settings.email = me.emails.first ?? "" }
+            myPhones = await meCard()
+            if settings.phone.isEmpty { settings.phone = myPhones.first ?? "" }
         }
     }
 
@@ -319,8 +317,8 @@ struct InstallerView: View {
             Text("Because iMessage has no native API, biscotti texts you through Photon. You'll need to set up a Photon Spectrum project and get the keys.")
             serviceButtons("photon")
             Form {
-                TextField("Photon project ID", text: $settings.photonID)
-                SecureField("Photon project secret", text: $settings.photonSecret)
+                field("Photon project ID", $settings.photonID)
+                field("Photon project secret", $settings.photonSecret, secure: true)
             }
             .settingsForm()
         }
@@ -343,9 +341,9 @@ struct InstallerView: View {
                     .padding()
                 }
             Form {
-                TextField("Base URL", text: $settings.llmBaseURL, prompt: Text("https://ai-gateway.vercel.sh/v1"))
-                SecureField("API key", text: $settings.llmKey)
-                TextField("Model", text: $settings.model)
+                field("Base URL", $settings.llmBaseURL, prompt: "https://ai-gateway.vercel.sh/v1")
+                field("API key", $settings.llmKey, secure: true)
+                field("Model", $settings.model)
             }
             .settingsForm()
         }
@@ -371,10 +369,10 @@ struct InstallerView: View {
 
     @ViewBuilder private func pluginKeys(_ id: String) -> some View {
         switch id {
-        case "exa": SecureField("Exa API key", text: $settings.exaKey)
+        case "exa": field("Exa API key", $settings.exaKey, secure: true)
         case "google":
-            TextField("Google OAuth client ID", text: $settings.googleClientID)
-            SecureField("Google OAuth client secret", text: $settings.googleClientSecret)
+            field("Google OAuth client ID", $settings.googleClientID)
+            field("Google OAuth client secret", $settings.googleClientSecret, secure: true)
             if let redirect {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -385,7 +383,7 @@ struct InstallerView: View {
                     Text("Add this under Authorized redirect URIs on your OAuth client").font(.caption).foregroundStyle(.secondary)
                 }
             }
-        case "github": SecureField("GitHub token (fine-grained)", text: $settings.githubToken)
+        case "github": field("GitHub token (fine-grained)", $settings.githubToken, secure: true)
         default: EmptyView()
         }
     }
@@ -400,7 +398,7 @@ struct InstallerView: View {
                 }
             }
             Form {
-                TextField("SSH public key", text: $settings.sshKey, axis: .vertical).lineLimit(3...6).font(.body.monospaced())
+                field("SSH public key", $settings.sshKey, multiline: true)
             }
             .settingsForm()
         }
@@ -500,8 +498,8 @@ struct InstallerView: View {
                 }
             }
             Form {
-                TextField("Access key ID", text: $awsKey)
-                SecureField("Secret access key", text: $awsSecret)
+                field("Access key ID", $awsKey)
+                field("Secret access key", $awsSecret, secure: true)
                 Picker("Region", selection: $region) { ForEach(AWS.regions, id: \.self) { Text($0) } }
             }
             .settingsForm()
@@ -727,4 +725,35 @@ struct InstallerView: View {
 extension View {
     /// Grouped forms inset their sections by 20 points; this lines them up with the headings.
     func settingsForm() -> some View { formStyle(.grouped).padding(.horizontal, -20) }
+}
+
+/// A form field with its label above, so typing runs left to right.
+@MainActor
+func field(_ label: String, _ text: Binding<String>, secure: Bool = false, multiline: Bool = false, prompt: String = "") -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+        Text(label).font(.callout).foregroundStyle(.secondary)
+        Group {
+            if secure {
+                SecureField("", text: text, prompt: Text(prompt))
+            } else if multiline {
+                TextField("", text: text, prompt: Text(prompt), axis: .vertical).lineLimit(3...6).font(.body.monospaced())
+            } else {
+                TextField("", text: text, prompt: Text(prompt))
+            }
+        }
+        .textFieldStyle(.plain)
+        .labelsHidden()
+        .overlay(alignment: .leading) { if label == caretField { caret(after: text.wrappedValue, secure: secure) } }
+    }
+}
+
+/// For the setup GIF: `-caret "Network"` draws a text cursor in that field, which snapshots otherwise miss.
+private let caretField = UserDefaults.standard.string(forKey: "caret")
+
+private func caret(after text: String, secure: Bool) -> some View {
+    HStack(spacing: 1) {
+        // A secure field draws a bullet about 8 points wide per character.
+        if secure { Color.clear.frame(width: CGFloat(text.count) * 8, height: 1) } else { Text(text).hidden() }
+        Rectangle().fill(Color.accentColor).frame(width: 2, height: 18)
+    }
 }

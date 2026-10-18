@@ -11,7 +11,6 @@ struct Settings {
     var sshKey = Settings.firstSSHKey()
     var tailscaleName = "biscotti"
     var phone = ""
-    var email = ""
     var llmBaseURL = ""
     var llmKey = ""
     var model = "deepseek/deepseek-v4.1-flash-1017-fast"
@@ -33,7 +32,7 @@ struct Settings {
     ]
 
     var hasWifi: Bool { !wifiName.isEmpty && !wifiPassword.isEmpty }
-    var hasOwner: Bool { !phone.isEmpty && !email.isEmpty }
+    var hasOwner: Bool { !phone.isEmpty }
     var hasPhoton: Bool { !photonID.isEmpty && !photonSecret.isEmpty }
     var hasAI: Bool { ![llmBaseURL, llmKey, model].contains { $0.isEmpty } }
     func hasKeys(_ plugin: String) -> Bool {
@@ -107,7 +106,6 @@ struct Settings {
         for (key, value) in pairs {
             switch key {
             case "OWNER": phone = value
-            case "OWNER_EMAIL": email = value
             case "LLM_BASE_URL": llmBaseURL = value
             case "LLM_API_KEY": llmKey = value
             case "MODEL": model = value
@@ -129,7 +127,7 @@ struct Settings {
     /// biscotti's `.env`.
     var env: String {
         [
-            ("OWNER", phone), ("OWNER_EMAIL", email), ("LLM_BASE_URL", llmBaseURL), ("LLM_API_KEY", llmKey), ("MODEL", model),
+            ("OWNER", phone), ("LLM_BASE_URL", llmBaseURL), ("LLM_API_KEY", llmKey), ("MODEL", model),
             ("SPECTRUM_PROJECT_ID", photonID), ("SPECTRUM_PROJECT_SECRET", photonSecret),
             ("EXA_API_KEY", exaKey), ("TZ", TimeZone.current.identifier), ("TS_HOSTNAME", tailscaleName),
             ("GOOGLE_CLIENT_ID", googleClientID), ("GOOGLE_CLIENT_SECRET", googleClientSecret), ("GITHUB_TOKEN", githubToken),
