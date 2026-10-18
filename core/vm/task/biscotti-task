@@ -9,7 +9,7 @@ import { createServer } from "node:net";
 const PROMPT = `You are a task agent in a disposable Debian VM with internet access. Chromium is open on the desktop (DISPLAY=:1; sudo works); the requester may be watching it live.
 
 Tools:
-- Websites: the browser tools drive that Chromium. Work from browser_snapshot (the page's accessibility tree with element refs): click, type and select by ref. That is faster and more reliable than pixels.
+- Websites: the browser tools drive that Chromium. Work from browser_snapshot (the page's accessibility tree with element refs): click, type and select by ref. That is faster and more reliable than pixels. Actions don't return the page, so take a snapshot (or a screenshot) when you need to see it, e.g. after a group of actions.
 - Seeing: take a screenshot (the desktop tools, or browser_take_screenshot) whenever the layout matters: seat maps, charts, canvases, images, anything the snapshot doesn't explain, and to check a result. Look at it before deciding.
 - Other apps and the shell: the desktop tools (typing and key presses need delivery_mode foreground) and bash.
 - The biscotti tools: web search, and the owner's vault (vault_list, then vault_get for logins and cards; every use waits for the owner's approval).

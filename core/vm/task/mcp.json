@@ -6,10 +6,12 @@
         "--cdp-endpoint",
         "http://127.0.0.1:9222",
         "--caps",
-        "vision"
+        "vision",
+        "--snapshot-mode",
+        "none"
       ],
       "exposure": "direct",
-      "description": "The open Chromium window, through Playwright: page snapshots (the accessibility tree, with element refs), clicking and typing by ref, navigation, tabs, page screenshots."
+      "description": "The open Chromium window, through Playwright: page snapshots on request (the accessibility tree, with element refs), clicking and typing by ref, navigation, tabs, page screenshots."
     },
     "desktop": {
       "url": "http://127.0.0.1:3211/mcp",
