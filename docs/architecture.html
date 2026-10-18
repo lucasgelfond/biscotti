@@ -1,9 +1,9 @@
 <title>biscotti architecture</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap">
 <style>
-  /* Layout: a blueprint sheet. One wide diagram (scrolls sideways on phones), then three rules and a legend. */
+  /* Layout: one 16:9 blueprint sheet, sized for a tweet; it scrolls sideways on phones. */
   :root {
     --bg: #eaeff2;
     --sheet: #f6f8f9;
@@ -15,13 +15,12 @@
     --accent: #b8701f;
     --accent-soft: #f4e3cf;
     --display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
-    --body: "IBM Plex Sans", system-ui, sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #10181e; --sheet: #141e25; --panel: #1b2730; --ink: #e2e9ee; --muted: #93a6b3;
-      --line: #46596600; --line: #465966; --grid: #1c2830; --accent: #e3a35a; --accent-soft: #3a2a17;
+      --line: #465966; --grid: #1c2830; --accent: #e3a35a; --accent-soft: #3a2a17;
       color-scheme: dark;
     }
   }
@@ -33,133 +32,111 @@
   body {
     background: var(--bg);
     color: var(--ink);
-    font: 15px/1.55 var(--body);
     padding-left: max(16px, env(safe-area-inset-left, 0px));
     padding-right: max(16px, env(safe-area-inset-right, 0px));
-    padding-block: 32px 48px;
+    padding-block: 24px;
   }
-  main { max-width: 1240px; margin: 0 auto; display: grid; gap: 28px; }
-  header { display: grid; gap: 6px; }
-  h1 { font: 700 34px/1.1 var(--display); letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
-  header p { margin: 0; color: var(--muted); max-width: 68ch; }
   .sheet {
+    max-width: 1600px;
+    margin: 0 auto;
     background: var(--sheet);
     background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-    background-size: 24px 24px;
+    background-size: 25px 25px;
     border: 1px solid var(--line);
     border-radius: 6px;
     overflow-x: auto;
   }
-  svg { display: block; width: 100%; min-width: 980px; height: auto; }
-  .box { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
-  .frame { fill: none; stroke: var(--ink); stroke-width: 1.4; }
-  .vm { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-dasharray: 7 5; }
-  .planned { stroke-dasharray: 5 4; }
-  .hot { fill: var(--accent-soft); stroke: var(--accent); }
-  .t { font: 600 16px var(--display); fill: var(--ink); }
-  .s { font: 500 11.5px var(--mono); fill: var(--muted); }
-  .li { font: 400 12.5px var(--body); fill: var(--ink); }
-  .label { font: 600 13px var(--display); fill: var(--ink); letter-spacing: 0.04em; text-transform: uppercase; }
-  .vmlabel { font: 600 13px var(--display); fill: var(--accent); letter-spacing: 0.04em; text-transform: uppercase; }
-  .wire { fill: none; stroke: var(--ink); stroke-width: 1.3; }
-  .wire.soft { stroke: var(--muted); stroke-dasharray: 4 4; }
-  .wire.key { stroke: var(--accent); stroke-width: 1.6; }
-  .tag { font: 500 11px var(--mono); fill: var(--muted); }
-  .tag.key { fill: var(--accent); }
+  svg { display: block; width: 100%; min-width: 900px; height: auto; }
+  .box { fill: var(--panel); stroke: var(--line); stroke-width: 1.4; }
+  .frame { fill: none; stroke: var(--ink); stroke-width: 1.6; }
+  .core { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.8; }
+  .vm { fill: var(--panel); stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 8 6; }
+  .chip { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+  .title { font: 700 64px var(--display); fill: var(--ink); letter-spacing: -0.01em; }
+  .t { font: 600 26px var(--display); fill: var(--ink); }
+  .big { font: 700 34px var(--display); fill: var(--ink); }
+  .s { font: 500 17px var(--mono); fill: var(--muted); }
+  .c { font: 500 17px var(--mono); fill: var(--ink); }
+  .label { font: 600 19px var(--display); fill: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .label.key { fill: var(--accent); }
+  .wire { fill: none; stroke: var(--ink); stroke-width: 1.8; }
+  .wire.key { stroke: var(--accent); stroke-width: 2.2; }
   .arrow { fill: var(--ink); }
   .arrow.key { fill: var(--accent); }
-  .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
-  .rule { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; display: grid; gap: 6px; min-width: 0; }
-  .rule h2 { font: 600 18px/1.2 var(--display); margin: 0; }
-  .rule p { margin: 0; color: var(--muted); font-size: 14px; }
-  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--muted); font: 500 12px var(--mono); }
-  .legend span { display: inline-flex; align-items: center; gap: 8px; }
-  .sw { width: 28px; height: 0; border-top: 1.6px solid var(--ink); }
-  .sw.soft { border-top: 1.6px dashed var(--muted); }
-  .sw.key { border-top-color: var(--accent); }
-  .sw.box { height: 12px; border: 1.2px dashed var(--line); width: 22px; border-radius: 2px; }
 </style>
 
-<main>
-  <header>
-    <h1>biscotti architecture</h1>
-  </header>
+<div class="sheet" role="img" aria-label="biscotti: you text from your iPhone through iMessage to a Raspberry Pi running NixOS. On it, a small core (agent, memory, gate) loads plugins. Task VMs run in Firecracker. Everything reaches the model and tools only through the gate, which holds the keys; Tailscale shows you the live desktops and pages.">
+  <svg viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0L10 5L0 10z"/></marker>
+      <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow key" d="M0 0L10 5L0 10z"/></marker>
+    </defs>
 
-  <div class="sheet" role="img" aria-label="Diagram: your iPhone texts through Photon to the agent on the Raspberry Pi. The agent uses SQLite memory, on-device embeddings, Executor for Google and GitHub, Vaultwarden, and the Vercel AI Gateway. Tasks run in a Firecracker VM whose pi agent reaches the model only through the Caddy bridge.">
-    <svg viewBox="0 0 1240 760" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow" d="M0 0L10 5L0 10z"/></marker>
-        <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrow key" d="M0 0L10 5L0 10z"/></marker>
-      </defs>
+    <text class="title" x="60" y="110">biscotti</text>
 
-      <!-- You -->
-      <text class="label" x="24" y="72">You</text>
-      <rect class="box" x="24" y="110" width="200" height="80" rx="6"/>
-      <text class="t" x="40" y="156">iPhone</text>
-      <rect class="box" x="24" y="250" width="200" height="80" rx="6"/>
-      <text class="t" x="40" y="296">Photon Spectrum</text>
-      <rect class="box" x="24" y="650" width="200" height="80" rx="6"/>
-      <text class="t" x="40" y="696">Laptop or phone</text>
+    <!-- You -->
+    <text class="label" x="60" y="232">You</text>
+    <rect class="box" x="60" y="256" width="240" height="96" rx="8"/>
+    <text class="t" x="84" y="313">iPhone</text>
+    <rect class="box" x="60" y="440" width="240" height="96" rx="8"/>
+    <text class="t" x="84" y="490">iMessage</text>
+    <text class="s" x="84" y="516">Photon Spectrum</text>
+    <rect class="box" x="60" y="694" width="240" height="96" rx="8"/>
+    <text class="t" x="84" y="744">Tailscale</text>
+    <text class="s" x="84" y="770">live desktops, pages</text>
 
-      <!-- Raspberry Pi -->
-      <rect class="frame" x="260" y="40" width="700" height="700" rx="10"/>
-      <text class="label" x="284" y="72">Raspberry Pi 5</text>
+    <!-- Raspberry Pi -->
+    <rect class="frame" x="360" y="200" width="860" height="640" rx="12"/>
+    <text class="label" x="390" y="240">Raspberry Pi 5 · NixOS</text>
 
-      <rect class="box hot" x="284" y="110" width="320" height="240" rx="6"/>
-      <text class="t" x="300" y="236">agent</text>
+    <rect class="core" x="390" y="262" width="800" height="150" rx="8"/>
+    <text class="label key" x="414" y="296">core · 650 lines</text>
+    <text class="big" x="414" y="352">agent</text>
+    <text class="s" x="414" y="384">pi</text>
+    <text class="big" x="660" y="352">memory</text>
+    <text class="s" x="660" y="384">SQLite + FTS5</text>
+    <text class="big" x="920" y="352">gate</text>
+    <text class="s" x="920" y="384">keys · tools · approvals</text>
 
-      <rect class="box" x="636" y="110" width="300" height="80" rx="6"/>
-      <text class="t" x="652" y="156">Memory + History (SQLite FTS/vector)</text>
-      <rect class="box" x="636" y="206" width="300" height="64" rx="6"/>
-      <text class="t" x="652" y="244">embeddings</text>
-      <rect class="box" x="636" y="286" width="300" height="80" rx="6"/>
-      <text class="t" x="652" y="332">Executor</text>
-      <rect class="box" x="636" y="382" width="300" height="70" rx="6"/>
-      <text class="t" x="652" y="423">vaultwarden</text>
+    <text class="label" x="390" y="458">plugins</text>
+    <g>
+      <rect class="chip" x="390" y="474" width="132" height="44" rx="22"/><text class="c" x="456" y="502" text-anchor="middle">spectrum</text>
+      <rect class="chip" x="532" y="474" width="86" height="44" rx="22"/><text class="c" x="575" y="502" text-anchor="middle">exa</text>
+      <rect class="chip" x="628" y="474" width="104" height="44" rx="22"/><text class="c" x="680" y="502" text-anchor="middle">wakes</text>
+      <rect class="chip" x="742" y="474" width="132" height="44" rx="22"/><text class="c" x="808" y="502" text-anchor="middle">artifacts</text>
+      <rect class="chip" x="884" y="474" width="118" height="44" rx="22"/><text class="c" x="943" y="502" text-anchor="middle">secrets</text>
+      <rect class="chip" x="1012" y="474" width="140" height="44" rx="22"/><text class="c" x="1082" y="502" text-anchor="middle">embeddings</text>
+    </g>
 
-      <rect class="box" x="284" y="380" width="320" height="70" rx="6"/>
-      <text class="t" x="300" y="421">Tailscale Serve</text>
-      <rect class="box" x="284" y="466" width="320" height="70" rx="6"/>
-      <text class="t" x="300" y="507">Caddy</text>
+    <text class="label key" x="390" y="590">Firecracker task VMs</text>
+    <rect class="vm" x="390" y="610" width="250" height="180" rx="8"/>
+    <text class="t" x="414" y="664">desktop + pi</text>
+    <text class="s" x="414" y="692">fresh every task</text>
+    <rect class="vm" x="665" y="610" width="250" height="180" rx="8"/>
+    <text class="t" x="689" y="664">desktop + pi</text>
+    <rect class="vm" x="940" y="610" width="250" height="180" rx="8"/>
+    <text class="t" x="964" y="664">desktop + pi</text>
 
-      <!-- Task VM -->
-      <rect class="vm" x="284" y="570" width="652" height="140" rx="8"/>
-      <text class="vmlabel" x="304" y="600">Firecracker task VM</text>
-      <rect class="box" x="304" y="620" width="300" height="70" rx="6"/>
-      <text class="t" x="320" y="661">task agent</text>
-      <rect class="box" x="628" y="620" width="288" height="70" rx="6"/>
-      <text class="t" x="644" y="661">cua-spacesd</text>
+    <!-- Cloud -->
+    <text class="label" x="1280" y="232">Cloud</text>
+    <rect class="box" x="1280" y="256" width="260" height="96" rx="8"/>
+    <text class="t" x="1304" y="306">AI Gateway</text>
+    <text class="s" x="1304" y="332">DeepSeek V4.1 Flash</text>
+    <rect class="box" x="1280" y="440" width="260" height="96" rx="8"/>
+    <text class="t" x="1304" y="490">the web</text>
+    <text class="s" x="1304" y="516">Exa</text>
+    <rect class="box" x="1280" y="610" width="260" height="96" rx="8"/>
+    <text class="t" x="1304" y="660">your accounts</text>
+    <text class="s" x="1304" y="686">Google · GitHub</text>
 
-      <!-- Cloud -->
-      <text class="label" x="996" y="72">Cloud</text>
-      <rect class="box" x="996" y="110" width="220" height="80" rx="6"/>
-      <text class="t" x="1012" y="156">Vercel AI Gateway</text>
-      <rect class="box planned" x="996" y="214" width="220" height="70" rx="6"/>
-      <text class="t" x="1012" y="255">Exa</text>
-      <rect class="box" x="996" y="300" width="220" height="70" rx="6"/>
-      <text class="t" x="1012" y="341">Google · GitHub</text>
-
-      <!-- Wires -->
-      <path class="wire" d="M124 190V250" marker-start="url(#a)" marker-end="url(#a)"/>
-      <text class="tag" x="132" y="226">texts</text>
-      <path class="wire" d="M224 290H284" marker-end="url(#a)" marker-start="url(#a)"/>
-      <path class="wire key" d="M604 140H620V92H980V150H996" marker-end="url(#k)"/>
-      <path class="wire" d="M604 150H636" marker-end="url(#a)"/>
-      <path class="wire" d="M604 238H636" marker-end="url(#a)"/>
-      <path class="wire" d="M604 326H636" marker-end="url(#a)"/>
-      <path class="wire" d="M936 335H996" marker-end="url(#a)"/>
-      <path class="wire soft" d="M604 344H620V417H636" marker-end="url(#a)"/>
-      <path class="wire" d="M284 330H272V655H304" marker-end="url(#a)"/>
-      <path class="wire key" d="M454 620V536" marker-end="url(#k)"/>
-      <text class="tag key" x="462" y="586">model, no key</text>
-      <path class="wire key" d="M604 501H970V172H996" marker-end="url(#k)"/>
-      <path class="wire soft" d="M604 520H980V249H996" marker-end="url(#a)"/>
-      <path class="wire" d="M224 690H244V415H284" marker-end="url(#a)"/>
-      <path class="wire" d="M604 655H628" marker-end="url(#a)"/>
-      <text class="tag" x="64" y="640">UIs + live desktop</text>
-      <path class="wire soft" d="M604 430H616V560H760V620" marker-end="url(#a)"/>
-    </svg>
-  </div>
-
-
-</main>
+    <!-- Wires -->
+    <path class="wire" d="M180 352V440" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path class="wire" d="M300 488H340V337H390" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path class="wire" d="M300 742H372" marker-end="url(#a)"/>
+    <path class="wire key" d="M1190 304H1280" marker-end="url(#k)"/>
+    <path class="wire" d="M1190 344H1235V488H1280" marker-end="url(#a)"/>
+    <path class="wire" d="M1190 384H1255V658H1280" marker-end="url(#a)"/>
+    <!-- Task VMs reach the model and tools only through the gate. -->
+    <path class="wire key" d="M1171 610V412" marker-end="url(#k)"/>
+  </svg>
+</div>
