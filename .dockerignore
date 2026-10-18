@@ -1,0 +1,9 @@
+**/node_modules
+.git
+docs
+installers
+instinct-dump
+development
+tests
+!tests/package.json
+core/vm

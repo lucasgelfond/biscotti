@@ -1,3 +1,2 @@
-deploy/.env
+core/host/.env
 node_modules/
-tests/.caddy/

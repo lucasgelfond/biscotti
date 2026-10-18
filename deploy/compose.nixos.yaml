@@ -1,5 +1,0 @@
-# NixOS: Nix-built binaries mounted into containers (the patched Firecracker) load their libraries from the Nix store.
-services:
-  agent:
-    volumes:
-      - /nix/store:/nix/store:ro

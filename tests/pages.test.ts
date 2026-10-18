@@ -1,24 +1,23 @@
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { createAgent } from "../agent/src/agent.ts";
-import { openDb } from "../agent/src/db.ts";
-import { pageTool } from "../agent/src/pages.ts";
+import { boot } from "./support.ts";
 
-test("publishes a page with link-preview tags and texts its link", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "biscotti-"));
-  const pages = join(dir, "pages");
-  const db = openDb(join(dir, "biscotti.db"));
-  const agent = await createAgent({ db, dir, tools: [pageTool(pages, "https://biscotti.example.ts.net:8445")] });
+test("publishes a page with link-preview tags, texts its link on its own, and serves it", async () => {
+  const biscotti = await boot(["artifacts"]);
 
-  const reply = await agent.reply("Make me a page with a table comparing biscotti, shortbread and madeleines: origin and texture.");
+  await biscotti.say("Make me a page with a table comparing biscotti, shortbread and madeleines: origin and texture.");
 
+  const pages = join(biscotti.dir, "pages");
   const files = readdirSync(pages).filter((f) => f.endsWith(".html"));
   const page = readFileSync(join(pages, files[0]), "utf8");
+  const served = await fetch(`http://127.0.0.1:8082/${files[0]}`);
+  const listing = await fetch("http://127.0.0.1:8082/");
   expect(files).toHaveLength(1);
   expect(page.toLowerCase()).toContain("madeleine");
   expect(page).toContain('<meta property="og:title"');
-  expect(page).toContain('<meta property="og:image" content="https://biscotti.example.ts.net:8445/preview.jpg">');
-  expect(reply).toContain(`https://biscotti.example.ts.net:8445/${files[0]}`);
+  expect(page).toContain('<meta property="og:image" content="https://biscotti.example.ts.net/preview.jpg">');
+  expect(biscotti.sent).toContain(`https://biscotti.example.ts.net/${files[0]}`);
+  expect(served.status).toBe(200);
+  expect(listing.status).toBe(404);
 });

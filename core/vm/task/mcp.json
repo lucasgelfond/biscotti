@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "desktop": {
+      "url": "http://127.0.0.1:3211/mcp",
+      "headers": {
+        "Authorization": "!echo Bearer $(cat /run/cua/env-token)"
+      },
+      "exposure": "direct",
+      "description": "This VM's desktop (cua-spacesd): screenshots, the accessibility tree, clicking, typing, browser control."
+    },
+    "biscotti": {
+      "url": "http://172.16.0.1/mcp",
+      "exposure": "direct",
+      "timeout": 900,
+      "description": "The owner's tools: web search, connected accounts (mail, calendar, GitHub, …), saved secrets and more. Some wait for the owner's approval."
+    }
+  }
+}

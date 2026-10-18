@@ -1,5 +1,5 @@
 {
-  description = "biscotti: a self-hosted personal agent";
+  description = "Biscotti: a lightweight, Instinct-like agent harness";
 
   nixConfig = {
     extra-substituters = [ "https://nixos-raspberrypi.cachix.org" ];
@@ -18,11 +18,11 @@
     nixosConfigurations = {
       pi5 = nixos-raspberrypi.lib.nixosSystem {
         specialArgs = inputs;
-        modules = [ ./deploy/nixos/biscotti.nix ./deploy/nixos/pi5.nix ];
+        modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/pi5.nix ];
       };
       vm = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
-        modules = [ ./deploy/nixos/biscotti.nix ./deploy/nixos/vm.nix ];
+        modules = [ ./installers/toolchain/biscotti.nix ./installers/toolchain/vm.nix ];
       };
     };
 

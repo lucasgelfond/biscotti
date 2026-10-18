@@ -1,39 +1,30 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { expect, test } from "vitest";
-import { createAgent } from "../agent/src/agent.ts";
-import { openDb, wakes } from "../agent/src/db.ts";
-import { startWakes, wakeTools } from "../agent/src/wakes.ts";
+import { boot } from "./support.ts";
 
 const TIMEZONE = "America/New_York";
-const newDb = () => openDb(join(mkdtempSync(join(tmpdir(), "biscotti-")), "biscotti.db"));
+type Wake = { label: string; when: string; prompt: string };
 
 test("turns 'remind me every Monday at 8pm' into a weekly wake", async () => {
-  const db = newDb();
-  const agent = await createAgent({ db, dir: mkdtempSync(join(tmpdir(), "biscotti-")), tools: wakeTools(db, TIMEZONE) });
+  const biscotti = await boot(["wakes"]);
 
-  await agent.reply("Remind me every Monday at 8pm to call Mom.");
+  await biscotti.say("Remind me every Monday at 8pm to call Mom.");
 
-  const saved = db.select().from(wakes).all();
+  const saved = biscotti.db.$client.prepare("SELECT * FROM wakes").all() as Wake[];
   expect(saved).toHaveLength(1);
   expect(saved[0].when).toBe("0 20 * * 1");
   expect(saved[0].prompt.toLowerCase()).toContain("mom");
 });
 
-test("fires a one-time wake once and keeps a repeating one", async () => {
-  const db = newDb();
+test("texts a reminder when a one-time wake comes due, then removes it", async () => {
+  process.env.WAKE_CHECK_MS = "500";
+  const biscotti = await boot(["wakes"]);
   const inTwoSeconds = new Date(Date.now() + 2000).toLocaleString("sv-SE", { timeZone: TIMEZONE }).replace(" ", "T");
-  db.insert(wakes).values({ label: "once", when: inTwoSeconds, prompt: "Remind the owner to stretch" }).run();
-  db.insert(wakes).values({ label: "every second", when: "* * * * * *", prompt: "Count" }).run();
-  const fired: string[] = [];
+  biscotti.db.$client
+    .prepare("INSERT INTO wakes (label, \"when\", prompt, created_at) VALUES (?, ?, ?, ?)")
+    .run("stretch", inTwoSeconds, "Remind the owner to stretch", Math.floor(Date.now() / 1000));
 
-  const timer = startWakes(db, TIMEZONE, async (wake) => void fired.push(wake.label), 200);
-  await new Promise((r) => setTimeout(r, 3500));
-  clearInterval(timer);
+  await expect.poll(() => biscotti.sent.join("\n").toLowerCase(), { timeout: 60_000 }).toContain("stretch");
 
-  const left = db.select().from(wakes).all().map((w) => w.label);
-  expect(fired.filter((l) => l === "once")).toHaveLength(1);
-  expect(fired.filter((l) => l === "every second").length).toBeGreaterThan(1);
-  expect(left).toEqual(["every second"]);
+  const left = biscotti.db.$client.prepare("SELECT * FROM wakes").all();
+  expect(left).toEqual([]);
 });

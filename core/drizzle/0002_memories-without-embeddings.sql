@@ -1,0 +1,1 @@
+ALTER TABLE `memories` DROP COLUMN `embedding`;

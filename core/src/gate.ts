@@ -1,0 +1,108 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { Tools } from "./plugin.ts";
+
+// The gate: the one place keys live and tools are served. The main agent and task VMs reach the model (/llm) and
+// every plugin's tools (/mcp) only through here, and it asks the owner before anything that needs a yes.
+
+export const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)\b/i;
+export const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)\b/i;
+const ANSWER_TIMEOUT_MS = 10 * 60_000;
+
+export function createGate(opts: {
+  gatewayKey: string;
+  // The model names callers may use, mapped to AI Gateway model ids (e.g. main, task).
+  models: Record<string, string>;
+  send: (text: string) => Promise<void>;
+}) {
+  const plugins: Tools[] = [];
+  let byTool = new Map<string, Tools>();
+  let pending: ((yes: boolean) => void) | undefined;
+
+  // Asks the owner; their next yes or no answers it (one question, and one yes, at a time).
+  function ask(question: string) {
+    void opts.send(question);
+    return new Promise<boolean>((resolve) => {
+      pending?.(false);
+      pending = resolve;
+      setTimeout(() => {
+        if (pending !== resolve) return;
+        pending = undefined;
+        resolve(false);
+      }, ANSWER_TIMEOUT_MS);
+    });
+  }
+
+  // Takes the owner's message as the answer to a pending question, if it is one.
+  function answer(message: string) {
+    const said = message.trim();
+    if (!pending || !(YES.test(said) || NO.test(said))) return false;
+    const yes = YES.test(said);
+    pending(yes);
+    pending = undefined;
+    void opts.send(yes ? "Approved." : "Declined.");
+    return true;
+  }
+
+  async function listTools() {
+    const lists = await Promise.all(plugins.map(async (p) => ({ p, tools: await p.list() })));
+    byTool = new Map(lists.flatMap(({ p, tools }) => tools.map((t) => [t.name, p] as const)));
+    return lists.flatMap(({ tools }) => tools);
+  }
+
+  async function callTool(name: string, args: Record<string, unknown>) {
+    if (!byTool.has(name)) await listTools();
+    const plugin = byTool.get(name);
+    if (!plugin) throw new Error(`no tool ${name}`);
+    return plugin.call(name, args);
+  }
+
+  async function llm(req: IncomingMessage, res: ServerResponse) {
+    const body = JSON.parse(await readBody(req));
+    const model = opts.models[body.model];
+    if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
+    const upstream = await fetch(`https://ai-gateway.vercel.sh${req.url!.slice("/llm".length)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.gatewayKey}`, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ ...body, model }),
+    });
+    res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
+    for await (const chunk of upstream.body ?? []) res.write(chunk);
+    res.end();
+  }
+
+  async function mcp(req: IncomingMessage, res: ServerResponse) {
+    const server = new McpServer({ name: "biscotti", version: "1" }, { capabilities: { tools: {} } });
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await listTools() }));
+    server.setRequestHandler(CallToolRequestSchema, ({ params }) => callTool(params.name, params.arguments ?? {}));
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => void transport.close());
+    await server.connect(transport);
+    await transport.handleRequest(req, res);
+  }
+
+  const handler = (req: IncomingMessage, res: ServerResponse) =>
+    (req.url?.startsWith("/llm/") ? llm(req, res) : mcp(req, res)).catch((err) => {
+      console.error(err);
+      if (!res.headersSent) res.writeHead(502).end(String(err));
+    });
+
+  return {
+    ask,
+    answer,
+    add: (tools: Tools) => plugins.push(tools),
+    listen: (host: string, port: number) =>
+      new Promise<Server>((resolve, reject) => {
+        const server = createServer(handler).once("error", reject);
+        server.listen(port, host, () => resolve(server));
+      }),
+  };
+}
+
+async function readBody(req: IncomingMessage) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}

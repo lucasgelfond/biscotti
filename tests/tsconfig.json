@@ -1,1 +1,0 @@
-{ "extends": "../agent/tsconfig.json", "include": ["."] }

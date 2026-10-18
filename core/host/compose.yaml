@@ -1,0 +1,34 @@
+# The agent. Plugins that need a service of their own bring a compose.yaml, included for the plugins biscotti.json
+# names. Everything listens on 127.0.0.1 (or the task VMs' links); Tailscale exposes what the owner opens.
+name: biscotti
+
+services:
+  # Host networking: the gate listens on each VM slot's link, and Firecracker opens taps in the slots' namespaces.
+  agent:
+    build:
+      context: ../..
+      dockerfile: core/Dockerfile
+    image: biscotti/agent
+    network_mode: host
+    # An init process reaps exited Firecracker processes.
+    init: true
+    env_file: /var/lib/biscotti/.env
+    environment:
+      DATA_DIR: /data
+      VM_DIR: /var/lib/biscotti/vm
+      FIRECRACKER: /usr/local/bin/firecracker
+    # Task VMs: KVM, the slots' network namespaces (entering one needs SYS_ADMIN, opening its tap NET_ADMIN), the
+    # patched Firecracker and the snapshot.
+    devices: [/dev/kvm, /dev/net/tun]
+    cap_add: [NET_ADMIN, SYS_ADMIN]
+    volumes:
+      - /var/lib/biscotti/data:/data
+      - /var/lib/biscotti/biscotti.json:/app/biscotti.json:ro
+      - type: bind
+        source: /run/netns
+        target: /run/netns
+        read_only: true
+        bind: { propagation: rslave }
+      - /var/lib/biscotti/vm:/var/lib/biscotti/vm:ro
+      - ${FIRECRACKER_BIN:?}:/usr/local/bin/firecracker:ro
+    restart: unless-stopped

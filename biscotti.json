@@ -1,0 +1,3 @@
+{
+  "plugins": ["channels/spectrum", "connectors/executor", "exa", "wakes", "artifacts", "embedding", "secrets/sqlite"]
+}

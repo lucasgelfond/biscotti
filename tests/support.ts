@@ -1,22 +1,39 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { randomBytes, randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureExecutorToken } from "../agent/src/connectors.ts";
+import { start } from "../core/src/biscotti.ts";
+import type { Plugin } from "../core/src/plugin.ts";
 
-// The fresh Executor from tests/compose.yaml. Its first-run setup works once per `pnpm services`, so test files share
-// the token it mints (kept while it still works).
-export const EXECUTOR_URL = "http://127.0.0.1:8095";
-const TOKEN_FILE = join(tmpdir(), "biscotti-tests-executor-token");
+// Starts biscotti as main.ts does, with the named plugins and a stand-in for the owner's phone: `say` is the owner
+// texting (resolving once biscotti has replied), `sent` is everything biscotti texted back.
 
-export async function executorToken() {
-  if (existsSync(TOKEN_FILE)) {
-    const token = readFileSync(TOKEN_FILE, "utf8");
-    const check = await fetch(`${EXECUTOR_URL}/api/context`, { headers: { Authorization: `Bearer ${token}` } });
-    if (check.ok) return token;
-  }
-  const admin = { name: "Test Owner", email: `owner-${randomUUID()}@example.com`, password: randomBytes(18).toString("base64url") };
-  const token = await ensureExecutorToken(EXECUTOR_URL, EXECUTOR_URL, join(tmpdir(), `executor-${randomUUID()}`), admin);
-  writeFileSync(TOKEN_FILE, token);
-  return token;
+export const newDataDir = () => mkdtempSync(join(tmpdir(), "biscotti-"));
+
+// Plugins by name (as in biscotti.json) or, for a test's own, the plugin itself.
+export async function boot(names: (string | Plugin)[], dir = newDataDir()) {
+  const sent: string[] = [];
+  const images: Buffer[] = [];
+  const reactions: string[] = [];
+  const phone: Plugin = {
+    channel: async () => ({
+      messages: (async function* () {})(),
+      send: async (m) => void ("text" in m ? sent.push(m.text) : images.push(m.image)),
+    }),
+  };
+  const plugins = await Promise.all(
+    names.map(async (name) => (typeof name === "string" ? ((await import(/* @vite-ignore */ new URL(`../plugins/${name}/index.ts`, import.meta.url).href)).default as Plugin) : name)),
+  );
+  const biscotti = await start({ plugins: [phone, ...plugins], dir });
+  const say = (text: string) => biscotti.handle({ text, react: async (emoji) => void reactions.push(emoji) });
+  return { ...biscotti, dir, say, sent, images, reactions };
+}
+
+// The tools the agent called, in order, from the saved transcript.
+export function toolCalls(db: Awaited<ReturnType<typeof boot>>["db"]) {
+  return db.$client
+    .prepare("SELECT entry FROM transcripts")
+    .all()
+    .map((r) => JSON.parse((r as { entry: string }).entry))
+    .filter((e) => e.type === "message" && e.message.role === "assistant")
+    .map((e) => (e.message.content as { type: string; name?: string }[]).flatMap((c) => (c.type === "toolCall" ? [c.name!] : [])));
 }

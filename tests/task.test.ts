@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { expect, test } from "vitest";
-import { runTask } from "../agent/src/sandbox.ts";
+import { runTask } from "../core/src/tasks.ts";
 
-// Task VMs need Linux with KVM, the snapshot from cua-vm/snapshots.sh and the bridge, so this runs on the Pi.
+// Task VMs need Linux with KVM, the snapshot from core/vm/snapshots.sh and the bridge, so this runs on the Pi.
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const onThePi = existsSync("/dev/kvm") && existsSync(`${VM_DIR}/desktop.snap`);

@@ -1,63 +1,60 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { expect, test } from "vitest";
-import { createAgent } from "../agent/src/agent.ts";
-import { memories, openDb, transcripts } from "../agent/src/db.ts";
-import { memoryTools } from "../agent/src/memory.ts";
+import { memories, transcripts } from "../core/src/schema.ts";
+import { boot, newDataDir } from "./support.ts";
 
-// The production model through the AI Gateway (needs AI_GATEWAY_API_KEY; MODEL overrides it), and the
-// on-device embeddings from tests/compose.yaml.
-const MODEL = process.env.MODEL;
-const EMBEDDINGS_URL = process.env.EMBEDDINGS_URL ?? "http://127.0.0.1:8092";
-
-const newDataDir = () => mkdtempSync(join(tmpdir(), "biscotti-"));
-
-// Starts the agent the way main.ts does, on the data directory a previous run may have left.
-async function start(dir: string) {
-  const db = openDb(join(dir, "biscotti.db"));
-  const agent = await createAgent({ db, dir, model: MODEL, tools: memoryTools(db, EMBEDDINGS_URL) });
-  return { db, agent };
-}
+// Memory with the embedding plugin's meaning-based recall (the on-device model from tests/compose.yaml).
+const PLUGINS = ["embedding"];
 
 test("replies to a greeting", async () => {
-  const { agent } = await start(newDataDir());
+  const biscotti = await boot([]);
 
-  const reply = await agent.reply("hi!");
+  await biscotti.say("hi!");
 
-  expect(reply?.trim()).toBeTruthy();
+  expect(biscotti.sent.join("").trim()).toBeTruthy();
 });
 
 test("remembers a fact and recalls it once the conversation is gone", async () => {
   const dir = newDataDir();
-  const first = await start(dir);
+  const first = await boot(PLUGINS, dir);
 
-  await first.agent.reply("My gym locker is number 4127, remember that.");
+  await first.say("My gym locker is number 4127, remember that.");
   const saved = first.db.select().from(memories).all();
   expect(saved.map((m) => m.content).join("\n")).toContain("4127");
 
   // As if compaction had summarized it all away: the answer can only come from recall.
   first.db.delete(transcripts).run();
-  const second = await start(dir);
-  const reply = await second.agent.reply("What's my gym locker number?");
+  const second = await boot(PLUGINS, dir);
+  await second.say("What's my gym locker number?");
 
-  expect(reply).toContain("4127");
+  expect(second.sent.join("\n")).toContain("4127");
+});
+
+test("recalls by meaning, not just by keyword", async () => {
+  const dir = newDataDir();
+  const first = await boot(PLUGINS, dir);
+  await first.say("Remember: I'm allergic to peanuts.");
+  first.db.delete(transcripts).run();
+
+  const second = await boot(PLUGINS, dir);
+  await second.say("Is satay sauce safe for me to eat?");
+
+  expect(second.sent.join("\n").toLowerCase()).toMatch(/peanut|allerg/);
 });
 
 test("resumes the same conversation after a restart", async () => {
   const dir = newDataDir();
-  const first = await start(dir);
-  await first.agent.reply("Please call me Captain from now on.");
+  const first = await boot([], dir);
+  await first.say("Please call me Captain from now on.");
 
-  const second = await start(dir);
-  const reply = await second.agent.reply("What did I ask you to call me?");
+  const second = await boot([], dir);
+  await second.say("What did I ask you to call me?");
 
-  expect(reply).toContain("Captain");
+  expect(second.sent.join("\n")).toContain("Captain");
 });
 
 test("keeps every message in the searchable transcript", async () => {
-  const { db, agent } = await start(newDataDir());
-  await agent.reply("The plumber is coming Thursday at 10.");
+  const { db, say } = await boot([]);
+  await say("The plumber is coming Thursday at 10.");
 
   const messages = db.select({ text: transcripts.text }).from(transcripts).all().flatMap((r) => r.text ?? []);
   const found = db.$client
@@ -68,4 +65,12 @@ test("keeps every message in the searchable transcript", async () => {
   expect(messages[0]).toContain("The plumber is coming Thursday at 10.");
   expect(messages.some((m) => m.startsWith("assistant: "))).toBe(true);
   expect(found.length).toBeGreaterThan(0);
+});
+
+test("reacts with a tapback when asked", async () => {
+  const biscotti = await boot([]);
+
+  await biscotti.say("Just give my message a thumbs up tapback, no need to reply.");
+
+  expect(biscotti.reactions).toContain("👍");
 });

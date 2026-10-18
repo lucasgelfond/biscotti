@@ -1,0 +1,32 @@
+{
+  "name": "biscotti",
+  "description": "Biscotti: a lightweight, Instinct-like agent harness",
+  "private": true,
+  "packageManager": "pnpm@10.29.1",
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@google/genai",
+      "better-sqlite3",
+      "esbuild",
+      "protobufjs"
+    ],
+    "overrides": {
+      "@earendil-works/chord": "1.1.0",
+      "@earendil-works/pi-agent-core": "1.1.0",
+      "@earendil-works/pi-ai": "1.1.0",
+      "@earendil-works/pi-codemode": "1.1.0",
+      "@earendil-works/pi-mcp": "1.1.0",
+      "@earendil-works/pi-tui": "1.1.0"
+    }
+  },
+  "scripts": {
+    "start": "node core/src/main.ts",
+    "typecheck": "tsc",
+    "test": "pnpm --filter @biscotti/tests test"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
+  }
+}
