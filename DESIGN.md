@@ -1,5 +1,7 @@
 # biscotti — design decisions & plan
 
+Architecture diagram: [`docs/architecture.html`](docs/architecture.html) (open in a browser).
+
 A self-hosted personal assistant you text. It handles your accounts, can use a
 real desktop, and keeps your credentials on hardware you own. The design follows
 Instinct's split between a durable platform and disposable sandboxes, built the
