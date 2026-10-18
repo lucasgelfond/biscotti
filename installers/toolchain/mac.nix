@@ -3,8 +3,8 @@
 { modulesPath, pkgs, ... }:
 {
   imports = [ "${modulesPath}/profiles/qemu-guest.nix" ];
-  # Task VMs on 2M huge pages (640 per VM, three at once): nested, every 4K page a VM first touches is slow.
-  boot.kernelParams = [ "console=hvc0" "hugepagesz=2M" "hugepages=1920" ];
+  # Task VMs on 2M huge pages (768 per 1536 MiB VM, three at once): nested, every 4K page a VM first touches is slow.
+  boot.kernelParams = [ "console=hvc0" "hugepagesz=2M" "hugepages=2304" ];
   # Lima runs its scripts with /bin/bash.
   systemd.tmpfiles.rules = [ "L+ /bin/bash - - - - ${pkgs.bash}/bin/bash" ];
 
