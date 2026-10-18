@@ -60,7 +60,7 @@ test("asks the owner before a tool that needs a yes, and goes ahead on their yes
 });
 
 test("lists every plugin's tools at the gate's /mcp", async () => {
-  const { gateUrl } = await boot([outbox, "wakes"]);
+  const { gateUrl } = await boot([outbox]);
 
   const gate = await mcp(`${gateUrl}/mcp`);
   const names = (await gate.listTools()).tools.map((t) => t.name);

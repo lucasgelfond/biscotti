@@ -1,4 +1,4 @@
-import { localTools, text, type Plugin } from "@biscotti/core";
+import { localTools, text, type Plugin } from "./plugin.ts";
 import { Cron } from "croner";
 import { eq, sql } from "drizzle-orm";
 import { integer, sqliteTable, text as column } from "drizzle-orm/sqlite-core";

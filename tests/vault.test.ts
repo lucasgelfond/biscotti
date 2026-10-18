@@ -1,17 +1,16 @@
-import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { boot, toolCalls } from "./support.ts";
 
-// The secrets plugin: the owner fills a one-time form, and the agent reads the secret back (asking first if marked).
-process.env.SECRETS_KEY = randomBytes(32).toString("hex");
-const biscotti = boot(["secrets/sqlite"]);
+// The vault: the owner fills a one-time form, and the agent reads the secret back (asking first if marked).
+const biscotti = boot([]);
 
 const formLink = (sent: string[]) => sent.join("\n").match(/http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}/)?.[0];
 
 test("saves a login through a one-time form and fills it back in", async () => {
-  const { say, sent, db } = await biscotti;
+  const { say, sent, db, dir } = await biscotti;
 
-  await say("I want to save my Delta login so you can book tickets. Send me the form.");
+  await say("I want to save my Delta login so you can book flights. Send me the form.");
   const link = formLink(sent)!;
   const page = await (await fetch(link)).text();
   // The agent names the fields; the password goes in the one that says so, the username in the rest.
@@ -24,12 +23,12 @@ test("saves a login through a one-time form and fills it back in", async () => {
   await expect.poll(() => sent.length, { timeout: 60_000 }).toBeGreaterThan(before);
   await say("Look up my Delta login and tell me just the username it's under.");
 
-  const stored = db.$client.prepare("SELECT data FROM secrets").get() as { data: Buffer };
+  const onDisk = readFileSync(`${dir}/biscotti.db`);
   expect(fields.some((f) => /pass/i.test(f))).toBe(true);
   expect(saved.status).toBe(200);
   expect(reused.status).toBe(404);
-  expect(stored.data.toString("latin1")).not.toContain("hunter2");
-  expect(toolCalls(db).flat()).toContain("mcp__biscotti__secret_get");
+  expect(onDisk.includes("hunter2")).toBe(false);
+  expect(toolCalls(db).flat()).toContain("mcp__biscotti__vault_get");
   expect(sent.join("\n")).toContain("owner@example.com");
 });
 

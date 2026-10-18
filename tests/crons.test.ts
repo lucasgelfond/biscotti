@@ -5,7 +5,7 @@ const TIMEZONE = "America/New_York";
 type Wake = { label: string; when: string; prompt: string };
 
 test("turns 'remind me every Monday at 8pm' into a weekly wake", async () => {
-  const biscotti = await boot(["wakes"]);
+  const biscotti = await boot([]);
 
   await biscotti.say("Remind me every Monday at 8pm to call Mom.");
 
@@ -17,7 +17,7 @@ test("turns 'remind me every Monday at 8pm' into a weekly wake", async () => {
 
 test("texts a reminder when a one-time wake comes due, then removes it", async () => {
   process.env.WAKE_CHECK_MS = "500";
-  const biscotti = await boot(["wakes"]);
+  const biscotti = await boot([]);
   const inTwoSeconds = new Date(Date.now() + 2000).toLocaleString("sv-SE", { timeZone: TIMEZONE }).replace(" ", "T");
   biscotti.db.$client
     .prepare("INSERT INTO wakes (label, \"when\", prompt, created_at) VALUES (?, ?, ?, ?)")

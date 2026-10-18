@@ -1,5 +1,5 @@
 import { defineTool, type FileEntry } from "@earendil-works/pi-coding-agent";
-import Database from "better-sqlite3";
+import Database from "better-sqlite3-multiple-ciphers";
 import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
@@ -9,8 +9,18 @@ import { memories, transcripts } from "./schema.ts";
 
 // Keyword search (FTS5) over transcripts and saved facts; Recall plugins' rankings are fused in by reciprocal rank.
 
-export function openDb(path: string) {
-  const db = drizzle(new Database(path));
+// Encrypted at rest with `key` (SQLite3 Multiple Ciphers). A database from before encryption is encrypted in place.
+export function openDb(path: string, key: string) {
+  let sqlite = new Database(path);
+  sqlite.pragma(`key='${key}'`);
+  try {
+    sqlite.prepare("SELECT count(*) FROM sqlite_master").get();
+  } catch {
+    sqlite.close();
+    sqlite = new Database(path);
+    sqlite.pragma(`rekey='${key}'`);
+  }
+  const db = drizzle(sqlite);
   migrate(db, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
   return db;
 }

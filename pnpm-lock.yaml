@@ -34,9 +34,12 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.32.1
         version: 1.32.1(zod@4.6.7)
-      better-sqlite3:
+      better-sqlite3-multiple-ciphers:
         specifier: 13.0.3
         version: 13.0.3
+      croner:
+        specifier: 10.0.1
+        version: 10.0.1
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
@@ -86,6 +89,21 @@ importers:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+
+  plugins/github:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+
+  plugins/google:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
 
   plugins/secrets/sqlite:
     dependencies:
@@ -1275,6 +1293,10 @@ packages:
 
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
+
+  better-sqlite3-multiple-ciphers@13.0.3:
+    resolution: {integrity: sha512-UYabM82r1J84TLWc/SszoHs6XopWpl/2HCg3Nui1JUaFXg/VLswzkPowYiRhK/4CftI8dgtikwyZQecMldrGxQ==}
+    engines: {node: '>=22'}
 
   better-sqlite3@13.0.3:
     resolution: {integrity: sha512-RbOBxmLBG8uvFUc15X9+9SFemKcQ0WBuISBVkpuiaUB2qblC8UWlHEjdWVoZ8AdhSwmoEgsiXKfopX0CQxaACQ==}
@@ -3469,9 +3491,14 @@ snapshots:
 
   base64-js@1.5.1: {}
 
+  better-sqlite3-multiple-ciphers@13.0.3:
+    dependencies:
+      node-addon-api: 8.9.2
+
   better-sqlite3@13.0.3:
     dependencies:
       node-addon-api: 8.9.2
+    optional: true
 
   bignumber.js@9.3.1: {}
 

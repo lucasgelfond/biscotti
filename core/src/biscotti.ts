@@ -3,10 +3,12 @@ import type { AddressInfo } from "node:net";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createAgent } from "./agent.ts";
+import crons from "./crons.ts";
 import { createGate } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import type { Channel, Context, Plugin } from "./plugin.ts";
 import { SLOTS, taskTool, taskVms } from "./tasks.ts";
+import vault from "./vault.ts";
 
 
 function env(name: string) {
@@ -18,8 +20,9 @@ function env(name: string) {
 type Message = { text: string; react(emoji: string): Promise<unknown> };
 
 export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: number }) {
-  const { plugins, dir } = opts;
-  const db = openDb(`${dir}/biscotti.db`);
+  const { dir } = opts;
+  const plugins: Plugin[] = [crons, vault, ...opts.plugins];
+  const db = openDb(`${dir}/biscotti.db`, env("DB_KEY"));
   const gate = createGate({
     gatewayKey: env("AI_GATEWAY_API_KEY"),
     models: { main: env("MODEL"), task: env("TASK_MODEL") },

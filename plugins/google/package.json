@@ -1,5 +1,5 @@
 {
-  "name": "@biscotti/secrets-sqlite",
+  "name": "@biscotti/google",
   "private": true,
   "type": "module",
   "dependencies": {

@@ -1,5 +1,5 @@
 {
-  "name": "@biscotti/connectors-executor",
+  "name": "@biscotti/github",
   "private": true,
   "type": "module",
   "dependencies": {
