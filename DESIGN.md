@@ -221,6 +221,15 @@ Each step ends with something you can check.
 - Owner pairing is the installer's job (above). Until then `OWNER` is set by hand from the sender ID the
   agent logs.
 
+- Backlog (ideas from comparing with Instinct):
+  - **Wakes:** scheduled prompts ("remind me at 5") and event subscriptions (new mail matching X, calendar
+    changes), so the agent can act without being texted first.
+  - **`vault_request`:** a one-time web form for a secret the agent needs, so secrets never travel over iMessage.
+  - **Derived fill fields:** `totp` (fill the current 2FA code) and card expiry as MM/YY; fill into digit boxes and
+    `<select>`s.
+  - **Task screenshots as attachments** that travel with the task report to the owner's phone.
+  - Per-site browsing notes the agent records and reuses; email sender-authenticity (SPF/DKIM/DMARC) shown with
+    untrusted content.
 - From the Open Instinct review (`docs/lit-review/open-instinct.md`):
   - Hash-bind approvals to the exact call (tool + args, TTL, single use, owner 1:1 thread only).
   - Filter which tools agents can see, in addition to gating calls.
