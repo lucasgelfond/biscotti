@@ -18,6 +18,8 @@
       Type = "oneshot";
       RemainAfterExit = true;
       TimeoutStartSec = "infinity";
+      Restart = "on-failure";
+      RestartSec = 30;
     };
     script = ''
       STATE=/var/lib/biscotti
@@ -45,6 +47,8 @@
       # The installer picks a free name, so it can show the Google redirect URI upfront.
       set_default TS_HOSTNAME biscotti
 
+      # A Pi has no clock battery: until NTP sets the time, every TLS certificate looks invalid.
+      until [ "$(timedatectl show -p NTPSynchronized --value)" = yes ]; do sleep 2; done
       docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
       notify() { docker run --rm --network host --env-file "$ENV" biscotti/agent node plugins/channels/spectrum/notify.ts "$1" || true; }
 
