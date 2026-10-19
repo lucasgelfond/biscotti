@@ -1,6 +1,6 @@
 # Brings biscotti up, or up to date, on every boot (a no-op once done): the installer's settings, generated secrets,
 # Tailscale, the services for the plugins biscotti.json names, and the task VM snapshot. Texts the owner when they
-# need to act and when biscotti is ready.
+# need to act, and leaves the agent a text for when biscotti is ready.
 { pkgs, repo, firecracker, faultAll, ... }:
 {
   systemd.tmpfiles.rules = [
@@ -85,9 +85,9 @@
         [ -z "$huge" ] || echo "    environment: { UFFD_HANDLER: ${faultAll}/bin/fault-all }"
         [ -z "$huge" ] || echo "    devices: [ /dev/userfaultfd ]"
       } > "$STATE/compose.plugins.yaml"
-      # Texted before the agent starts: a second Photon connection takes the agent's incoming messages away.
+      # The agent texts it once it's listening (from here, a second Photon connection would take its messages away).
       if [ ! -f "$STATE/ready" ]; then
-        notify "I'm all set up. Text me anything!"
+        echo "I'm all set up. Text me anything!" > "$STATE/data/welcome"
         touch "$STATE/ready"
       fi
       docker compose --env-file "$ENV" -f ${repo}/core/host/compose.yaml -f "$STATE/compose.plugins.yaml" up -d --build --remove-orphans

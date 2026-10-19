@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { start } from "./biscotti.ts";
 import type { Plugin } from "./plugin.ts";
 
@@ -8,6 +8,12 @@ const plugins: Plugin[] = await Promise.all(
   (config.plugins as string[]).map(async (name) => (await import(`../../plugins/${name}/index.ts`)).default),
 );
 
-const { channel, handle } = await start({ plugins, dir: process.env.DATA_DIR ?? "/data", gatePort: GATE_PORT });
+const dir = process.env.DATA_DIR ?? "/data";
+const { channel, handle } = await start({ plugins, dir, gatePort: GATE_PORT });
+// Setup leaves a first text for the owner, sent once biscotti can answer.
+if (existsSync(`${dir}/welcome`)) {
+  await channel.send({ text: readFileSync(`${dir}/welcome`, "utf8").trim() });
+  rmSync(`${dir}/welcome`);
+}
 // Not awaited: a message mid-reply steers it.
 for await (const message of channel.messages) void handle(message);
