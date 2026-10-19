@@ -1,7 +1,7 @@
 # Brings biscotti up, or up to date, on every boot (a no-op once done): the installer's settings, generated secrets,
 # Tailscale, the services for the plugins biscotti.json names, and the task VM snapshot. Texts the owner when they
 # need to act, and leaves the agent a text for when biscotti is ready.
-{ pkgs, repo, firecracker, faultAll, ... }:
+{ pkgs, repo, firecracker, faultAll, version, ... }:
 {
   systemd.tmpfiles.rules = [
     "d /var/lib/biscotti 0700 root root -"
@@ -99,7 +99,10 @@
       if [ ! -f "$STATE/ready" ]; then
         echo "I'm all set up. Text me anything!" > "$STATE/data/welcome"
         touch "$STATE/ready"
+      elif [ "$(cat "$STATE/version" 2>/dev/null)" != ${version} ]; then
+        echo "I updated myself to biscotti v${version}. Your memory and settings are as they were." > "$STATE/data/welcome"
       fi
+      echo ${version} > "$STATE/version"
       docker compose --env-file "$ENV" -f ${repo}/core/host/compose.yaml -f "$STATE/compose.plugins.yaml" up -d --build --remove-orphans
 
     '';
