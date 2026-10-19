@@ -25,7 +25,7 @@
     <summary>Examples</summary>
     <div class="examples">
       <figure><img src="img/examples/email.gif" width="360" alt="Asking when the landlord last fixed the AC; biscotti answers from Gmail" loading="lazy" /><figcaption>Email</figcaption></figure>
-      <figure><img src="img/examples/flights.gif" width="360" alt="Asking about JFK to SFO flights; biscotti opens Alaska's seat map in a task VM and reports the best window seats" loading="lazy" /><figcaption>Flights / Computer Use</figcaption></figure>
+      <figure><img src="img/examples/computer-use.gif" width="360" alt="Asking about JFK to SFO flights; biscotti opens Alaska's seat map in a task VM and reports the best window seats" loading="lazy" /><figcaption>Flights / Computer Use</figcaption></figure>
       <figure><img src="img/examples/reminders.gif" width="360" alt="Asking for a reminder every Sunday at noon to call mom; biscotti schedules it" loading="lazy" /><figcaption>Reminders and recurring jobs</figcaption></figure>
     </div>
   </details>
