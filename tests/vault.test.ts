@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
 import { expect, test } from "vitest";
 import { fill, totp } from "../core/src/vault.ts";
@@ -75,7 +78,7 @@ test.skipIf(!existsSync(CHROME))("types a login and a card's expiry month into t
   const page = await chrome(`<input aria-label="Email" autofocus value="old@example.com"><input type="password" aria-label="Password">
 <select aria-label="Month"><option>01</option><option>07</option><option>12</option></select>`, 9341);
 
-  const into = await fill(page.url, ["ada@example.com", "hunter2-biscotti", "7"]);
+  const into = await fill(page.url, () => ["ada@example.com", "hunter2-biscotti", "7"]);
   const title = await page.title();
   page.close();
 
@@ -86,8 +89,57 @@ test.skipIf(!existsSync(CHROME))("types a login and a card's expiry month into t
 test.skipIf(!existsSync(CHROME))("refuses to type when no input is focused", async () => {
   const page = await chrome(`<input aria-label="Email">`, 9342);
 
-  const filled = fill(page.url, ["hunter2-biscotti"]);
+  const filled = fill(page.url, () => ["hunter2-biscotti"]);
 
   await expect(filled).rejects.toThrow("click the input first");
   page.close();
+});
+
+// One server, reached as two sites (127.0.0.1 and localhost), so a page can frame the other site. `pages` gets the
+// frame site's URL.
+async function sites(pages: (frame: string) => Record<string, string>) {
+  let routes: Record<string, string> = {};
+  const server = createServer((req, res) => res.writeHead(200, { "Content-Type": "text/html" }).end(routes[req.url!] ?? "")).listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as AddressInfo).port;
+  routes = pages(`http://localhost:${port}`);
+  return { page: `127.0.0.1:${port}`, frame: `localhost:${port}`, close: () => server.close() };
+}
+
+// A headless Chrome on `url`, given a moment for its frames to load and take focus.
+async function chromeAt(url: string, port: number) {
+  const proc = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${newDataDir()}`, url], { stdio: "ignore" });
+  const devtools = `http://127.0.0.1:${port}`;
+  await expect.poll(() => fetch(`${devtools}/json/version`).then((r) => r.ok, () => false), { timeout: 15_000 }).toBe(true);
+  await new Promise((r) => setTimeout(r, 1500));
+  return { url: devtools, close: () => proc.kill() };
+}
+
+test.skipIf(!existsSync(CHROME))("asks with the site typing would go to, naming a frame's own site, and types nothing on a no", async () => {
+  const server = await sites((frame) => ({
+    "/": `<input aria-label="Card"><iframe src="${frame}/card"></iframe><script>document.querySelector("iframe").onload = (e) => e.target.focus()</script>`,
+    "/card": "<input>",
+  }));
+  const page = await chromeAt(`http://${server.page}/`, 9343);
+  const asked: string[] = [];
+
+  const into = await fill(page.url, () => ["4111111111111111"], async (where) => (asked.push(where), false));
+  page.close();
+  server.close();
+
+  expect(asked).toEqual([`${server.page}, in a frame from ${server.frame}`]);
+  expect(into).toBeUndefined();
+});
+
+test.skipIf(!existsSync(CHROME))("stops when focus moves to another site after the approval", async () => {
+  const server = await sites((frame) => ({ "/": `<input aria-label="Email" autofocus><iframe src="${frame}/other"></iframe>`, "/other": "<input>" }));
+  const page = await chromeAt(`http://${server.page}/`, 9344);
+  const asked: string[] = [];
+
+  const filled = fill(page.url, () => ["ada@example.com", "hunter2-biscotti"], async (where) => (asked.push(where), true));
+
+  await expect(filled).rejects.toThrow(`Stopped after 1 field(s): typing would now go to ${server.page}, in a frame from ${server.frame}`);
+  expect(asked).toEqual([server.page]);
+  page.close();
+  server.close();
 });

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { runAgent } from "./agent.ts";
 import crons from "./crons.ts";
-import { createGate, LOCK } from "./gate.ts";
+import { createGate, LOCKS } from "./gate.ts";
 import { memoryTools, openDb, searchableText } from "./memory.ts";
 import { localTools, text, type Channel, type Context, type LocalTool, type Plugin, type TaskOptions } from "./plugin.ts";
 import { transcripts } from "./schema.ts";
@@ -119,7 +119,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
 
   // A link on its own line goes as its own message, so it expands into a preview.
   async function send(reply: string) {
-    const lines = reply.replaceAll(LOCK, "").split("\n");
+    const lines = reply.replace(LOCKS, "").split("\n");
     const isLink = (line: string) => /^https?:\/\/\S+$/.test(line.trim());
     const body = lines.filter((l) => !isLink(l)).join("\n").trim();
     if (body) await channel.send({ text: body });

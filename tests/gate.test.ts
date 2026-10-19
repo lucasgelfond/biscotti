@@ -6,7 +6,7 @@ import { once } from "node:events";
 import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createGate } from "../core/src/gate.ts";
-import { boot } from "./support.ts";
+import { approval, boot } from "./support.ts";
 
 async function mcp(url: string) {
   const client = new Client({ name: "test", version: "0" });
@@ -80,7 +80,7 @@ test("asks the owner before a tool that needs a yes, and goes ahead on their yes
 
   const replied = biscotti.say("Send a postcard to Grandma (her address is 12 Elm St, Springfield) saying we miss her. Go ahead, use send_postcard.");
   await expect.poll(() => biscotti.sent.join("\n"), { timeout: 60_000 }).toContain("Send a postcard to");
-  await biscotti.say("yes");
+  await biscotti.say(approval(biscotti.sent));
   await replied;
 
   expect(sent.join("\n")).toMatch(/grandma/i);
@@ -118,4 +118,27 @@ test("gives task VMs only the tools plugins allow them, and only when addressed 
 
   expect(names).toEqual(["web_search"]);
   expect(rebound).toBe(403);
+});
+
+test("approves only on a yes naming the question's code, and declines on a no", async () => {
+  const texts: string[] = [];
+  const gate = createGate({ llm: { url: "http://127.0.0.1:1", key: "unused" }, models: {}, send: async (t) => void texts.push(t) });
+  const first = gate.ask("Fill the Visa card into delta.com?");
+  const code = texts[0].match(/"yes (\d{3})"/)![1];
+  const wrong = code === "999" ? "998" : "999";
+
+  const bareYes = gate.answer("ok");
+  const otherCode = gate.answer(`yes ${wrong}`);
+  const chatter = gate.answer("ok thanks, and what's the weather?");
+  const approved = gate.answer(`Yes ${code}`);
+  const second = gate.ask("Send an email to Sam?");
+  const declined = gate.answer("no");
+  const nothingWaiting = gate.answer(`yes ${code}`);
+  const results = [bareYes, otherCode, chatter, approved, declined, nothingWaiting];
+
+  expect(results).toEqual([true, true, false, true, true, true]);
+  expect(await first).toBe(true);
+  expect(await second).toBe(false);
+  expect(texts[1]).toContain(`reply "yes ${code}"`);
+  expect(texts[2]).toContain(`Nothing is waiting on ${wrong}`);
 });

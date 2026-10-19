@@ -2,7 +2,8 @@ import type { Channel, Plugin } from "@biscotti/core";
 import { attachment, Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 
-// iMessage through Photon's Spectrum. Only the owner's texts come through.
+// iMessage through Photon's Spectrum. Only the owner's texts in their one-on-one chat come through: what they say in
+// a group chat is meant for the others there, never for biscotti (or one of its questions).
 export async function connect(env: (name: string) => string): Promise<Channel & { close(): Promise<void> }> {
   const app = await Spectrum({
     projectId: env("SPECTRUM_PROJECT_ID"),
@@ -14,10 +15,11 @@ export async function connect(env: (name: string) => string): Promise<Channel & 
   const space = await im.space.create(await im.user(owner));
 
   async function* messages() {
-    for await (const [, message] of app.messages) {
+    for await (const [chat, message] of app.messages) {
       if (message.direction === "outbound" || message.content.type !== "text") continue;
-      if (message.sender?.id !== owner) {
-        console.warn(`ignoring message from ${message.sender?.id}`);
+      const group = (chat as { type?: string }).type === "group" || chat.id.includes(";+;");
+      if (message.sender?.id !== owner || group) {
+        console.warn(`ignoring message from ${message.sender?.id}${group ? " in a group chat" : ""}`);
         continue;
       }
       yield { text: message.content.text, react: (emoji: string) => message.react(emoji) };

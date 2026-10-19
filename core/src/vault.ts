@@ -10,8 +10,11 @@ import { vault } from "./schema.ts";
 
 const PORT = 4791;
 const FORM_TTL_MS = 30 * 60_000;
-// Fields that identify rather than unlock: shown to the agent, never scrubbed.
-const PUBLIC = /user|e-?mail|login|name|exp|zip|postal|address|phone/i;
+// Fields that identify rather than unlock (shown to the agent, never scrubbed), unless the name says otherwise, as
+// "login password" or "account number" do.
+const IDENTIFYING = /user|e-?mail|login|name|exp|zip|postal|address|phone/i;
+const SECRET = /pass|pin\b|cvc|cvv|code|secret|token|key|totp|number|ssn|account|security|answer/i;
+const isPublic = (field: string) => IDENTIFYING.test(field) && !SECRET.test(field);
 // Shorter values (a ZIP, a month) would scrub ordinary text.
 const MIN_SCRUBBED = 6;
 
@@ -32,7 +35,7 @@ export function secrets(db: Db) {
     .select()
     .from(vault)
     .all()
-    .flatMap((row) => Object.entries(row.value).filter(([field, value]) => !PUBLIC.test(field) && value.length >= MIN_SCRUBBED).map(([field, value]) => ({ label: `${row.name}.${field}`, value })));
+    .flatMap((row) => Object.entries(row.value).filter(([field, value]) => !isPublic(field) && value.length >= MIN_SCRUBBED).map(([field, value]) => ({ label: `${row.name}.${field}`, value })));
 }
 
 // The current code for an authenticator setup key (base32, or an otpauth:// URI), per RFC 6238.
@@ -60,9 +63,30 @@ async function devtools(url: string) {
       pending.set(++id, (msg) => (msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result)));
       ws.send(JSON.stringify({ id, method, params }));
     });
-  const evaluate = async (expression: string) => (await send("Runtime.evaluate", { expression, returnByValue: true })).result.value;
-  return { send, evaluate, close: () => ws.close() };
+  // Scripts run in a world of their own, where the page's scripts can't change what they see (a faked hasFocus).
+  const { frameTree } = await send("Page.getFrameTree");
+  const { executionContextId } = await send("Page.createIsolatedWorld", { frameId: frameTree.frame.id, worldName: "biscotti" });
+  const run = (expression: string, returnByValue = true) => send("Runtime.evaluate", { expression, contextId: executionContextId, returnByValue });
+  const evaluate = async (expression: string) => (await run(expression)).result.value;
+  // Where typing would go: the tab's site, and the frame's when the focused field is in one.
+  async function where(targets: Target[]) {
+    const { frameTree } = await send("Page.getFrameTree");
+    const page = site(frameTree.frame.url);
+    const { result } = await run("document.activeElement", false);
+    const { node } = result.objectId ? await send("DOM.describeNode", { objectId: result.objectId }) : { node: undefined };
+    if (node?.nodeName !== "IFRAME") return page;
+    const url = findFrame(frameTree, node.frameId)?.url ?? targets.find((t) => t.id === node.frameId)?.url;
+    if (!url) throw new Error("The focused field is in a frame whose site can't be told.");
+    return site(url) === page ? page : `${page}, in a frame from ${site(url)}`;
+  }
+  return { send, evaluate, where, close: () => ws.close() };
 }
+
+type Target = { id: string; type: string; url: string; webSocketDebuggerUrl: string };
+type Frame = { frame: { id: string; url: string }; childFrames?: Frame[] };
+const site = (url: string) => new URL(url).host || new URL(url).protocol;
+const findFrame = (tree: Frame, id: string): Frame["frame"] | undefined =>
+  tree.frame.id === id ? tree.frame : tree.childFrames?.map((c) => findFrame(c, id)).find(Boolean);
 
 const FOCUSED = `(() => {
   const el = document.activeElement;
@@ -85,18 +109,23 @@ const SELECT = (value: string) => `((value) => {
   return true;
 })(${JSON.stringify(value)})`;
 
-// Types values into the focused page's focused input, Tab between each, over Chrome DevTools at `browser`. Returns
-// what each went into, never the values.
-export async function fill(browser: string, values: string[]) {
-  const pages = ((await (await fetch(`${browser}/json/list`)).json()) as { type: string; webSocketDebuggerUrl: string }[]).filter((t) => t.type === "page");
-  const sessions = await Promise.all(pages.map((p) => devtools(p.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, browser.replace(/^http/, "ws")))));
+// Types values into the focused page's focused input, Tab between each, over Chrome DevTools at `browser`. `approve`
+// is asked first with the site typing would go to (values are read after it, so a 2FA code is fresh); every value goes
+// there or none does. Returns what each went into, never the values.
+export async function fill(browser: string, values: () => string[], approve: (where: string) => Promise<boolean> = async () => true) {
+  const targets = (await (await fetch(`${browser}/json/list`)).json()) as Target[];
+  const sessions = await Promise.all(targets.filter((t) => t.type === "page").map((p) => devtools(p.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, browser.replace(/^http/, "ws")))));
   try {
     const focused = await Promise.all(sessions.map((s) => s.evaluate("document.hasFocus()")));
-    const page = sessions[focused.indexOf(true)] ?? sessions[0];
-    if (!page) throw new Error("No page is open.");
+    const page = sessions[focused.indexOf(true)] ?? (sessions.length === 1 ? sessions[0] : undefined);
+    if (!page) throw new Error(sessions.length ? "No tab has focus: click the input first." : "No page is open.");
+    const approved = await page.where(targets);
+    if (!(await approve(approved))) return undefined;
     const into: string[] = [];
-    for (const [i, value] of values.entries()) {
+    for (const [i, value] of values().entries()) {
       if (i > 0) for (const type of ["keyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+      const now = await page.where(targets);
+      if (now !== approved) throw new Error(`Stopped after ${into.length} field(s): typing would now go to ${now}, not ${approved} as approved. Fill fields on different sites in separate calls.`);
       const el = await page.evaluate(FOCUSED);
       if (!el?.editable) throw new Error(`Nothing to type into is focused${i ? ` after ${into.length} field(s)` : ""}: click the input first.`);
       if (el.tag === "SELECT") {
@@ -151,7 +180,7 @@ link; if the user pastes a secret in chat anyway, \`vault_save\` it.`,
       async run() {
         const rows = db.select().from(vault).orderBy(vault.name).all();
         if (!rows.length) return text("No secrets saved.");
-        const field = (f: string, value = "") => (PUBLIC.test(f) && value ? `${f} (${value})` : f);
+        const field = (f: string, value = "") => (isPublic(f) && value ? `${f} (${value})` : f);
         return text(rows.map((r) => `${r.name}: ${r.fields.map((f) => field(f, r.value[f])).join(", ")}`).join("\n"));
       },
     };
@@ -173,11 +202,11 @@ link; if the user pastes a secret in chat anyway, \`vault_save\` it.`,
         if (!row) return text(`No secret named "${name}".`);
         const missing = (fields as string[]).filter((f) => !row.value[f]);
         if (missing.length) return text(`"${row.name}" has no ${missing.join(", ")}; it has ${row.fields.join(", ")}.`);
-        const question = `A task wants to fill "${row.name}" (${(fields as string[]).join(", ")}) for ${String(why).slice(0, 200)}. Reply yes or no.`;
-        if (!(await ctx.ask(question))) return text("The user declined.");
-        const values = (fields as string[]).map((f) => (f === "totp" ? totp(row.value[f]) : row.value[f]));
+        const approve = (where: string) => ctx.ask(`A task wants to type "${row.name}" (${(fields as string[]).join(", ")}) into ${where}, for ${String(why).slice(0, 200)}. Is ${where} the right site?`);
+        const values = () => (fields as string[]).map((f) => (f === "totp" ? totp(row.value[f]) : row.value[f]));
         try {
-          const into = await fill(`http://10.200.${slot}.2:9223`, values);
+          const into = await fill(`http://10.200.${slot}.2:9223`, values, approve);
+          if (!into) return text("The user declined.");
           return text(`Typed ${(fields as string[]).join(", ")} into: ${into.join(", ")}. Check the page before submitting.`);
         } catch (err) {
           return text(`Couldn't fill: ${(err as Error).message}`);

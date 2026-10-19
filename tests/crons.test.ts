@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { boot } from "./support.ts";
+import { approval, boot } from "./support.ts";
 
 const TIMEZONE = "America/New_York";
 type Wake = { label: string; when: string; prompt: string };
@@ -7,7 +7,10 @@ type Wake = { label: string; when: string; prompt: string };
 test("turns 'remind me every Monday at 8pm' into a weekly wake", async () => {
   const biscotti = await boot([]);
 
-  await biscotti.say("Remind me every Monday at 8pm to call Mom.");
+  const replied = biscotti.say("Remind me every Monday at 8pm to call Mom.");
+  await expect.poll(() => biscotti.sent.join("\n"), { timeout: 60_000 }).toContain("to approve");
+  await biscotti.say(approval(biscotti.sent));
+  await replied;
 
   const saved = biscotti.db.$client.prepare("SELECT * FROM wakes").all() as Wake[];
   expect(saved).toHaveLength(1);
