@@ -41,6 +41,8 @@
       };
     };
 
+    checks.aarch64-linux.pi5-card = nixpkgs.legacyPackages.aarch64-linux.testers.runNixOSTest (import ./nix/tests/pi5-card.nix { inherit specialArgs; });
+
     packages.aarch64-linux.pi5-sd-image = self.nixosConfigurations.pi5.config.system.build.sdImage;
     packages.aarch64-linux.mac-image = self.nixosConfigurations.mac.config.system.build.images.qemu-efi;
     # A ready AMI, for uploading with `aws ec2 import-snapshot` instead of the user-data route.
