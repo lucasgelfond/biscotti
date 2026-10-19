@@ -89,7 +89,7 @@ in
 
     # Setup moves the installer's settings off the card.
     pi.wait_until_succeeds("grep -q '^OWNER=+15555550100' /var/lib/biscotti/.env", timeout=180)
-    pi.succeed("grep -q '^DB_KEY=' /var/lib/biscotti/.env")
+    pi.wait_until_succeeds("grep -q '^DB_KEY=' /var/lib/biscotti/.env", timeout=60)
     pi.fail("test -e /boot/firmware/biscotti.env")
     pi.succeed("test -f /var/lib/biscotti/biscotti.json")
     pi.succeed("test -s /boot/firmware/authorized_keys")
