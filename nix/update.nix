@@ -4,7 +4,8 @@
 {
   systemd.services.biscotti-upgrade = {
     description = "biscotti update to the newest release";
-    path = [ config.system.build.nixos-rebuild config.nix.package pkgs.git pkgs.coreutils pkgs.gnused ];
+    # What NixOS's own auto-upgrade gives nixos-rebuild, plus systemd for the switch.
+    path = [ config.system.build.nixos-rebuild config.nix.package config.systemd.package ] ++ (with pkgs; [ coreutils gnused gnutar xz gzip git ]);
     # A switch mustn't restart the update that's running it.
     restartIfChanged = false;
     unitConfig.X-StopOnRemoval = false;
