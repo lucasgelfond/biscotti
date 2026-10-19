@@ -5,7 +5,7 @@ import Security
 /// images: the Pi reads these from its boot partition on first boot (Wi-Fi, SSH key) and moves the rest into its
 /// private settings.
 struct Settings: Equatable {
-    var wifiName = Settings.knownNetworks().first ?? ""
+    var wifiName = Settings.knownNetworks().first { !Settings.is5GHz($0) } ?? Settings.knownNetworks().first ?? ""
     var wifiPassword = ""
     var wifiCountry = Locale.current.region?.identifier ?? "US"
     var sshKey = Settings.firstSSHKey()
@@ -31,7 +31,12 @@ struct Settings: Equatable {
         (id: "embedding", name: "Semantic memory"),
     ]
 
-    var hasWifi: Bool { !wifiName.isEmpty && !wifiPassword.isEmpty }
+    var hasWifi: Bool { !wifiName.isEmpty && !wifiPassword.isEmpty && !Settings.is5GHz(wifiName) }
+
+    /// The Pi can't join some 5 GHz channels on its first boot, so a network named like a 5 GHz one is refused.
+    static func is5GHz(_ name: String) -> Bool {
+        name.range(of: #"(^|[^0-9])5(\.0)? ?(G|GHz)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
     var hasOwner: Bool { !phone.isEmpty }
     var hasPhoton: Bool { !photonID.isEmpty && !photonSecret.isEmpty }
     var hasAI: Bool { ![llmBaseURL, llmKey, model].contains { $0.isEmpty } }
