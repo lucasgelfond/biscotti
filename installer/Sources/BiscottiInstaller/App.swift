@@ -296,6 +296,9 @@ struct InstallerView: View {
                         .help("macOS will ask for your password")
                 }
             }
+            if !settings.wifiPassword.isEmpty && !Settings.validWifiPassword(settings.wifiPassword) {
+                Text("Wi-Fi passwords are 8 to 63 characters.").font(.callout).foregroundStyle(.red)
+            }
             field("Country code", $settings.wifiCountry)
             if Settings.is5GHz(settings.wifiName) {
                 Text("This looks like a 5 GHz network, which the Pi can't join on its first boot. Choose its 2.4 GHz network; you can switch later.")
