@@ -2,8 +2,7 @@ import type { Channel, Plugin } from "@biscotti/core";
 import { attachment, Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 
-// iMessage through Photon's Spectrum. Only the owner's texts in their one-on-one chat come through: what they say in
-// a group chat is meant for the others there, never for biscotti (or one of its questions).
+// iMessage through Photon's Spectrum. Only the owner's one-on-one texts come through, never their group chats.
 export async function connect(env: (name: string) => string): Promise<Channel & { close(): Promise<void> }> {
   const app = await Spectrum({
     projectId: env("SPECTRUM_PROJECT_ID"),

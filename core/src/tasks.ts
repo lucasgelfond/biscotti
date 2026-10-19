@@ -6,8 +6,8 @@ import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import { text, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
 
-// Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces). One VM is
-// always restored ahead of time. VMs are restored by the vms service (core/src/vms-main.ts), in a container of its own.
+// Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces), with one always
+// restored ahead of time.
 
 const TASK_TIMEOUT_MS = 30 * 60_000;
 // A task that goes quiet this long is stuck, whatever its time limit.
@@ -75,13 +75,11 @@ export function taskVms(restore: (slot: number) => Promise<Vm>) {
   return { run };
 }
 
-// Firecracker in the slot's network namespace. With `uid`, as that user (the slot's own) with no capabilities, like
-// Firecracker's jailer: a VM that broke out would hold nothing, not even another slot's VM.
+// Firecracker in the slot's namespace; with `uid`, as the slot's own user with no capabilities, like Firecracker's jailer.
 export async function restore(vmDir: string, firecracker: string, slot: number, uid?: number): Promise<Vm> {
   const sock = `/tmp/fc-${slot}.sock`;
   rmSync(sock, { force: true });
   const as = uid ? ["setpriv", `--reuid=${uid}`, `--regid=${uid}`, `--groups=${statSync("/dev/kvm").gid}`, "--inh-caps=-all", "--no-new-privs", "--"] : [];
-  // No secrets from our environment for Firecracker: only the PATH.
   const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, ...as, firecracker, "--api-sock", sock], { stdio: "ignore", env: { PATH: process.env.PATH } });
   // A snapshot on huge pages (for nested virtualization, where every 4K page first touched is slow) can't be loaded
   // from the file directly: the handler copies it all in at the first fault.

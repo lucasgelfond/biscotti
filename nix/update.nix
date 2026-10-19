@@ -1,4 +1,4 @@
-# Weekly, the newest release tag (vX.Y.Z), when it's newer than what's running: the system is rebuilt in place, and
+# Every 6 hours, the newest release tag (vX.Y.Z), when it's newer than what's running: the system is rebuilt in place, and
 # everything in /var/lib/biscotti (memory, the vault, settings) stays. Setup texts the owner once the new version is up.
 { config, pkgs, version, target, ... }:
 {
@@ -9,7 +9,7 @@
     restartIfChanged = false;
     unitConfig.X-StopOnRemoval = false;
     serviceConfig.Type = "oneshot";
-    startAt = "Sun 04:00";
+    startAt = "*-*-* 00/6:00:00";
     script = ''
       latest=$(git ls-remote --tags --refs https://github.com/lucasgelfond/biscotti 'v*' \
         | sed -n 's|.*refs/tags/v\([0-9]*\.[0-9]*\.[0-9]*\)$|\1|p' | sort -V | tail -1)
@@ -18,6 +18,6 @@
       nixos-rebuild switch --flake "github:lucasgelfond/biscotti/v$latest#${target}"
     '';
   };
-  # Run at the next boot when the Pi was off on Sunday morning.
+  # Run at the next boot when the Pi was off at the time.
   systemd.timers.biscotti-upgrade.timerConfig.Persistent = true;
 }

@@ -5,9 +5,7 @@ import type { Db } from "./memory.ts";
 import { eq } from "drizzle-orm";
 import { vault } from "./schema.ts";
 
-// Logins, cards and licenses in the encrypted database. Entered through one-time forms on the tailnet, made by the gate
-// for password resets and new accounts, and typed into task VMs' pages by the gate: no model ever sees a secret value,
-// and none is ever texted.
+// Logins, cards and licenses. The gate types them into task VMs' pages: no model ever sees a secret, and none is texted.
 
 const PORT = 4791;
 const FORM_TTL_MS = 30 * 60_000;
@@ -166,7 +164,7 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
 
   async tools(ctx) {
     const { db } = ctx;
-    // Every fill asks the owner for now, whatever an entry's `confirm` says.
+    // Every fill asks the owner for now; `confirm` is unused.
     const save = (name: string, value: Record<string, string>) => {
       const row = { name, fields: Object.keys(value), confirm: true, value };
       db.insert(vault).values(row).onConflictDoUpdate({ target: vault.name, set: row }).run();
