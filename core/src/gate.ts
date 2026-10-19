@@ -59,7 +59,7 @@ export function scrub(node: unknown, secrets: { label: string; value: string }[]
 export function createGate(opts: {
   // Any OpenAI-compatible API (AI Gateway, OpenRouter, OpenAI, a local server, …).
   llm: { url: string; key: string };
-  // Model names callers may use (main, task) -> the provider's model ids.
+  // Model names callers may use (main, task, code) -> the provider's model ids.
   models: Record<string, string>;
   send: (text: string) => Promise<void>;
   secrets?: () => { label: string; value: string }[];

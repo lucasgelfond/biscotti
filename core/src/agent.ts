@@ -1,5 +1,5 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer } from "node:http";
 import { connect, createServer as createTcpServer } from "node:net";
 import {
   createAgentSession,
@@ -10,6 +10,7 @@ import {
   SettingsManager,
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
+import { readBody } from "./gate.ts";
 import { searchableText } from "./memory.ts";
 
 // The main agent: one long conversation, compacted by pi. It holds no keys and opens no database: model, tools, the
@@ -135,9 +136,3 @@ export async function runAgent(sockets: string, dir: string) {
 }
 
 const close = (server: { close(cb: () => void): unknown }) => new Promise<void>((resolve) => server.close(() => resolve()));
-
-async function readBody(req: IncomingMessage) {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
-}

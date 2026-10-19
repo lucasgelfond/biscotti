@@ -6,9 +6,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { text, type Context, type LocalTool } from "@biscotti/core";
 
-// Coding tasks without a token in the VM: the gate clones the repo, a task VM works on a copy (a git bundle in, its
-// new commits out), and the gate checks them and, once the owner says yes, pushes a biscotti/ branch and opens a draft
-// pull request. Never merged.
+// Coding tasks with no token in the VM: a git bundle in, its commits out; the gate checks them, asks, pushes a
+// biscotti/ branch and opens a draft pull request. Never merged.
 
 const TIMEOUT_MS = 90 * 60_000;
 const MAX_BUNDLE = 50 * 1024 * 1024;
