@@ -7,7 +7,8 @@ import { promisify } from "node:util";
 import { text, type Context, type LocalTool } from "@biscotti/core";
 
 // Coding tasks without a token in the VM: the gate clones the repo, a task VM works on a copy (a git bundle in, its
-// new commits out), and the gate checks them, pushes a biscotti/ branch and opens a draft pull request. Never merged.
+// new commits out), and the gate checks them and, once the owner says yes, pushes a biscotti/ branch and opens a draft
+// pull request. Never merged.
 
 const TIMEOUT_MS = 90 * 60_000;
 const MAX_BUNDLE = 50 * 1024 * 1024;
@@ -28,17 +29,19 @@ export function codeTask(ctx: Context, token: string): LocalTool {
     return body;
   };
 
-  // The VM's commits: on top of the base, inside the size limit, and touching CI only when the goal is about CI.
-  async function review(dir: string, bundle: Buffer, goal: string) {
+  // The VM's commits: on top of the base, inside the size limit, and nothing under .github/ (a pushed branch runs the
+  // repo's workflows, with its secrets; a changed one would run the VM's code there).
+  async function review(dir: string, bundle: Buffer) {
     if (bundle.length > MAX_BUNDLE) throw new Error(`the commits are ${Math.round(bundle.length / 1e6)} MB, over the limit`);
     writeFileSync(join(dir, "out.bundle"), bundle);
     await git(dir, "fetch", "-q", join(dir, "out.bundle"), "HEAD:refs/heads/biscotti-work");
     await git(dir, "merge-base", "--is-ancestor", "HEAD", "biscotti-work").catch(() => {
       throw new Error("the commits don't build on the checked-out branch");
     });
-    const files = (await git(dir, "diff", "--name-only", "HEAD", "biscotti-work")).split("\n").filter(Boolean);
-    if (files.some((f) => f.startsWith(".github/workflows/")) && !/workflow|\bci\b|github actions/i.test(goal))
-      throw new Error(`the commits change CI workflows (${files.filter((f) => f.startsWith(".github/workflows/")).join(", ")}), which the goal didn't ask for`);
+    // NUL-separated, so a name with unusual characters isn't quoted past the check.
+    const files = (await git(dir, "diff", "--name-only", "-z", "--no-renames", "HEAD", "biscotti-work")).split("\0").filter(Boolean);
+    const github = files.filter((f) => f.toLowerCase().startsWith(".github/"));
+    if (github.length) throw new Error(`the commits change ${github.join(", ")}; biscotti doesn't push changes under .github/, so make those yourself`);
     return { files, stat: (await git(dir, "diff", "--shortstat", "HEAD", "biscotti-work")).trim() };
   }
 
@@ -59,8 +62,11 @@ export function codeTask(ctx: Context, token: string): LocalTool {
     await git(work, "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");
     const result = await ctx.task!(goal, { repo: readFileSync(join(dir, "in.bundle")), model: "code", timeoutMs: TIMEOUT_MS });
     if (!result.bundle) return `Code task on ${repo} made no commits.\n${result.report}`;
-    const { stat } = await review(work, result.bundle, goal);
+    const { files, stat } = await review(work, result.bundle);
     const branch = `biscotti/${goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}-${randomBytes(2).toString("hex")}`;
+    const shown = files.slice(0, 15).join("\n") + (files.length > 15 ? `\n…and ${files.length - 15} more` : "");
+    if (!(await ctx.ask(`Push ${branch} to ${repo} and open a draft pull request? ${stat}:\n${shown}`)))
+      return `Code task on ${repo}: the user declined to push it.\n${result.report}`;
     await git(work, "push", "-q", "origin", `biscotti-work:refs/heads/${branch}`);
     const pr = await openPullRequest(repo, baseBranch, branch, goal, result.report);
     return `Code task on ${repo}: draft pull request ${pr.html_url} (${stat}). Text the user the link; don't merge it.\n${result.report}`;

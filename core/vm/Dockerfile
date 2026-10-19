@@ -21,8 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       xdotool xclip wmctrl chrony socat xz-utils scrot \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 https://github.com/trycua/noVNC.git /opt/noVNC && \
-    git clone --depth 1 https://github.com/novnc/websockify /opt/noVNC/utils/websockify
+ARG NOVNC_COMMIT=ad7012fc021ee785a2877067f5b69ee94c3948c6
+ARG WEBSOCKIFY_COMMIT=3dd228b81ade1ff76a27ad12eed6e78df8c6f8a6
+RUN for r in "trycua/noVNC $NOVNC_COMMIT /opt/noVNC" "novnc/websockify $WEBSOCKIFY_COMMIT /opt/noVNC/utils/websockify"; do \
+      set -- $r && git init -q "$3" && git -C "$3" fetch -q --depth 1 "https://github.com/$1" "$2" && git -C "$3" checkout -q FETCH_HEAD; done
 
 RUN case "$TARGETARCH" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; esac && \
     curl -fsSL "https://github.com/trycua/cua/releases/download/cua-spacesd-v${CUA_SPACESD_VERSION}/cua-spacesd-${a}-unknown-linux-gnu.tar.gz" \

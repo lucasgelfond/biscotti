@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { runAgent } from "./agent.ts";
 import crons from "./crons.ts";
-import { createGate, LOCKS } from "./gate.ts";
+import { createGate, LOCKS, readBody } from "./gate.ts";
 import { memoryTools, openDb, searchableText } from "./memory.ts";
 import { localTools, text, type Channel, type Context, type LocalTool, type Plugin, type TaskOptions } from "./plugin.ts";
 import { transcripts } from "./schema.ts";
@@ -44,7 +44,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
   for (const plugin of plugins) if (plugin.tools) gate.add(await plugin.tools(ctx));
   const recalls = await Promise.all(plugins.flatMap((p) => (p.recall ? [p.recall(ctx)] : [])));
 
-  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot });
+  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot, peer: `10.200.${slot}.2` });
   if (vmDir) vms = taskVms(vmDir, env("FIRECRACKER"));
 
   async function task(goal: string, { model, ...opts }: TaskOptions = {}) {
@@ -68,13 +68,15 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
     },
   };
 
+  // In the link's fragment, which the browser never sends to the server.
+  const vncPassword = () => (existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : "");
   const liveDesktop = process.env.LIVE_DESKTOP_URL ?? (process.env.TAILNET_HOST && `https://${process.env.TAILNET_HOST}`);
   const tasks = vms
     ? [
         taskTool(
           vms,
           (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot),
-          liveDesktop ? (slot) => `${liveDesktop}:${10440 + slot}/vnc.html` : undefined,
+          liveDesktop ? (slot) => `${liveDesktop}:${10440 + slot}/vnc.html#autoconnect=1&password=${vncPassword()}` : undefined,
         ),
       ]
     : [];
@@ -88,15 +90,20 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
     if (req.url === "/prompt") return void res.end(prompt);
     if (req.url !== "/transcript") return gate.handle(req, res);
     if (req.method !== "POST") return void res.end(JSON.stringify(db.select({ entry: transcripts.entry }).from(transcripts).orderBy(transcripts.seq).all().map((r) => r.entry)));
-    readBody(req).then((body) => {
-      const entries = JSON.parse(body) as FileEntry[];
-      if (entries.length) db.insert(transcripts).values(entries.map((entry) => ({ id: entry.id, entry, text: searchableText(entry) }))).onConflictDoNothing().run();
-      res.end();
-    });
+    readBody(req).then(
+      (body) => {
+        const entries = JSON.parse(body) as FileEntry[];
+        if (entries.length) db.insert(transcripts).values(entries.map((entry) => ({ id: entry.id, entry, text: searchableText(entry) }))).onConflictDoNothing().run();
+        res.end();
+      },
+      (err) => res.writeHead(400).end(String(err)),
+    );
   });
   rmSync(`${sockets}/gate.sock`, { force: true });
   await new Promise<void>((resolve) => agentSocket.listen(`${sockets}/gate.sock`, resolve));
-  chmodSync(`${sockets}/gate.sock`, 0o666);
+  // Only the agent's user (uid 1000, in its own container) may connect.
+  if (process.getuid?.() === 0) chownSync(`${sockets}/gate.sock`, 1000, 1000);
+  chmodSync(`${sockets}/gate.sock`, 0o600);
   // In one process (tests, development), the agent runs alongside, and the gate answers on a loopback port too.
   let gateUrl: string | undefined;
   if (opts.agent !== false) {
@@ -155,8 +162,3 @@ function post(socketPath: string, body: string) {
   });
 }
 
-async function readBody(stream: AsyncIterable<unknown>) {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
-}

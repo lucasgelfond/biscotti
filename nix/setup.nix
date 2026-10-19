@@ -6,8 +6,8 @@
   systemd.tmpfiles.rules = [
     "d /var/lib/biscotti 0700 root root -"
     "d /var/lib/biscotti/data 0700 root root -"
-    # The gate's and the agent's sockets; the agent runs as uid 1000.
-    "d /run/biscotti 0755 1000 1000 -"
+    # The gate's and the agent's sockets: only the agent (uid 1000) and root get in.
+    "d /run/biscotti 0700 1000 1000 -"
   ];
 
   systemd.services.biscotti-setup = {
