@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
+import type { createGate } from "./gate.ts";
 import { call } from "./http.ts";
-import { text, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
+import { input, str, text, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces), with one always
 // restored ahead of time.
@@ -155,7 +156,7 @@ export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: strin
     name: "task",
     description:
       "Start a task in a fresh, disposable Linux VM with a desktop, browser, shell and internet, for anything that needs a website, a program or files. Returns right away; the report arrives later as a message starting 'Task report'. The task agent sees only the goal, so make it complete.",
-    input: { type: "object", properties: { goal: { type: "string" } }, required: ["goal"] },
+    input: input({ goal: str() }),
     async run(args) {
       const goal = String(args.goal);
       const running = new Promise<number>((resolve) =>
@@ -168,5 +169,27 @@ export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: strin
       const slot = watch && (await Promise.race([running, new Promise<undefined>((r) => setTimeout(r, 3000))]));
       return text(slot ? `Task started. Its live desktop, only for a user who asks to watch or take over: ${watch(slot)}` : "Task started.");
     },
+  };
+}
+
+// Task VMs for the gate, from the vms service at `socket`: each slot's listener on its link, the `task` plugins get
+// (with a coding task's model routed to its slot), and the task tool, whose reports go to `report`.
+export async function gateTasks(gate: ReturnType<typeof createGate>, socket: string, vmDir: string, report: (goal: string, result: TaskResult) => void) {
+  for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot, peer: `10.200.${slot}.2` });
+  const vms = taskVms(vmService(socket));
+  // The live desktop's password goes in the link's fragment, which the browser never sends to the server.
+  const host = process.env.TAILNET_HOST;
+  const password = () => (existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : "");
+  const watch = host ? (slot: number) => `https://${host}:${10440 + slot}/vnc.html#autoconnect=1&password=${password()}` : undefined;
+  return {
+    async task(goal: string, { model, ...opts }: TaskOptions = {}) {
+      let slot: number | undefined;
+      try {
+        return await vms.run(goal, (s) => ((slot = s), model && gate.route(s, model)), opts);
+      } finally {
+        if (slot) gate.route(slot);
+      }
+    },
+    tool: taskTool(vms, report, watch),
   };
 }

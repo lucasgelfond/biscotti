@@ -3,7 +3,7 @@ import Database from "better-sqlite3-multiple-ciphers";
 import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { localTools, text, type Recall, type Tools } from "./plugin.ts";
+import { input, int, localTools, str, text, type Recall, type Tools } from "./plugin.ts";
 import { memories, transcripts } from "./schema.ts";
 
 // Keyword search (FTS5) over transcripts and saved facts; Recall plugins' rankings are fused in by reciprocal rank.
@@ -34,15 +34,13 @@ const ftsQuery = (s: string) => (s.match(/[\p{L}\p{N}]+/gu) ?? []).map((t) => `"
 const RRF_K = 60;
 const LIMIT = 5;
 
-const string = (description?: string) => ({ type: "string", ...(description && { description }) });
-const input = (properties: Record<string, object>) => ({ type: "object" as const, properties, required: Object.keys(properties) });
 
 export function memoryTools(db: Db, recalls: Recall[]): Tools {
   return localTools([
     {
       name: "remember",
       description: "Save one durable fact about the user (a preference, plan, person, detail) for future conversations.",
-      input: input({ fact: string("One self-contained fact, e.g. 'Lucas parks on level 3, aisle G'.") }),
+      input: input({ fact: str("One self-contained fact, e.g. 'Lucas parks on level 3, aisle G'.") }),
       async run(args) {
         const fact = String(args.fact);
         const [row] = db.insert(memories).values({ content: fact }).returning({ id: memories.id }).all();
@@ -53,7 +51,7 @@ export function memoryTools(db: Db, recalls: Recall[]): Tools {
     {
       name: "recall",
       description: "Search saved facts about the user. Use before answering anything about the user's life, plans or preferences.",
-      input: input({ query: string() }),
+      input: input({ query: str() }),
       async run(args) {
         const query = String(args.query);
         const match = ftsQuery(query);
@@ -72,7 +70,7 @@ export function memoryTools(db: Db, recalls: Recall[]): Tools {
     {
       name: "forget",
       description: "Delete a saved memory by id (from recall), e.g. when the user corrects or retracts it.",
-      input: input({ id: { type: "integer" } }),
+      input: input({ id: int() }),
       async run(args) {
         const id = Number(args.id);
         const deleted = db.delete(memories).where(eq(memories.id, id)).returning({ id: memories.id }).all();
@@ -82,7 +80,7 @@ export function memoryTools(db: Db, recalls: Recall[]): Tools {
     {
       name: "search_transcript",
       description: "Keyword search over the full history of this conversation, including parts summarized away. Use for 'what did I say about…'.",
-      input: input({ query: string() }),
+      input: input({ query: str() }),
       async run(args) {
         const match = ftsQuery(String(args.query));
         const rows = match

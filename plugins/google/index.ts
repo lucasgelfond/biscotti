@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { declined, localTools, text, type Context, type Plugin } from "@biscotti/core";
+import { declined, input, int, list, localTools, optional, str, text, type Context, type Plugin } from "@biscotti/core";
 import { sql } from "drizzle-orm";
 
 // Gmail and Google Calendar over Google's REST APIs, with the owner's own OAuth client. Sending and calendar changes
@@ -102,8 +102,6 @@ function googleApi(ctx: Context) {
   return { call, signInLink, redirectUri };
 }
 
-const str = { type: "string" } as const;
-
 export default {
   prompt: `Gmail and Google Calendar: for anything about the user's mail, schedule, appointments, bills or plans, check
 their inbox (\`gmail_search\`) and calendar (\`calendar_events\`) first, in parallel. Sending and calendar changes ask the
@@ -117,7 +115,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "google_connect",
         description: "Get a link for the user to connect their Google account (Gmail and Calendar). Text them the setup note and the link.",
-        input: { type: "object", properties: {} },
+        input: input(),
         run: async () =>
           text(`Text the user both:
 1. First time connecting this biscotti: in Google Cloud console → APIs & Services → Credentials → their OAuth client, add ${redirectUri} under "Authorized redirect URIs" and save (otherwise Google says the request is invalid / redirect_uri_mismatch).
@@ -126,7 +124,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "gmail_search",
         description: "Search the user's mail with Gmail search syntax (e.g. 'from:amazon newer_than:7d'). Returns id, from, subject, date and snippet.",
-        input: { type: "object", properties: { query: str, max: { type: "integer" } }, required: ["query"] },
+        input: input({ query: str(), max: optional(int()) }),
         async run({ query, max }: Args) {
           const q = new URLSearchParams({ q: String(query), maxResults: String(max ?? 10) });
           const { messages = [] } = await call("GET", `/gmail/v1/users/me/messages?${q}`);
@@ -140,7 +138,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "gmail_read",
         description: "Read one message in full by id (from gmail_search).",
-        input: { type: "object", properties: { id: str }, required: ["id"] },
+        input: input({ id: str() }),
         async run({ id }: Args) {
           const m = await call("GET", `/gmail/v1/users/me/messages/${encodeURIComponent(String(id))}?format=full`);
           return text(`From: ${header(m, "From")}\nTo: ${header(m, "To")}\nDate: ${header(m, "Date")}\nSubject: ${header(m, "Subject")}\n\n${body(m.payload) || m.snippet}`);
@@ -149,7 +147,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "gmail_draft",
         description: "Save a draft email (nothing is sent).",
-        input: { type: "object", properties: { to: str, subject: str, body: str }, required: ["to", "subject", "body"] },
+        input: input({ to: str(), subject: str(), body: str() }),
         async run({ to, subject, body }: Args) {
           const draft = await call("POST", "/gmail/v1/users/me/drafts", { message: { raw: rfc822(String(to), String(subject), String(body)) } });
           return text(`Saved draft ${draft.id}.`);
@@ -158,7 +156,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "gmail_send",
         description: "Send an email (asks the user first). To reply, pass reply_to with the message id being answered.",
-        input: { type: "object", properties: { to: str, subject: str, body: str, reply_to: str }, required: ["to", "subject", "body"] },
+        input: input({ to: str(), subject: str(), body: str(), reply_to: optional(str()) }),
         async run({ to, subject, body, reply_to }: Args) {
           if (!(await confirm(`Send this email to ${to}?\nSubject: ${subject}\n\n${String(body).slice(0, 3000)}${String(body).length > 3000 ? "\n[…longer than shown]" : ""}`))) return declined;
           const original = reply_to ? await call("GET", `/gmail/v1/users/me/messages/${encodeURIComponent(String(reply_to))}?format=metadata&metadataHeaders=Message-ID`) : undefined;
@@ -170,7 +168,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "calendar_events",
         description: "List events on the user's primary calendar between two times (ISO 8601 with offset), optionally matching text.",
-        input: { type: "object", properties: { from: str, to: str, query: str }, required: ["from", "to"] },
+        input: input({ from: str(), to: str(), query: optional(str()) }),
         async run({ from, to, query }: Args) {
           const q = new URLSearchParams({ timeMin: String(from), timeMax: String(to), singleEvents: "true", orderBy: "startTime", maxResults: "50" });
           if (query) q.set("q", String(query));
@@ -186,11 +184,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "calendar_create",
         description: "Create an event on the user's primary calendar (asks the user first). Times are ISO 8601 with offset.",
-        input: {
-          type: "object",
-          properties: { title: str, start: str, end: str, location: str, attendees: { type: "array", items: str } },
-          required: ["title", "start", "end"],
-        },
+        input: input({ title: str(), start: str(), end: str(), location: optional(str()), attendees: optional(list(str())) }),
         async run({ title, start, end, location, attendees }: Args) {
           const guests = (attendees as string[] | undefined) ?? [];
           if (!(await confirm(`Add "${title}" to your calendar, ${start} to ${end}${location ? ` at ${location}` : ""}${guests.length ? `, inviting ${guests.join(", ")}` : ""}?`))) return declined;
@@ -207,7 +201,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "calendar_update",
         description: "Change an event's title, times or location by id (asks the user first).",
-        input: { type: "object", properties: { id: str, title: str, start: str, end: str, location: str }, required: ["id"] },
+        input: input({ id: str(), title: optional(str()), start: optional(str()), end: optional(str()), location: optional(str()) }),
         async run({ id, title, start, end, location }: Args) {
           const changes = { ...(title ? { summary: title } : {}), ...(location ? { location } : {}), ...(start ? { start: { dateTime: start } } : {}), ...(end ? { end: { dateTime: end } } : {}) };
           if (!(await confirm(`Change calendar event ${id}: ${JSON.stringify(changes)}?`))) return declined;
@@ -218,7 +212,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       {
         name: "calendar_delete",
         description: "Delete an event by id (asks the user first).",
-        input: { type: "object", properties: { id: str }, required: ["id"] },
+        input: input({ id: str() }),
         async run({ id }: Args) {
           const event = await call("GET", `/calendar/v3/calendars/primary/events/${encodeURIComponent(String(id))}`);
           if (!(await confirm(`Delete "${event.summary}" (${event.start?.dateTime ?? event.start?.date}) from your calendar?`))) return declined;
