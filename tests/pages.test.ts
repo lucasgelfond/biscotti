@@ -19,5 +19,6 @@ test("publishes a page with link-preview tags, texts its link on its own, and se
   expect(page).toContain('<meta property="og:image" content="https://biscotti.example.ts.net/preview.jpg">');
   expect(biscotti.sent).toContain(`https://biscotti.example.ts.net/${files[0]}`);
   expect(served.status).toBe(200);
+  expect(served.headers.get("content-security-policy")).toContain("default-src 'none'");
   expect(listing.status).toBe(404);
 });

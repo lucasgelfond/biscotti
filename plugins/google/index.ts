@@ -111,7 +111,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
 
   async tools(ctx) {
     const { call, signInLink, redirectUri } = googleApi(ctx);
-    const confirm = async (question: string) => (await ctx.ask(`${question}\n\nReply yes or no.`)) || undefined;
+    const confirm = async (question: string) => (await ctx.ask(question)) || undefined;
     const declined = text("The user declined.");
 
     return localTools([

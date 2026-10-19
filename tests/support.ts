@@ -26,6 +26,9 @@ export async function boot(names: (string | Plugin)[], dir = newDataDir()) {
   return { ...biscotti, dir, say, sent, images, reactions };
 }
 
+// The code the gate's latest question asks for: "yes <code>" approves it.
+export const approval = (sent: string[]) => `yes ${[...sent.join("\n").matchAll(/"yes (\d{3})"/g)].at(-1)?.[1]}`;
+
 export function toolCalls(db: Awaited<ReturnType<typeof boot>>["db"]) {
   return db.$client
     .prepare("SELECT entry FROM transcripts")

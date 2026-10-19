@@ -10,12 +10,15 @@ const PORT = 8082;
 const PREVIEW_IMAGE = "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=80&w=1200&h=630&fit=crop";
 const NAME = /^\/([0-9a-f]{24}\.html|preview\.jpg)$/;
 
+const SELF_CONTAINED = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'";
+
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
 export default {
   prompt: `Pages: when an answer is better as a page (a table, comparison, itinerary, chart), make a self-contained,
-phone-friendly HTML page with \`publish_page\`. Put its link on a line of its own at the end of your reply; it's sent
-as a separate message that expands into a card, so keep the rest of the reply to a line or two.`,
+phone-friendly HTML page with \`publish_page\`: everything inline (images as data: URLs), since pages can't load
+anything. Put its link on a line of its own at the end of your reply; it's sent as a separate message that expands
+into a card, so keep the rest of the reply to a line or two.`,
 
   async tools(ctx) {
     const dir = `${ctx.dir}/pages`;
@@ -31,7 +34,7 @@ as a separate message that expands into a card, so keep the rest of the reply to
       {
         name: "publish_page",
         description:
-          "Publish a self-contained HTML page (inline CSS/JS, phone-friendly) and get its link. Use it when an answer is better as a page than a text: tables, comparisons, itineraries, charts. The link is sent to the user as its own message, which expands into a card with the title and summary.",
+          "Publish a self-contained HTML page (inline CSS/JS/images; it can load nothing from elsewhere; phone-friendly) and get its link. Use it when an answer is better as a page than a text: tables, comparisons, itineraries, charts. The link is sent to the user as its own message, which expands into a card with the title and summary.",
         input: {
           type: "object",
           properties: {
@@ -65,10 +68,11 @@ as a separate message that expands into a card, so keep the rest of the reply to
     createServer((req, res) => {
       const name = NAME.exec(req.url ?? "")?.[1];
       if (!name || !existsSync(`${dir}/${name}`)) return void res.writeHead(404).end();
-      // Public pages on the owner's hostname: sandboxed (no access to anything else on it) and kept out of search.
+      // Public pages on the owner's hostname: sandboxed (no access to anything else on it), kept out of search, and
+      // self-contained: a page can't load or send anything, so one written from a poisoned web page can't phone home.
       res.writeHead(200, {
         "Content-Type": name.endsWith(".html") ? "text/html; charset=utf-8" : "image/jpeg",
-        "Content-Security-Policy": "sandbox allow-scripts allow-popups",
+        "Content-Security-Policy": `sandbox allow-scripts allow-popups; ${SELF_CONTAINED}`,
         "X-Robots-Tag": "noindex",
       });
       res.end(readFileSync(`${dir}/${name}`));
