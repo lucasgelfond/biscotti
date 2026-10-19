@@ -21,27 +21,27 @@
   in {
     nixosConfigurations = {
       pi5 = nixos-raspberrypi.lib.nixosSystem {
-        inherit specialArgs;
+        specialArgs = specialArgs // { target = "pi5"; };
         modules = [ ./nix/biscotti.nix ./nix/pi5.nix ];
       };
       vm = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
-        inherit specialArgs;
+        specialArgs = specialArgs // { target = "vm"; };
         modules = [ ./nix/biscotti.nix ./nix/vm.nix ];
       };
       mac = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
-        inherit specialArgs;
+        specialArgs = specialArgs // { target = "mac"; };
         modules = [ ./nix/biscotti.nix ./nix/mac.nix ];
       };
       aws = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        inherit specialArgs;
+        specialArgs = specialArgs // { target = "aws"; };
         modules = [ ./nix/biscotti.nix ./nix/aws.nix ];
       };
     };
 
-    checks.aarch64-linux.pi5-card = nixpkgs.legacyPackages.aarch64-linux.testers.runNixOSTest (import ./nix/tests/pi5-card.nix { inherit specialArgs; });
+    checks.aarch64-linux.pi5-card = nixpkgs.legacyPackages.aarch64-linux.testers.runNixOSTest (import ./nix/tests/pi5-card.nix { specialArgs = specialArgs // { target = "pi5"; }; });
 
     packages.aarch64-linux.pi5-sd-image = self.nixosConfigurations.pi5.config.system.build.sdImage;
     packages.aarch64-linux.mac-image = self.nixosConfigurations.mac.config.system.build.images.qemu-efi;

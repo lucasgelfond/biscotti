@@ -18,7 +18,7 @@ let
   repo = "${self}";
 in
 {
-  imports = [ ./net.nix ./setup.nix ];
+  imports = [ ./net.nix ./setup.nix ./update.nix ];
   _module.args = { inherit repo firecracker faultAll; };
 
   networking.hostName = "biscotti";
