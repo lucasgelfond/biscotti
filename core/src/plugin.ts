@@ -19,6 +19,21 @@ export interface Context {
   ask(question: string): Promise<boolean>;
   // A message into the conversation (a wake, a task report); the reply goes to the owner.
   deliver(text: string, image?: Buffer): Promise<void>;
+  // A goal for a task VM, where this machine has them. With `repo` (a git bundle), the VM works on it in ~/repo and
+  // its new commits come back as `bundle`; `model` names one of the gate's models.
+  task?(goal: string, opts?: TaskOptions): Promise<TaskResult>;
+}
+
+export interface TaskOptions {
+  repo?: Buffer;
+  model?: string;
+  timeoutMs?: number;
+}
+
+export interface TaskResult {
+  report: string;
+  screenshot?: Buffer;
+  bundle?: Buffer;
 }
 
 export interface Channel {

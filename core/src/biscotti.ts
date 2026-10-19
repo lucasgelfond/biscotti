@@ -6,7 +6,7 @@ import { createAgent } from "./agent.ts";
 import crons from "./crons.ts";
 import { createGate } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
-import type { Channel, Context, Plugin } from "./plugin.ts";
+import type { Channel, Context, Plugin, TaskOptions } from "./plugin.ts";
 import { SLOTS, taskTool, taskVms } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
 
@@ -25,11 +25,13 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const db = openDb(`${dir}/biscotti.db`, env("DB_KEY"));
   const gate = createGate({
     llm: { url: env("LLM_BASE_URL"), key: env("LLM_API_KEY") },
-    models: { main: env("MODEL"), task: env("TASK_MODEL") },
+    models: { main: env("MODEL"), task: env("TASK_MODEL"), code: process.env.CODE_MODEL || env("TASK_MODEL") },
     send: (text) => channel.send({ text }),
     secrets: () => secrets(db),
   });
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver };
+  const vmDir = process.env.VM_DIR;
+  let vms: ReturnType<typeof taskVms> | undefined;
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, task: vmDir ? task : undefined };
 
   const channelPlugin = plugins.find((p) => p.channel);
   if (!channelPlugin) throw new Error("biscotti.json needs a channel plugin, e.g. channels/spectrum");
@@ -39,8 +41,18 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
 
   const gateServer = await gate.listen("127.0.0.1", opts.gatePort ?? 0);
   const gateUrl = `http://127.0.0.1:${(gateServer.address() as AddressInfo).port}`;
-  const vmDir = process.env.VM_DIR;
   if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot });
+  if (vmDir) vms = taskVms(vmDir, env("FIRECRACKER"));
+
+  async function task(goal: string, { model, ...opts }: TaskOptions = {}) {
+    if (!vms) throw new Error("Task VMs aren't running yet.");
+    let slot: number | undefined;
+    try {
+      return await vms.run(goal, (s) => ((slot = s), model && gate.route(s, model)), opts);
+    } finally {
+      if (slot) gate.route(slot);
+    }
+  }
 
   let latest: Message | undefined;
   const react = defineTool({
@@ -55,10 +67,10 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   });
 
   const liveDesktop = process.env.LIVE_DESKTOP_URL ?? (process.env.TAILNET_HOST && `https://${process.env.TAILNET_HOST}`);
-  const tasks = vmDir
+  const tasks = vms
     ? [
         taskTool(
-          taskVms(vmDir, env("FIRECRACKER")),
+          vms,
           (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot),
           liveDesktop ? (slot) => `${liveDesktop}:${10440 + slot}/vnc.html` : undefined,
         ),

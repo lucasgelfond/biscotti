@@ -6,6 +6,7 @@ import { request } from "node:http";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import { Type } from "typebox";
+import type { TaskOptions, TaskResult } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces). One VM is
 // always restored ahead of time.
@@ -16,11 +17,6 @@ export const SLOTS = [1, 2, 3];
 interface Vm {
   slot: number;
   stop(): Promise<void>;
-}
-
-export interface TaskResult {
-  report: string;
-  screenshot?: Buffer;
 }
 
 export function taskVms(vmDir: string, firecracker: string) {
@@ -55,12 +51,12 @@ export function taskVms(vmDir: string, firecracker: string) {
     return ready ?? restore(vmDir, firecracker, await acquire());
   }
 
-  async function run(goal: string, onStart?: (slot: number) => void): Promise<TaskResult> {
+  async function run(goal: string, onStart?: (slot: number) => void, opts: TaskOptions = {}): Promise<TaskResult> {
     const vm = await take();
     warmUp();
     try {
       onStart?.(vm.slot);
-      return await runPi(`10.200.${vm.slot}.2`, goal);
+      return await runPi(`10.200.${vm.slot}.2`, goal, opts);
     } finally {
       await vm.stop();
       release(vm.slot);
@@ -127,26 +123,29 @@ function api(socketPath: string, method: string, path: string, body: object) {
   });
 }
 
-// The goal goes to pi in the VM; its last assistant text is the report, then a screenshot follows.
-function runPi(host: string, goal: string) {
+// The goal (and a repo, as a git bundle) goes to pi in the VM; its last assistant text is the report, then a
+// screenshot and the repo's new commits follow.
+function runPi(host: string, goal: string, { repo, timeoutMs = TASK_TIMEOUT_MS }: TaskOptions) {
   return new Promise<TaskResult>((resolve, reject) => {
-    const socket = connect({ host, port: 4000 }, () => socket.end(goal));
-    socket.setTimeout(TASK_TIMEOUT_MS, () => socket.destroy(new Error("task timed out")));
+    const socket = connect({ host, port: 4000 }, () => socket.end(JSON.stringify({ goal, repo: repo?.toString("base64") })));
+    socket.setTimeout(timeoutMs, () => socket.destroy(new Error("task timed out")));
     let report = "";
     let screenshot: Buffer | undefined;
+    let bundle: Buffer | undefined;
     createInterface({ input: socket }).on("line", (line) => {
-      let event: { type: string; png?: string; message?: { role: string; content: { type: string; text?: string }[] } };
+      let event: { type: string; png?: string; data?: string; message?: { role: string; content: { type: string; text?: string }[] } };
       try {
         event = JSON.parse(line);
       } catch {
         return;
       }
       if (event.type === "screenshot") screenshot = Buffer.from(event.png!, "base64");
+      if (event.type === "bundle") bundle = Buffer.from(event.data!, "base64");
       if (event.type !== "message_end" || event.message?.role !== "assistant") return;
       const text = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
       if (text) report = text;
     });
-    socket.on("error", reject).on("close", () => resolve({ report: report || "The task ended without a report.", screenshot }));
+    socket.on("error", reject).on("close", () => resolve({ report: report || "The task ended without a report.", screenshot, bundle }));
   });
 }
 

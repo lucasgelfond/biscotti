@@ -3,7 +3,7 @@
 // starts on a task at once. One task per VM: the goal arrives on port 4000, pi's JSON events go back, then a
 // screenshot of the final screen.
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 
 const PROMPT = `You are a task agent in a disposable Debian VM with internet access. Chromium is open on the desktop (DISPLAY=:1; sudo works); the requester may be watching it live.
@@ -46,6 +46,34 @@ pi.stdout.setEncoding("utf8").on("data", (chunk) => {
   }
 });
 
+// A coding task's repo arrives as a git bundle: checked out in ~/repo on its own branch with no remote (nothing in the
+// VM can push), and the commits made on it go back as a bundle for the host to review and open as a pull request.
+const REPO = "/home/cua/repo";
+const git = (...args) => execFileSync("git", ["-C", REPO, ...args], { encoding: "utf8" }).trim();
+const CODING = `This is a coding task. The repository is checked out in ~/repo on a branch of its own, with no remote: you can't push, and don't try. Work there: read the code, make the change, run its tests or build if it has them (git, node, npm and pnpm are installed), and commit your work with clear messages. Never merge, rebase onto other branches or rewrite existing commits. Your commits become a draft pull request the owner reviews; nothing is merged. Take the time the change needs: the 3-minute guideline is for browsing. End with a short summary of what changed and how you checked it.
+
+The goal: `;
+
+function checkout(bundle) {
+  writeFileSync("/tmp/repo.bundle", Buffer.from(bundle, "base64"));
+  rmSync(REPO, { recursive: true, force: true });
+  execFileSync("git", ["-c", "advice.detachedHead=false", "clone", "-q", "/tmp/repo.bundle", REPO]);
+  git("remote", "remove", "origin");
+  git("checkout", "-q", "-b", "biscotti");
+  git("config", "user.name", "biscotti");
+  git("config", "user.email", "biscotti@users.noreply.github.com");
+  return git("rev-parse", "HEAD");
+}
+
+// The commits since `base`, with anything left uncommitted committed first.
+function commits(base) {
+  git("add", "-A");
+  if (git("status", "--porcelain")) git("commit", "-q", "-m", "Uncommitted changes at the end of the task");
+  if (git("rev-parse", "HEAD") === base) return undefined;
+  execFileSync("git", ["-C", REPO, "bundle", "create", "-q", "/tmp/out.bundle", `${base}..HEAD`]);
+  return readFileSync("/tmp/out.bundle").toString("base64");
+}
+
 // Ready once pi answers.
 await new Promise((resolve) => {
   const ready = (_, record) => record.id === "ready" && (listeners.delete(ready), resolve());
@@ -60,10 +88,26 @@ createServer({ allowHalfOpen: true }, (socket) => {
   socket.on("end", () => {
     // A readiness probe connects and sends nothing.
     if (!goal.trim()) return socket.end();
+    const task = JSON.parse(goal);
+    let base;
+    try {
+      if (task.repo) base = checkout(task.repo);
+    } catch (err) {
+      socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't check out the repo: ${err.message}` }] } })}\n`);
+      return socket.end();
+    }
     const forward = (line, record) => {
       if (record.type !== "response") socket.write(`${line}\n`);
       if (record.type !== "agent_settled") return;
       listeners.delete(forward);
+      if (base) {
+        try {
+          const data = commits(base);
+          if (data) socket.write(`${JSON.stringify({ type: "bundle", data })}\n`);
+        } catch (err) {
+          socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't bundle the commits: ${err.message}` }] } })}\n`);
+        }
+      }
       try {
         execFileSync("scrot", ["-o", "/tmp/screen.png"], { env: { ...process.env, DISPLAY: ":1" } });
         const png = execFileSync("base64", ["-w0", "/tmp/screen.png"], { encoding: "utf8" });
@@ -72,6 +116,6 @@ createServer({ allowHalfOpen: true }, (socket) => {
       socket.end();
     };
     listeners.add(forward);
-    send({ type: "prompt", message: goal });
+    send({ type: "prompt", message: base ? CODING + task.goal : task.goal });
   });
 }).listen(4000, "0.0.0.0");

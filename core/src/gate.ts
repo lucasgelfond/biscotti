@@ -101,9 +101,12 @@ export function createGate(opts: {
     return plugin.call(name, args, caller);
   }
 
-  async function llm(req: IncomingMessage, res: ServerResponse) {
+  // A slot running a task that needs another model (a coding task) gets it whatever model its VM names.
+  const slotModels = new Map<number, string>();
+
+  async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
-    const model = opts.models[body.model];
+    const model = opts.models[(slot && slotModels.get(slot)) || body.model];
     if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
     const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}${req.url!.slice("/llm".length)}`, {
       method: "POST",
@@ -129,7 +132,7 @@ export function createGate(opts: {
   const handler = (slot?: number) => (req: IncomingMessage, res: ServerResponse) => {
     const set = slot ? "tasks" : "main";
     if (set === "tasks" && !TASK_HOSTS.test(req.headers.host ?? "")) return void res.writeHead(403).end();
-    (req.url?.startsWith("/llm/") ? llm(req, res) : mcp(req, res, set, { slot })).catch((err) => {
+    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot })).catch((err) => {
       console.error(err);
       if (!res.headersSent) res.writeHead(502).end(String(err));
     });
@@ -138,6 +141,7 @@ export function createGate(opts: {
   return {
     ask,
     answer,
+    route: (slot: number, model?: string) => (model ? slotModels.set(slot, model) : slotModels.delete(slot)),
     add(tools: Tools) {
       sets.main.push(tools);
       if (tools.tasks) sets.tasks.push(tools.tasks);
