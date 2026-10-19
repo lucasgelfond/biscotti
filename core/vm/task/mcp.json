@@ -25,7 +25,7 @@
       "url": "http://gate/mcp",
       "exposure": "direct",
       "timeout": 900,
-      "description": "The owner's tools for tasks: web search and the vault (each vault use waits for the owner's approval)."
+      "description": "The owner's tools for tasks: web search and the vault (vault_fill types saved logins and cards into the page)."
     }
   }
 }

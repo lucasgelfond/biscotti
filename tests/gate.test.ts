@@ -2,7 +2,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { expect, test } from "vitest";
 import { localTools, text, type Plugin } from "../core/src/plugin.ts";
-import { request } from "node:http";
+import { once } from "node:events";
+import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createGate } from "../core/src/gate.ts";
 import { boot } from "./support.ts";
@@ -46,6 +47,34 @@ test("answers a task VM's model call with the host's chosen model and key", asyn
   expect(unknown.status).toBe(400);
 });
 
+test("replaces saved secrets in model calls before they leave for the provider", async () => {
+  const received: string[] = [];
+  const upstream = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    received.push(Buffer.concat(chunks).toString("utf8"));
+    res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const secrets = [
+    { label: "Delta login.password", value: "hunter2-biscotti" },
+    { label: "Visa.number", value: "4111111111111111" },
+  ];
+  const gate = createGate({ llm: { url: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, key: "k" }, models: { task: "m" }, send: async () => {}, secrets: () => secrets });
+  const server = await gate.listen("127.0.0.1", 0);
+  const message = "My password is hunter2-biscotti and my card is 4111 1111 1111 1111.";
+
+  await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/llm/chat/completions`, {
+    method: "POST",
+    body: JSON.stringify({ model: "task", messages: [{ role: "user", content: message }] }),
+  });
+  server.close();
+  upstream.close();
+  const sentUpstream = JSON.parse(received[0]).messages[0].content;
+
+  expect(sentUpstream).toBe("My password is [vault:Delta login.password] and my card is [vault:Visa.number].");
+});
+
 test("asks the owner before a tool that needs a yes, and goes ahead on their yes", async () => {
   const biscotti = await boot([outbox]);
 
@@ -73,7 +102,7 @@ test("gives task VMs only the tools plugins allow them, and only when addressed 
   const gate = createGate({ llm: { url: "http://127.0.0.1:1", key: "unused" }, models: {}, send: async () => {} });
   gate.add({ ...tool("gmail_read"), tasks: undefined });
   gate.add({ ...tool("web_search"), tasks: tool("web_search") });
-  const server = await gate.listen("127.0.0.1", 0, { tasks: true });
+  const server = await gate.listen("127.0.0.1", 0, { slot: 1 });
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
 
   const client = await mcp(url);

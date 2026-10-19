@@ -11,7 +11,7 @@ const vms = onThePi ? taskVms(VM_DIR, FIRECRACKER) : undefined;
 
 if (onThePi) {
   const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: process.env.TASK_MODEL! }, send: async () => {} });
-  for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { tasks: true });
+  for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot });
 }
 
 test.skipIf(!onThePi)("runs a task in a fresh VM and returns its report and final screen", async () => {

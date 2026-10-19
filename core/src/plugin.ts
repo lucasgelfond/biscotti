@@ -26,9 +26,14 @@ export interface Channel {
   send(message: { text: string } | { image: Buffer }): Promise<void>;
 }
 
+// Who's calling a tool: the main agent, or the task VM in `slot`.
+export interface Caller {
+  slot?: number;
+}
+
 export interface Tools {
   list(): Promise<Tool[]>;
-  call(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
+  call(name: string, args: Record<string, unknown>, caller?: Caller): Promise<CallToolResult>;
   // The subset task VMs may use (untrusted: web content drives them). Without it, task VMs get none of these.
   tasks?: Tools;
 }
@@ -52,13 +57,13 @@ export interface LocalTool {
   name: string;
   description: string;
   input: Tool["inputSchema"];
-  run(args: Record<string, unknown>): Promise<CallToolResult>;
+  run(args: Record<string, unknown>, caller: Caller): Promise<CallToolResult>;
 }
 
 export function localTools(defs: LocalTool[]): Tools {
   return {
     list: async () => defs.map(({ name, description, input }) => ({ name, description, inputSchema: input })),
-    call: async (name, args) => defs.find((d) => d.name === name)!.run(args),
+    call: async (name, args, caller = {}) => defs.find((d) => d.name === name)!.run(args, caller),
   };
 }
 

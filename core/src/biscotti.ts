@@ -8,7 +8,7 @@ import { createGate } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import type { Channel, Context, Plugin } from "./plugin.ts";
 import { SLOTS, taskTool, taskVms } from "./tasks.ts";
-import vault from "./vault.ts";
+import vault, { secrets } from "./vault.ts";
 
 
 function env(name: string) {
@@ -27,6 +27,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
     llm: { url: env("LLM_BASE_URL"), key: env("LLM_API_KEY") },
     models: { main: env("MODEL"), task: env("TASK_MODEL") },
     send: (text) => channel.send({ text }),
+    secrets: () => secrets(db),
   });
   const ctx: Context = { db, dir, env, ask: gate.ask, deliver };
 
@@ -39,7 +40,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   const gateServer = await gate.listen("127.0.0.1", opts.gatePort ?? 0);
   const gateUrl = `http://127.0.0.1:${(gateServer.address() as AddressInfo).port}`;
   const vmDir = process.env.VM_DIR;
-  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { tasks: true });
+  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot });
 
   let latest: Message | undefined;
   const react = defineTool({

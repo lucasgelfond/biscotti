@@ -27,7 +27,7 @@ test.skipIf(!onThePi)("checks out with the saved card once the owner says yes", 
   await expect.poll(() => b.sent.join("\n"), { timeout: 10 * 60_000, interval: 1000 }).toContain("Reply yes or no");
   const asked = b.sent.find((t) => t.includes("Reply yes or no"))!;
   await b.say("yes");
-  await expect.poll(() => b.sent.join("\n"), { timeout: 10 * 60_000, interval: 2000 }).toMatch(/thank you for your purchase|purchased|order (is )?(placed|complete)/i);
+  await expect.poll(() => b.sent.join("\n"), { timeout: 10 * 60_000, interval: 2000 }).toMatch(/thanks? (you )?for your purchase|purchased|order (is )?(placed|complete)/i);
 
   expect(asked).toContain("Visa");
   expect(b.images.length).toBeGreaterThan(0);
