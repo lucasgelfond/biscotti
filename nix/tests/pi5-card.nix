@@ -92,7 +92,8 @@ in
     pi.wait_until_succeeds("grep -q '^DB_KEY=' /var/lib/biscotti/.env", timeout=60)
     pi.fail("test -e /boot/firmware/biscotti.env")
     pi.succeed("test -f /var/lib/biscotti/biscotti.json")
-    pi.succeed("test -s /boot/firmware/authorized_keys")
+    pi.fail("test -e /boot/firmware/authorized_keys")
+    pi.succeed("grep -q TestKey /var/lib/biscotti-ssh/authorized_keys")
 
     pi.succeed("systemctl start biscotti-status")
     status = pi.succeed("cat /boot/firmware/biscotti-status.txt")

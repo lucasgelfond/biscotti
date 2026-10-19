@@ -3,7 +3,25 @@
 # card. Nothing personal lives in the image. Hardware-free, so the first-boot test (tests/pi5-card.nix) runs it too.
 { pkgs, ... }:
 {
-  services.openssh.authorizedKeysFiles = [ "/boot/firmware/authorized_keys" ];
+  # The installer's SSH key, moved off the card at boot (anyone who borrows the card could add their own there), into a
+  # file only root can change. A key put on the card later is added to it.
+  services.openssh.authorizedKeysFiles = [ "/var/lib/biscotti-ssh/authorized_keys" ];
+  systemd.services.biscotti-ssh-keys = {
+    description = "SSH key from the boot partition";
+    before = [ "sshd.service" ];
+    wantedBy = [ "multi-user.target" ];
+    unitConfig.RequiresMountsFor = "/boot/firmware";
+    serviceConfig.Type = "oneshot";
+    script = ''
+      [ -f /boot/firmware/authorized_keys ] || exit 0
+      install -d -m 755 /var/lib/biscotti-ssh
+      keys=/var/lib/biscotti-ssh/authorized_keys
+      cat "$keys" /boot/firmware/authorized_keys 2>/dev/null | grep -v '^\s*$' | sort -u > "$keys.new"
+      chmod 644 "$keys.new"
+      mv "$keys.new" "$keys"
+      rm /boot/firmware/authorized_keys
+    '';
+  };
 
   # wpa_supplicant reads /etc/wpa_supplicant/imperative.conf and re-owns it before starting, which a link to the FAT
   # partition can't take: copy the card's file in on every boot, so editing it on the card changes the network.

@@ -10,6 +10,10 @@ import { text, type LocalTool, type TaskOptions, type TaskResult } from "./plugi
 // always restored ahead of time.
 
 const TASK_TIMEOUT_MS = 30 * 60_000;
+// A task that goes quiet this long is stuck, whatever its time limit.
+const IDLE_MS = 10 * 60_000;
+// The events, the screenshot and a coding task's commits, base64.
+const MAX_OUTPUT = 100 * 1024 * 1024;
 export const SLOTS = [1, 2, 3];
 
 interface Vm {
@@ -126,7 +130,10 @@ function api(socketPath: string, method: string, path: string, body: object) {
 function runPi(host: string, goal: string, { repo, timeoutMs = TASK_TIMEOUT_MS }: TaskOptions) {
   return new Promise<TaskResult>((resolve, reject) => {
     const socket = connect({ host, port: 4000 }, () => socket.end(JSON.stringify({ goal, repo: repo?.toString("base64") })));
-    socket.setTimeout(timeoutMs, () => socket.destroy(new Error("task timed out")));
+    socket.setTimeout(Math.min(IDLE_MS, timeoutMs), () => socket.destroy(new Error("the task went quiet")));
+    const limit = setTimeout(() => socket.destroy(new Error(`the task ran out of time (${timeoutMs / 60_000} minutes)`)), timeoutMs);
+    let received = 0;
+    socket.on("data", (d: Buffer) => (received += d.length) > MAX_OUTPUT && socket.destroy(new Error("the task sent too much back")));
     let report = "";
     let screenshot: Buffer | undefined;
     let bundle: Buffer | undefined;
@@ -143,7 +150,10 @@ function runPi(host: string, goal: string, { repo, timeoutMs = TASK_TIMEOUT_MS }
       const text = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
       if (text) report = text;
     });
-    socket.on("error", reject).on("close", () => resolve({ report: report || "The task ended without a report.", screenshot, bundle }));
+    socket.on("error", reject).on("close", () => {
+      clearTimeout(limit);
+      resolve({ report: report || "The task ended without a report.", screenshot, bundle });
+    });
   });
 }
 

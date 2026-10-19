@@ -19,6 +19,10 @@ echo "$sum  $OUT/vmlinux" | sha256sum -c -
 docker build -t biscotti/cua-desktop .
 ./rootfs.sh biscotti/cua-desktop "$OUT/rootfs.ext4"
 
+# The live desktops' password, this machine's own: VNC uses 8 characters. The gate puts it in the links it hands out.
+vnc=$(head -c 6 /dev/urandom | base64 | tr '+/' 'xy')
+(umask 077; echo "$vnc" > "$OUT/vnc-password")
+
 # Boot once in slot 1 (the biscotti-net service), wait until the task listener, noVNC and cua-spacesd answer, then
 # snapshot. Every slot looks the same from inside, so the snapshot restores in any of them.
 sock=/tmp/fc-snapshot.sock slot=10.200.1.2
@@ -27,7 +31,7 @@ ip netns exec fc1 "$FC" --api-sock "$sock" >"$OUT/snapshot.log" 2>&1 &
 pid=$!
 until [ -S "$sock" ]; do sleep 0.05; done
 api() { curl -sf --unix-socket "$sock" -X "$1" "http://localhost$2" -H 'Content-Type: application/json' -d "$3"; }
-api PUT /boot-source "{\"kernel_image_path\":\"$OUT/vmlinux\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 ro init=/sbin/biscotti-init ip=172.16.0.2::172.16.0.1:255.255.255.0::eth0:off\"}"
+api PUT /boot-source "{\"kernel_image_path\":\"$OUT/vmlinux\",\"boot_args\":\"console=ttyS0 reboot=k panic=1 ro init=/sbin/biscotti-init ip=172.16.0.2::172.16.0.1:255.255.255.0::eth0:off biscotti.vnc=$vnc\"}"
 api PUT /drives/rootfs "{\"drive_id\":\"rootfs\",\"path_on_host\":\"$OUT/rootfs.ext4\",\"is_root_device\":true,\"is_read_only\":true}"
 api PUT /machine-config "{\"vcpu_count\":3,\"mem_size_mib\":1536${HUGE_PAGES:+,\"huge_pages\":\"$HUGE_PAGES\"}}"
 api PUT /network-interfaces/eth0 '{"iface_id":"eth0","host_dev_name":"fc-task"}'

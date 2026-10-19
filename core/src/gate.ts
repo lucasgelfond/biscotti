@@ -19,6 +19,8 @@ export const LOCK = "🔐";
 export const LOCKS = /[🔐🔒🔓🔏]/gu;
 const ANSWER_TIMEOUT_MS = 10 * 60_000;
 const TASK_HOSTS = /^(gate|127\.0\.0\.1|172\.16\.0\.1|10\.200\.\d+\.1)(:\d+)?$/;
+// Model calls carry screenshots, so they're large, but not unbounded.
+const MAX_BODY = 32 * 1024 * 1024;
 
 // Some providers (Gemini) reject loose JSON Schema that MCP tools use: type lists, and properties on untyped or
 // non-object nodes.
@@ -124,14 +126,15 @@ export function createGate(opts: {
     return plugin.call(name, args, caller);
   }
 
-  // A slot running a task that needs another model (a coding task) gets it whatever model its VM names.
+  // A task VM gets the task model, or the one its task was started with (a coding task), whatever model it names.
   const slotModels = new Map<number, string>();
 
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
+    if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
-    const model = opts.models[(slot && slotModels.get(slot)) || body.model];
+    const model = opts.models[slot ? (slotModels.get(slot) ?? "task") : body.model];
     if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
-    const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}${req.url!.slice("/llm".length)}`, {
+    const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
       body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict) }),
@@ -151,9 +154,11 @@ export function createGate(opts: {
     await transport.handleRequest(req, res);
   }
 
-  // A task VM slot's listener gets the task set, and only requests addressed to the gate (no DNS rebinding from a page).
-  const handler = (slot?: number) => (req: IncomingMessage, res: ServerResponse) => {
+  // A task VM slot's listener gets the task set, only from that slot's VM (`peer`), and only requests addressed to the
+  // gate (no DNS rebinding from a page).
+  const handler = (slot?: number, peer?: string) => (req: IncomingMessage, res: ServerResponse) => {
     const set = slot ? "tasks" : "main";
+    if (peer && req.socket.remoteAddress?.replace(/^::ffff:/, "") !== peer) return void res.writeHead(403).end();
     if (set === "tasks" && !TASK_HOSTS.test(req.headers.host ?? "")) return void res.writeHead(403).end();
     (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot })).catch((err) => {
       console.error(err);
@@ -171,16 +176,21 @@ export function createGate(opts: {
       sets.main.push(tools);
       if (tools.tasks) sets.tasks.push(tools.tasks);
     },
-    listen: (host: string, port: number, opts: { slot?: number } = {}) =>
+    listen: (host: string, port: number, opts: { slot?: number; peer?: string } = {}) =>
       new Promise<Server>((resolve, reject) => {
-        const server = createServer(handler(opts.slot)).once("error", reject);
+        const server = createServer(handler(opts.slot, opts.peer)).once("error", reject);
         server.listen(port, host, () => resolve(server));
       }),
   };
 }
 
-async function readBody(req: IncomingMessage) {
+export async function readBody(req: AsyncIterable<unknown>, max = MAX_BODY) {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > max) throw new Error(`request over ${max / 1024 / 1024} MB`);
+    chunks.push(chunk as Buffer);
+  }
   return Buffer.concat(chunks).toString("utf8");
 }

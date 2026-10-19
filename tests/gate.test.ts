@@ -142,3 +142,32 @@ test("approves only on a yes naming the question's code, and declines on a no", 
   expect(texts[1]).toContain(`reply "yes ${code}"`);
   expect(texts[2]).toContain(`Nothing is waiting on ${wrong}`);
 });
+
+test("gives a task VM the task model whatever it names, only for chat completions, and only from its own slot", async () => {
+  const models: string[] = [];
+  const upstream = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    models.push(`${req.url} ${JSON.parse(Buffer.concat(chunks).toString("utf8")).model}`);
+    res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const gate = createGate({ llm: { url: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1`, key: "k" }, models: { main: "big-model", task: "small-model" }, send: async () => {} });
+  const own = await gate.listen("127.0.0.1", 0, { slot: 1, peer: "127.0.0.1" });
+  const other = await gate.listen("127.0.0.1", 0, { slot: 2, peer: "10.200.2.2" });
+  const call = (server: typeof own, path: string, model: string) =>
+    fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}${path}`, { method: "POST", body: JSON.stringify({ model, messages: [] }) }).then((r) => r.status);
+
+  const statuses = [
+    await call(own, "/llm/chat/completions", "main"),
+    await call(own, "/llm/embeddings", "task"),
+    await call(own, "/llm/models", "task"),
+    await call(other, "/llm/chat/completions", "task"),
+  ];
+  own.close();
+  other.close();
+  upstream.close();
+
+  expect(statuses).toEqual([200, 404, 404, 403]);
+  expect(models).toEqual(["/v1/chat/completions small-model"]);
+});

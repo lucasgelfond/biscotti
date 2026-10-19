@@ -26,6 +26,8 @@ if [ ! -d /.lower ]; then
 fi
 # Second pass: the mounts Docker would normally provide, then the task listener and Cua's desktop.
 . /etc/biscotti-env
+# The desktop's password (Cua's VNC script turns authentication off without one), from the host's snapshot build.
+export VNC_PW=$(sed -n 's/.*biscotti\.vnc=\([^ ]*\).*/\1/p' /proc/cmdline)
 mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
 mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts; mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run; mount -t tmpfs -o mode=1777 tmpfs /tmp

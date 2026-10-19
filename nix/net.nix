@@ -1,7 +1,7 @@
 # The task VMs' network. Each VM slot is its own network namespace, fcN, holding the tap the snapshot expects (fc-task,
 # the VM at 172.16.0.2 and its gateway 172.16.0.1), so VMs restored from one snapshot never clash. A veth pair links
 # each slot to the host (host 10.200.N.1, slot 10.200.N.2). VMs reach the internet and the gate (port 80 on their
-# link) only: never the LAN, the tailnet, other host ports or each other.
+# link) only: never the LAN, the tailnet, other host ports, each other or another slot's gate.
 { lib, pkgs, ... }:
 let
   slots = [ 1 2 3 ];
@@ -73,10 +73,11 @@ in
         [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" ]}
       ${host "raw" "PREROUTING" "-i veth-fc+ -m addrtype --dst-type LOCAL -j RETURN"}
       ip6tables -t raw -C PREROUTING -i veth-fc+ -j DROP 2>/dev/null || ip6tables -t raw -I PREROUTING -i veth-fc+ -j DROP
-      # Traffic to the host itself: only the gate.
+      # Traffic to the host itself: only the gate, each VM at its own slot's address (slot 2 can't act as slot 1).
+      iptables -D INPUT -i veth-fc+ -d 10.200.0.0/16 -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
       ${host "filter" "INPUT" "-i veth-fc+ -j DROP"}
       ${host "filter" "INPUT" "-i veth-fc+ -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"}
-      ${host "filter" "INPUT" "-i veth-fc+ -d 10.200.0.0/16 -p tcp --dport 80 -j ACCEPT"}
+      ${lib.concatMapStrings (n: host "filter" "INPUT" "-i veth-fc${toString n} -s 10.200.${toString n}.2 -d 10.200.${toString n}.1 -p tcp --dport 80 -j ACCEPT" + "\n") slots}
     '';
   };
 }
