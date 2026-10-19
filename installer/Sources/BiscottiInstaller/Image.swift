@@ -5,6 +5,8 @@ import libzstd
 /// A published, zstd-compressed image with its sha256 next to it. AWS has none: its machine builds itself from user data.
 struct Release {
     let url: URL
+    /// The hash built into the app at release (build.sh), which wins over the server's.
+    var pinned: String?
     var sha256: URL { url.appendingPathExtension("sha256") }
     var cache: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appending(path: "biscotti/\(url.lastPathComponent)")
@@ -13,14 +15,18 @@ struct Release {
     /// From the root package.json, by way of build.sh and Info.plist.
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     static let downloads = URL(string: "https://dl.biscotti.lucasgelfond.online/v\(version)")!
-    static let pi = Release(url: downloads.appending(path: "biscotti-pi5-v\(version).img.zst"))
-    static let mac = Release(url: downloads.appending(path: "biscotti-mac-v\(version).qcow2.zst"))
+    static let pi = Release(url: downloads.appending(path: "biscotti-pi5-v\(version).img.zst"), pinned: info("BiscottiPiSHA256"))
+    static let mac = Release(url: downloads.appending(path: "biscotti-mac-v\(version).qcow2.zst"), pinned: info("BiscottiMacSHA256"))
+    private static func info(_ key: String) -> String? { (Bundle.main.object(forInfoDictionaryKey: key) as? String).flatMap { $0.isEmpty ? nil : $0 } }
 }
 
 /// The image in the cache, downloaded first unless the cached copy already matches the published sha256.
 func fetch(_ release: Release, progress: @escaping (Double) -> Void) async throws -> URL {
-    let (data, _) = try await URLSession.shared.data(from: release.sha256)
-    let expected = String(decoding: data, as: UTF8.self).split(separator: " ").first.map(String.init) ?? ""
+    var expected = release.pinned ?? ""
+    if expected.isEmpty {
+        let (data, _) = try await URLSession.shared.data(from: release.sha256)
+        expected = String(decoding: data, as: UTF8.self).split(separator: " ").first.map(String.init) ?? ""
+    }
     if FileManager.default.fileExists(atPath: release.cache.path), try sha256(of: release.cache) == expected { return release.cache }
 
     let downloaded = try await Download(progress: progress).run(release.url)

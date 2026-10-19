@@ -31,7 +31,9 @@ struct Settings: Equatable {
         (id: "embedding", name: "Semantic memory"),
     ]
 
-    var hasWifi: Bool { !wifiName.isEmpty && !wifiPassword.isEmpty && !Settings.is5GHz(wifiName) }
+    var hasWifi: Bool { !wifiName.isEmpty && Settings.validWifiPassword(wifiPassword) && !Settings.is5GHz(wifiName) }
+    /// WPA passphrases: 8 to 63 characters on one line.
+    static func validWifiPassword(_ s: String) -> Bool { (8...63).contains(s.count) && !s.contains(where: \.isNewline) }
 
     /// The Pi can't join some 5 GHz channels on its first boot, so a network named like a 5 GHz one is refused.
     static func is5GHz(_ name: String) -> Bool {
@@ -154,8 +156,11 @@ struct Settings: Equatable {
             ("SPECTRUM_PROJECT_ID", photonID), ("SPECTRUM_PROJECT_SECRET", photonSecret),
             ("EXA_API_KEY", exaKey), ("TZ", TimeZone.current.identifier), ("TS_HOSTNAME", tailscaleName),
             ("GOOGLE_CLIENT_ID", googleClientID), ("GOOGLE_CLIENT_SECRET", googleClientSecret), ("GITHUB_TOKEN", githubToken),
-        ].filter { !$0.1.isEmpty }.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
+        ].map { ($0.0, Settings.oneLine($0.1)) }.filter { !$0.1.isEmpty }.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
     }
+
+    /// A pasted value with a line break in it can't add a setting of its own.
+    static func oneLine(_ s: String) -> String { s.filter { !$0.isNewline }.trimmingCharacters(in: .whitespaces) }
 
     /// What the Keychain keeps between runs: the `.env`, plus Wi-Fi and the plugin choice.
     private var saved: String {
@@ -189,14 +194,16 @@ struct Settings: Equatable {
 
     /// Writes the boot-partition files the image reads on first boot.
     func write(toBootPartition boot: URL) throws {
-        let quoted = { (s: String) in "\"" + s.replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+        // The name as hex, so any character works; wpa_supplicant reads a quoted passphrase up to its last quote, with no
+        // escapes, so quotes inside it need none.
+        let ssid = Data(wifiName.utf8).map { String(format: "%02x", $0) }.joined()
         let wpa = """
             ctrl_interface=/run/wpa_supplicant
             update_config=1
-            country=\(wifiCountry)
+            country=\(Settings.oneLine(wifiCountry))
             network={
-              ssid=\(quoted(wifiName))
-              psk=\(quoted(wifiPassword))
+              ssid=\(ssid)
+              psk="\(wifiPassword)"
             }
 
             """

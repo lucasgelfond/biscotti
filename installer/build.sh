@@ -4,6 +4,13 @@ set -euo pipefail
 cd "$(dirname "$0")"
 VERSION=$(plutil -extract version raw ../package.json)
 swift build -c release
+# The release's image hashes, built into the (notarized) app: a changed file on the download server can't pass. Empty
+# for a build before the images are uploaded; that app trusts the server's .sha256 files.
+DL="https://dl.biscotti.lucasgelfond.online/v$VERSION"
+published_sha() { curl -fsS "$DL/$1.sha256" 2>/dev/null | cut -d' ' -f1 || true; }
+PI_SHA=$(published_sha "biscotti-pi5-v$VERSION.img.zst")
+MAC_SHA=$(published_sha "biscotti-mac-v$VERSION.qcow2.zst")
+echo "image hashes: pi ${PI_SHA:-none}, mac ${MAC_SHA:-none}"
 APP="build/biscotti Installer.app"
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS"
 cp .build/release/BiscottiInstaller "$APP/Contents/MacOS/"
@@ -18,6 +25,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>BiscottiPiSHA256</key><string>$PI_SHA</string>
+  <key>BiscottiMacSHA256</key><string>$MAC_SHA</string>
   <key>NSContactsUsageDescription</key><string>To fill in your phone number and email from your contact card.</string>
 </dict></plist>
 PLIST
