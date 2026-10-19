@@ -39,7 +39,6 @@ struct Settings {
         switch plugin {
         case "exa": !exaKey.isEmpty
         case "google": !googleClientID.isEmpty && !googleClientSecret.isEmpty
-        case "github": !githubToken.isEmpty
         default: true
         }
     }
