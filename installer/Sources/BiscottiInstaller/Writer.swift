@@ -8,7 +8,26 @@ func writeImage(_ image: URL, to disk: Disk, progress: @escaping (Double) -> Voi
     let fd = try authorizedOpen("/dev/r\(disk.id)")
     defer { close(fd) }
 
-    try readImage(image, progress: progress) { try writeAll(fd, $0) }
+    // The raw device takes only whole sectors, so writes go out in 4 MiB blocks, the last padded with zeros.
+    let block = 4 << 20
+    var pending = [UInt8]()
+    pending.reserveCapacity(block)
+    try readImage(image, progress: progress) { chunk in
+        var rest = chunk[...]
+        while !rest.isEmpty {
+            let n = min(block - pending.count, rest.count)
+            pending.append(contentsOf: rest.prefix(n))
+            rest = rest.dropFirst(n)
+            if pending.count == block {
+                try pending.withUnsafeBytes { try writeAll(fd, $0) }
+                pending.removeAll(keepingCapacity: true)
+            }
+        }
+    }
+    if !pending.isEmpty {
+        pending.append(contentsOf: repeatElement(0, count: (512 - pending.count % 512) % 512))
+        try pending.withUnsafeBytes { try writeAll(fd, $0) }
+    }
     guard fsync(fd) == 0 else { throw InstallerError("Flushing the card failed") }
 }
 
