@@ -67,6 +67,7 @@ export interface Plugin {
 }
 
 export const text = (s: string): CallToolResult => ({ content: [{ type: "text", text: s }] });
+export const declined = text("The user declined.");
 
 export interface LocalTool {
   name: string;

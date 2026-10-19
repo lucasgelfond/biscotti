@@ -62,7 +62,7 @@ type Record_ = { type: string; toolName?: string; isError?: boolean; durationMs?
 
 async function run(task: string, slot: number, guidance: string) {
   const started = Date.now();
-  const vm = await restore(VM_DIR, FIRECRACKER, slot);
+  const vm = await restore(VM_DIR, FIRECRACKER, slot, 1100 + slot);
   const restored = Date.now() - started;
   const tools: Record<string, number> = {};
   let errors = 0;

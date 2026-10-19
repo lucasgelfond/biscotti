@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, rmSync, statSync } from "node:fs";
-import { request } from "node:http";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
+import { call } from "./http.ts";
 import { text, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces), with one always
@@ -23,8 +23,8 @@ export interface Vm {
 
 // VMs from the vms service, over its socket.
 export const vmService = (socketPath: string) => async (slot: number): Promise<Vm> => {
-  await api(socketPath, "POST", `/vms/${slot}`);
-  return { slot, stop: () => api(socketPath, "DELETE", `/vms/${slot}`) };
+  await call(socketPath, "POST", `/vms/${slot}`);
+  return { slot, stop: async () => void (await call(socketPath, "DELETE", `/vms/${slot}`)) };
 };
 
 export function taskVms(restore: (slot: number) => Promise<Vm>) {
@@ -75,11 +75,11 @@ export function taskVms(restore: (slot: number) => Promise<Vm>) {
   return { run };
 }
 
-// Firecracker in the slot's namespace; with `uid`, as the slot's own user with no capabilities, like Firecracker's jailer.
-export async function restore(vmDir: string, firecracker: string, slot: number, uid?: number): Promise<Vm> {
+// Firecracker in the slot's namespace, as the slot's own user (`uid`) with no capabilities, like Firecracker's jailer.
+export async function restore(vmDir: string, firecracker: string, slot: number, uid: number): Promise<Vm> {
   const sock = `/tmp/fc-${slot}.sock`;
   rmSync(sock, { force: true });
-  const as = uid ? ["setpriv", `--reuid=${uid}`, `--regid=${uid}`, `--groups=${statSync("/dev/kvm").gid}`, "--inh-caps=-all", "--no-new-privs", "--"] : [];
+  const as = ["setpriv", `--reuid=${uid}`, `--regid=${uid}`, `--groups=${statSync("/dev/kvm").gid}`, "--inh-caps=-all", "--no-new-privs", "--"];
   const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, ...as, firecracker, "--api-sock", sock], { stdio: "ignore", env: { PATH: process.env.PATH } });
   // A snapshot on huge pages (for nested virtualization, where every 4K page first touched is slow) can't be loaded
   // from the file directly: the handler copies it all in at the first fault.
@@ -102,14 +102,14 @@ export async function restore(vmDir: string, firecracker: string, slot: number, 
     }
     if (handler) {
       rmSync(uffd, { force: true });
-      pager = spawn(as[0] ?? handler, [...as.slice(1), ...(as.length ? [handler] : []), uffd, `${vmDir}/desktop.mem`], { stdio: "ignore", env: { PATH: process.env.PATH } });
+      pager = spawn(as[0], [...as.slice(1), handler, uffd, `${vmDir}/desktop.mem`], { stdio: "ignore", env: { PATH: process.env.PATH } });
       while (!existsSync(uffd)) await new Promise((r) => setTimeout(r, 5));
     }
-    await api(sock, "PUT", "/snapshot/load", {
+    await call(sock, "PUT", "/snapshot/load", JSON.stringify({
       snapshot_path: `${vmDir}/desktop.snap`,
       mem_backend: handler ? { backend_type: "Uffd", backend_path: uffd } : { backend_type: "File", backend_path: `${vmDir}/desktop.mem` },
       resume_vm: true,
-    });
+    }));
     return { slot, stop };
   } catch (err) {
     await stop();
@@ -117,18 +117,6 @@ export async function restore(vmDir: string, firecracker: string, slot: number, 
   }
 }
 
-function api(socketPath: string, method: string, path: string, body?: object) {
-  return new Promise<void>((resolve, reject) => {
-    const req = request({ socketPath, method, path, headers: { "Content-Type": "application/json" } }, (res) => {
-      let text = "";
-      res.on("data", (d) => (text += d)).on("end", () => {
-        if (res.statusCode! < 300) resolve();
-        else reject(new Error(`${path}: ${res.statusCode} ${text}`));
-      });
-    });
-    req.on("error", reject).end(body && JSON.stringify(body));
-  });
-}
 
 // The goal (and a repo, as a git bundle) goes to pi in the VM; its last assistant text is the report, then a
 // screenshot and the repo's new commits follow.

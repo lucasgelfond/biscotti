@@ -1,18 +1,14 @@
-import { chmodSync, chownSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { createServer, request } from "node:http";
-import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
-import { runAgent } from "./agent.ts";
 import crons from "./crons.ts";
-import { createGate, LOCKS, readBody, scrub } from "./gate.ts";
+import { createGate, LOCKS, scrub } from "./gate.ts";
+import { call, listen, readBody } from "./http.ts";
 import { memoryTools, openDb, searchableText } from "./memory.ts";
 import { localTools, text, type Channel, type Context, type LocalTool, type Plugin, type TaskOptions } from "./plugin.ts";
 import { transcripts } from "./schema.ts";
-import { restore, SLOTS, taskTool, taskVms, vmService } from "./tasks.ts";
+import { SLOTS, taskTool, taskVms, vmService } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
-
 
 function env(name: string) {
   const value = process.env[name];
@@ -23,9 +19,9 @@ function env(name: string) {
 type Message = { text: string; react(emoji: string): Promise<unknown> };
 
 // The gate: every key, the database, the channel and the plugins. `sockets` is the directory it shares with the main
-// agent; with `agent: false` the agent runs elsewhere (its own container), otherwise in this process.
-export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: string; agent?: boolean }) {
-  const { dir } = opts;
+// agent (agent-main.ts).
+export async function start(opts: { plugins: Plugin[]; dir: string; sockets: string }) {
+  const { dir, sockets } = opts;
   const plugins: Plugin[] = [crons, vault, ...opts.plugins];
   const db = openDb(`${dir}/biscotti.db`, env("DB_KEY"));
   // No text biscotti sends carries a saved secret, whoever wrote it: each becomes a placeholder.
@@ -36,9 +32,11 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
     send: (s) => channel.send(outbound(s)),
     secrets: () => secrets(db),
   });
+  // Task VMs, where the vms service runs (vms-main.ts).
   const vmDir = process.env.VM_DIR;
+  const vmSocket = process.env.VMS_SOCKET;
   let vms: ReturnType<typeof taskVms> | undefined;
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, task: vmDir ? task : undefined };
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, task: vmSocket ? task : undefined };
 
   const channelPlugin = plugins.find((p) => p.channel);
   if (!channelPlugin) throw new Error("biscotti.json needs a channel plugin, e.g. channels/spectrum");
@@ -46,10 +44,10 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
   for (const plugin of plugins) if (plugin.tools) gate.add(await plugin.tools(ctx));
   const recalls = await Promise.all(plugins.flatMap((p) => (p.recall ? [p.recall(ctx)] : [])));
 
-  if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot, peer: `10.200.${slot}.2` });
-  // The vms service restores VMs where there is one (VMS_SOCKET); otherwise (development) this process does.
-  const vmSocket = process.env.VMS_SOCKET;
-  if (vmDir) vms = taskVms(vmSocket ? vmService(vmSocket) : (slot) => restore(vmDir, env("FIRECRACKER"), slot));
+  if (vmSocket) {
+    for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot, peer: `10.200.${slot}.2` });
+    vms = taskVms(vmService(vmSocket));
+  }
 
   async function task(goal: string, { model, ...opts }: TaskOptions = {}) {
     if (!vms) throw new Error("Task VMs aren't running yet.");
@@ -74,7 +72,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
 
   // In the link's fragment, which the browser never sends to the server.
   const vncPassword = () => (existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : "");
-  const liveDesktop = process.env.LIVE_DESKTOP_URL ?? (process.env.TAILNET_HOST && `https://${process.env.TAILNET_HOST}`);
+  const liveDesktop = process.env.TAILNET_HOST && `https://${process.env.TAILNET_HOST}`;
   const tasks = vms
     ? [
         taskTool(
@@ -89,7 +87,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
   const prompt = [readFileSync(new URL("../SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
 
   // The agent's way in: its model and tools, the system prompt, and its transcript, on a socket only it shares.
-  const sockets = opts.sockets ?? mkdtempSync(join(tmpdir(), "biscotti-"));
   const agentSocket = createServer((req, res) => {
     if (req.url === "/prompt") return void res.end(prompt);
     if (req.url !== "/transcript") return gate.handle(req, res);
@@ -103,24 +100,13 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
       (err) => res.writeHead(400).end(String(err)),
     );
   });
-  rmSync(`${sockets}/gate.sock`, { force: true });
-  await new Promise<void>((resolve) => agentSocket.listen(`${sockets}/gate.sock`, resolve));
   // Only the agent's user (uid 1000, in its own container) may connect.
-  if (process.getuid?.() === 0) chownSync(`${sockets}/gate.sock`, 1000, 1000);
-  chmodSync(`${sockets}/gate.sock`, 0o600);
-  // In one process (tests, development), the agent runs alongside, and the gate answers on a loopback port too.
-  let gateUrl: string | undefined;
-  if (opts.agent !== false) {
-    await runAgent(sockets, join(dir, "agent"));
-    const server = await gate.listen("127.0.0.1", 0);
-    gateUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  }
-
+  await listen(agentSocket, `${sockets}/gate.sock`, 1000);
   // One turn of the agent. It may still be starting (its own container in production).
   async function turn(message: string): Promise<string | undefined> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await post(`${sockets}/agent.sock`, JSON.stringify({ text: message }));
+        return JSON.parse(await call(`${sockets}/agent.sock`, "POST", "/turn", JSON.stringify({ text: message }))).reply;
       } catch (err) {
         if (attempt >= 60 || !/ENOENT|ECONNREFUSED/.test(String(err))) throw err;
         await new Promise((r) => setTimeout(r, 2000));
@@ -154,15 +140,5 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
   }
 
   for (const plugin of plugins) await plugin.start?.(ctx);
-  return { db, gateUrl, channel, handle };
+  return { db, channel, handle };
 }
-
-function post(socketPath: string, body: string) {
-  return new Promise<string | undefined>((resolve, reject) => {
-    const req = request({ socketPath, method: "POST", path: "/turn", headers: { "Content-Type": "application/json" } }, (res) => {
-      readBody(res).then((text) => (res.statusCode === 200 ? resolve(JSON.parse(text).reply) : reject(new Error(text))), reject);
-    });
-    req.on("error", reject).end(body);
-  });
-}
-

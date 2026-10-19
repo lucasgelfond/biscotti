@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { localTools, text, type Context, type Plugin } from "@biscotti/core";
+import { declined, localTools, text, type Context, type Plugin } from "@biscotti/core";
 import { sql } from "drizzle-orm";
 
 // Gmail and Google Calendar over Google's REST APIs, with the owner's own OAuth client. Sending and calendar changes
@@ -112,7 +112,6 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
   async tools(ctx) {
     const { call, signInLink, redirectUri } = googleApi(ctx);
     const confirm = async (question: string) => (await ctx.ask(question)) || undefined;
-    const declined = text("The user declined.");
 
     return localTools([
       {

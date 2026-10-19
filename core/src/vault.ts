@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, randomInt } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { localTools, text, type LocalTool, type Plugin } from "./plugin.ts";
+import { declined, localTools, text, type LocalTool, type Plugin } from "./plugin.ts";
 import type { Db } from "./memory.ts";
 import { eq } from "drizzle-orm";
 import { vault } from "./schema.ts";
@@ -164,9 +164,8 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
 
   async tools(ctx) {
     const { db } = ctx;
-    // Every fill asks the owner for now; `confirm` is unused.
     const save = (name: string, value: Record<string, string>) => {
-      const row = { name, fields: Object.keys(value), confirm: true, value };
+      const row = { name, fields: Object.keys(value), value };
       db.insert(vault).values(row).onConflictDoUpdate({ target: vault.name, set: row }).run();
     };
 
@@ -220,7 +219,7 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
         const values = () => (fields as string[]).map((f) => (f === "totp" ? totp(row.value[f]) : row.value[f]));
         try {
           const into = await fill(browser(slot), values, approve);
-          if (!into) return text("The user declined.");
+          if (!into) return declined;
           return text(`Typed ${(fields as string[]).join(", ")} into: ${into.join(", ")}. Check the page before submitting.`);
         } catch (err) {
           return text(`Couldn't fill: ${(err as Error).message}`);
@@ -283,7 +282,7 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
           ctx.ask(`A task wants to set a new password for "${name}" on ${where}, for ${String(why).slice(0, 200)}. biscotti makes it, types it and saves it to the vault; it's never texted. Is ${where} the right site?`);
         try {
           const into = await fill(browser(slot), () => (confirm ? [password, password] : [password]), approve);
-          if (!into) return text("The user declined.");
+          if (!into) return declined;
           const old = row?.value.password;
           save(name as string, { ...row?.value, ...(username ? { username: String(username) } : {}), ...(old ? { "previous password": old } : {}), password });
           return text(`Typed a new password into ${into.join(", ")} and saved it to "${name}". Submit the form and check it took; if it didn't, the old one is the entry's "previous password".`);

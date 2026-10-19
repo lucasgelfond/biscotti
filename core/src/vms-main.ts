@@ -1,5 +1,6 @@
-import { chmodSync, createReadStream, rmSync } from "node:fs";
+import { createReadStream } from "node:fs";
 import { createServer } from "node:http";
+import { listen } from "./http.ts";
 import { restore, SLOTS, type Vm } from "./tasks.ts";
 
 // The task VMs' service, in a container of its own: KVM, the slots' networks and the snapshot, and no keys, no data
@@ -35,5 +36,4 @@ const server = createServer(async (req, res) => {
 
 // Pull the snapshot's memory into the page cache.
 createReadStream(`${vmDir}/desktop.mem`).on("error", () => {}).resume();
-rmSync(`${sockets}/vms.sock`, { force: true });
-server.listen(`${sockets}/vms.sock`, () => chmodSync(`${sockets}/vms.sock`, 0o600));
+await listen(server, `${sockets}/vms.sock`);

@@ -7,7 +7,7 @@ import { restore, SLOTS, taskVms } from "../core/src/tasks.ts";
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const onThePi = existsSync("/dev/kvm") && existsSync(`${VM_DIR}/desktop.snap`);
-const vms = onThePi ? taskVms((slot) => restore(VM_DIR, FIRECRACKER, slot)) : undefined;
+const vms = onThePi ? taskVms((slot) => restore(VM_DIR, FIRECRACKER, slot, 1100 + slot)) : undefined;
 
 if (onThePi) {
   const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: process.env.TASK_MODEL! }, send: async () => {} });

@@ -161,7 +161,7 @@ test.skipIf(!existsSync(CHROME))("sets a new password into the page and the vaul
   process.env.TASK_BROWSER = page.url;
   const dir = newDataDir();
   const db = openDb(`${dir}/biscotti.db`, "test-key");
-  db.insert(vaultTable).values({ name: "Delta login", fields: ["username", "password"], confirm: true, value: { username: "ada@example.com", password: "old-password-1" } }).run();
+  db.insert(vaultTable).values({ name: "Delta login", fields: ["username", "password"], value: { username: "ada@example.com", password: "old-password-1" } }).run();
   const asked: string[] = [];
   const ctx = { db, dir, env: (n: string) => n, ask: async (q: string) => (asked.push(q), true), deliver: async () => {} };
   const tools = await vault.tools!(ctx);
@@ -184,7 +184,7 @@ test.skipIf(!existsSync(CHROME))("sets a new password into the page and the vaul
 test("never texts a saved secret, whoever wrote the text", async () => {
   const leaky: Plugin = {
     async start(ctx) {
-      ctx.db.insert(vaultTable).values({ name: "Delta login", fields: ["password"], confirm: true, value: { password: "hunter2-biscotti" } }).run();
+      ctx.db.insert(vaultTable).values({ name: "Delta login", fields: ["password"], value: { password: "hunter2-biscotti" } }).run();
       void ctx.ask("Is the Delta password still hunter2-biscotti?");
     },
   };
