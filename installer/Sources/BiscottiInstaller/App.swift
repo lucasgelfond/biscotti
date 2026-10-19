@@ -136,6 +136,7 @@ struct InstallerView: View {
             footer.padding(16)
         }
         .frame(width: 620, height: 600)
+        .onChange(of: settings) { if !InstallerView.noAutofill { settings.save() } }
         .task {
             guard let path = UserDefaults.standard.string(forKey: "snapshot") else { return }
             try? await Task.sleep(for: .seconds(1))
@@ -709,7 +710,7 @@ struct InstallerView: View {
     /// Prefilled only from an explicit `-settings file.env`.
     private static func initialSettings() -> Settings {
         var settings = Settings()
-        if noAutofill { (settings.wifiName, settings.sshKey) = ("", "") }
+        if noAutofill { (settings.wifiName, settings.sshKey) = ("", "") } else { settings.loadSaved() }
         if let file = UserDefaults.standard.string(forKey: "settings") { settings.load(envFile: URL(fileURLWithPath: file)) }
         return settings
     }

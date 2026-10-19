@@ -4,7 +4,7 @@ import Security
 /// Everything personal that goes on the card (or into the Mac's VM, or the cloud machine). Nothing personal is in the
 /// images: the Pi reads these from its boot partition on first boot (Wi-Fi, SSH key) and moves the rest into its
 /// private settings.
-struct Settings {
+struct Settings: Equatable {
     var wifiName = Settings.knownNetworks().first ?? ""
     var wifiPassword = ""
     var wifiCountry = Locale.current.region?.identifier ?? "US"
@@ -118,6 +118,7 @@ struct Settings {
             case "GOOGLE_CLIENT_ID": googleClientID = value
             case "GOOGLE_CLIENT_SECRET": googleClientSecret = value
             case "GITHUB_TOKEN": githubToken = value
+            case "PLUGINS": plugins = Set(value.split(separator: ",").map(String.init))
             default: break
             }
         }
@@ -131,6 +132,30 @@ struct Settings {
             ("EXA_API_KEY", exaKey), ("TZ", TimeZone.current.identifier), ("TS_HOSTNAME", tailscaleName),
             ("GOOGLE_CLIENT_ID", googleClientID), ("GOOGLE_CLIENT_SECRET", googleClientSecret), ("GITHUB_TOKEN", githubToken),
         ].filter { !$0.1.isEmpty }.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
+    }
+
+    /// What the Keychain keeps between runs: the `.env`, plus Wi-Fi and the plugin choice.
+    private var saved: String {
+        env + [("WIFI_NAME", wifiName), ("WIFI_PASSWORD", wifiPassword), ("PLUGINS", plugins.sorted().joined(separator: ","))]
+            .map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
+    }
+
+    private static let keychainItem: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "biscotti Installer", kSecAttrAccount as String: "settings",
+    ]
+
+    func save() {
+        let data = Data(saved.utf8)
+        if SecItemUpdate(Settings.keychainItem as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+            SecItemAdd(Settings.keychainItem.merging([kSecValueData as String: data]) { $1 } as CFDictionary, nil)
+        }
+    }
+
+    mutating func loadSaved() {
+        var result: CFTypeRef?
+        let query = Settings.keychainItem.merging([kSecReturnData as String: true]) { $1 }
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return }
+        load(String(decoding: data, as: UTF8.self))
     }
 
     /// biscotti.json: the plugins to load.
