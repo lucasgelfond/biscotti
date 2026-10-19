@@ -1,4 +1,6 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage } from "node:http";
+import { connect, createServer as createTcpServer } from "node:net";
 import {
   createAgentSession,
   createMcpExtension,
@@ -7,14 +9,14 @@ import {
   SessionManager,
   SettingsManager,
   type FileEntry,
-  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { searchableText, type Db } from "./memory.ts";
-import { transcripts } from "./schema.ts";
+import { searchableText } from "./memory.ts";
 
-// One long conversation, rebuilt from transcripts and compacted by pi. Model and tools come through the gate.
-export async function createAgent(opts: { db: Db; dir: string; gateUrl: string; prompt: string; tools: ToolDefinition[] }) {
-  const { db, dir, gateUrl } = opts;
+// The main agent: one long conversation, compacted by pi. It holds no keys and opens no database: model, tools, the
+// system prompt and its transcript all come through the gate, and in production it runs in a container with no network,
+// reaching the gate only through a socket.
+export async function createAgent(opts: { dir: string; gateUrl: string; prompt: string; entries: FileEntry[]; save(entries: FileEntry[]): Promise<void> }) {
+  const { dir, gateUrl } = opts;
   const models = { providers: { biscotti: { baseUrl: `${gateUrl}/llm`, api: "openai-completions", apiKey: "added-by-the-gate", models: [{ id: "main", reasoning: true, input: ["text", "image"], contextWindow: 200000, maxTokens: 32768 }] } } };
   writeFileSync(`${dir}/models.json`, JSON.stringify(models));
   const modelRuntime = await ModelRuntime.create({ authPath: `${dir}/auth.json`, modelsPath: `${dir}/models.json`, modelsStorePath: `${dir}/models-store.json` });
@@ -38,7 +40,7 @@ export async function createAgent(opts: { db: Db; dir: string; gateUrl: string; 
   });
   await resourceLoader.reload();
 
-  const saved = db.select({ entry: transcripts.entry }).from(transcripts).orderBy(transcripts.seq).all();
+  const saved = opts.entries;
   const { session } = await createAgentSession({
     cwd: dir,
     agentDir: dir,
@@ -46,19 +48,19 @@ export async function createAgent(opts: { db: Db; dir: string; gateUrl: string; 
     modelRuntime,
     resourceLoader,
     settingsManager: SettingsManager.inMemory(),
-    sessionManager: SessionManager.inMemory(dir, undefined, saved.length ? saved.map((r) => r.entry) : undefined),
+    sessionManager: SessionManager.inMemory(dir, undefined, saved.length ? saved : undefined),
     noTools: "builtin",
-    customTools: opts.tools,
   });
   await session.bindExtensions({});
 
-  function save() {
+  // Only what's new since the last save goes to the gate.
+  let savedCount = saved.length;
+  async function save() {
     const manager = session.sessionManager;
     const entries: FileEntry[] = [manager.getHeader()!, ...manager.getEntries()];
-    db.insert(transcripts)
-      .values(entries.map((entry) => ({ id: entry.id, entry, text: searchableText(entry) })))
-      .onConflictDoNothing()
-      .run();
+    const fresh = entries.slice(savedCount);
+    savedCount = entries.length;
+    if (fresh.length) await opts.save(fresh);
   }
 
   return {
@@ -73,7 +75,7 @@ export async function createAgent(opts: { db: Db; dir: string; gateUrl: string; 
       try {
         await session.prompt(text);
       } finally {
-        save();
+        await save();
       }
       // Everything said this turn, including text written before a later tool call.
       return session.sessionManager
@@ -85,4 +87,57 @@ export async function createAgent(opts: { db: Db; dir: string; gateUrl: string; 
         .join("\n\n");
     },
   };
+}
+
+// The agent's process: pi talks HTTP to a loopback port relayed to the gate's socket (the container has no network),
+// and the gate hands it each turn on the agent's own socket.
+export async function runAgent(sockets: string, dir: string) {
+  mkdirSync(dir, { recursive: true });
+  const relay = createTcpServer((client) => {
+    const gate = connect(`${sockets}/gate.sock`);
+    client.pipe(gate).pipe(client);
+    gate.on("error", () => client.destroy());
+    client.on("error", () => gate.destroy());
+  });
+  const port = await new Promise<number>((resolve) => relay.listen(0, "127.0.0.1", () => resolve((relay.address() as { port: number }).port)));
+  const gateUrl = `http://127.0.0.1:${port}`;
+
+  // The gate may still be starting.
+  const get = async (path: string) => {
+    for (;;) {
+      const res = await fetch(`${gateUrl}${path}`).catch(() => undefined);
+      if (res?.ok) return res;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  };
+  const prompt = await (await get("/prompt")).text();
+  const entries = (await (await get("/transcript")).json()) as FileEntry[];
+  const agent = await createAgent({
+    dir,
+    gateUrl,
+    prompt,
+    entries,
+    save: async (fresh) => void (await fetch(`${gateUrl}/transcript`, { method: "POST", body: JSON.stringify(fresh) })),
+  });
+
+  const server = createServer(async (req, res) => {
+    try {
+      const { text } = JSON.parse(await readBody(req));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await agent.reply(text) }));
+    } catch (err) {
+      console.error(err);
+      res.writeHead(500).end(String(err));
+    }
+  });
+  rmSync(`${sockets}/agent.sock`, { force: true });
+  await new Promise<void>((resolve) => server.listen(`${sockets}/agent.sock`, resolve));
+  return { close: () => Promise.all([close(server), close(relay)]) };
+}
+
+const close = (server: { close(cb: () => void): unknown }) => new Promise<void>((resolve) => server.close(() => resolve()));
+
+async function readBody(req: IncomingMessage) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
 }

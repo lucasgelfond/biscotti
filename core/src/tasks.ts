@@ -1,12 +1,10 @@
-import { defineTool } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createReadStream, existsSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
-import { Type } from "typebox";
-import type { TaskOptions, TaskResult } from "./plugin.ts";
+import { text, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces). One VM is
 // always restored ahead of time.
@@ -149,24 +147,23 @@ function runPi(host: string, goal: string, { repo, timeoutMs = TASK_TIMEOUT_MS }
   });
 }
 
-export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: string, result: TaskResult) => void, watch?: (slot: number) => string) {
-  return defineTool({
+export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: string, result: TaskResult) => void, watch?: (slot: number) => string): LocalTool {
+  return {
     name: "task",
-    label: "Task",
     description:
       "Start a task in a fresh, disposable Linux VM with a desktop, browser, shell and internet, for anything that needs a website, a program or files. Returns right away; the report arrives later as a message starting 'Task report'. The task agent sees only the goal, so make it complete.",
-    parameters: Type.Object({ goal: Type.String() }),
-    async execute(_id, { goal }) {
-      const started = new Promise<number>((resolve) =>
+    input: { type: "object", properties: { goal: { type: "string" } }, required: ["goal"] },
+    async run(args) {
+      const goal = String(args.goal);
+      const running = new Promise<number>((resolve) =>
         vms.run(goal, resolve).then(
           (result) => onReport(goal, result),
           (err) => onReport(goal, { report: `The task failed: ${err.message}` }),
         ),
       );
       // A queued task (every slot busy) doesn't hold up the reply.
-      const slot = watch && (await Promise.race([started, new Promise<undefined>((r) => setTimeout(r, 3000))]));
-      const text = slot ? `Task started. Its live desktop, only for a user who asks to watch or take over: ${watch(slot)}` : "Task started.";
-      return { content: [{ type: "text" as const, text }], details: {} };
+      const slot = watch && (await Promise.race([running, new Promise<undefined>((r) => setTimeout(r, 3000))]));
+      return text(slot ? `Task started. Its live desktop, only for a user who asks to watch or take over: ${watch(slot)}` : "Task started.");
     },
-  });
+  };
 }

@@ -6,6 +6,8 @@
   systemd.tmpfiles.rules = [
     "d /var/lib/biscotti 0700 root root -"
     "d /var/lib/biscotti/data 0700 root root -"
+    # The gate's and the agent's sockets; the agent runs as uid 1000.
+    "d /run/biscotti 0755 1000 1000 -"
   ];
 
   systemd.services.biscotti-setup = {
@@ -80,7 +82,7 @@
         echo "include:"
         for p in $plugins; do [ -f "${repo}/plugins/$p/compose.yaml" ] && echo "  - ${repo}/plugins/$p/compose.yaml"; done
         echo "services:"
-        echo "  agent:"
+        echo "  gate:"
         echo "    volumes: [ /nix/store:/nix/store:ro ]"
         [ -z "$huge" ] || echo "    environment: { UFFD_HANDLER: ${faultAll}/bin/fault-all }"
         [ -z "$huge" ] || echo "    devices: [ /dev/userfaultfd ]"

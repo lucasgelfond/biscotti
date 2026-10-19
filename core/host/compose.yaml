@@ -1,10 +1,11 @@
-# The agent. Plugins that need a service of their own bring a compose.yaml, included for the plugins biscotti.json
-# names. Everything listens on 127.0.0.1 (or the task VMs' links); Tailscale exposes what the owner opens.
+# The gate and the main agent. Plugins that need a service of their own bring a compose.yaml, included for the plugins
+# biscotti.json names. Everything listens on 127.0.0.1 (or the task VMs' links); Tailscale exposes what the owner opens.
 name: biscotti
 
 services:
-  # Host networking: the gate listens on each VM slot's link, and Firecracker opens taps in the slots' namespaces.
-  agent:
+  # Every key, the database, the channel and the plugins. Host networking: the gate listens on each VM slot's link, and
+  # Firecracker opens taps in the slots' namespaces.
+  gate:
     build:
       context: ../..
       dockerfile: core/Dockerfile
@@ -31,4 +32,24 @@ services:
         bind: { propagation: rslave }
       - /var/lib/biscotti/vm:/var/lib/biscotti/vm:ro
       - ${FIRECRACKER_BIN:?}:/usr/local/bin/firecracker:ro
+      - /run/biscotti:/run/biscotti
+    restart: unless-stopped
+
+  # The main agent: no keys, no data and no network. It reaches the gate only through the socket in /run/biscotti, so
+  # whatever steers it can't read a secret or approve anything.
+  agent:
+    image: biscotti/agent
+    command: ["node", "core/src/agent-main.ts"]
+    network_mode: none
+    user: "1000:1000"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      HOME: /tmp
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - /run/biscotti:/run/biscotti
+    depends_on: [gate]
     restart: unless-stopped

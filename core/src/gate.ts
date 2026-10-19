@@ -10,6 +10,8 @@ import type { Caller, Tools } from "./plugin.ts";
 // An answer is the whole message, so "ok wait, don't" or "yes but change it" answers nothing.
 export const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)[.!]*$/i;
 export const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)[.!]*$/i;
+// Marks the gate's own questions; it's stripped from the agent's texts, so the agent can't pose as the gate.
+export const LOCK = "🔐";
 const ANSWER_TIMEOUT_MS = 10 * 60_000;
 const TASK_HOSTS = /^(gate|127\.0\.0\.1|172\.16\.0\.1|10\.200\.\d+\.1)(:\d+)?$/;
 
@@ -64,7 +66,7 @@ export function createGate(opts: {
   const next = () => {
     const current = queue[0];
     if (!current) return;
-    void opts.send(current.question);
+    void opts.send(`${LOCK} ${current.question}`);
     setTimeout(() => queue[0] === current && settle(false), ANSWER_TIMEOUT_MS);
   };
   function settle(yes: boolean) {
@@ -142,6 +144,8 @@ export function createGate(opts: {
     ask,
     answer,
     route: (slot: number, model?: string) => (model ? slotModels.set(slot, model) : slotModels.delete(slot)),
+    // The main agent's requests (the model, its tools), for a listener of the caller's choosing.
+    handle: handler(),
     add(tools: Tools) {
       sets.main.push(tools);
       if (tools.tasks) sets.tasks.push(tools.tasks);

@@ -1,12 +1,15 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
-import { defineTool } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-import { createAgent } from "./agent.ts";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
+import { runAgent } from "./agent.ts";
 import crons from "./crons.ts";
-import { createGate } from "./gate.ts";
-import { memoryTools, openDb } from "./memory.ts";
-import type { Channel, Context, Plugin, TaskOptions } from "./plugin.ts";
+import { createGate, LOCK } from "./gate.ts";
+import { memoryTools, openDb, searchableText } from "./memory.ts";
+import { localTools, text, type Channel, type Context, type LocalTool, type Plugin, type TaskOptions } from "./plugin.ts";
+import { transcripts } from "./schema.ts";
 import { SLOTS, taskTool, taskVms } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
 
@@ -19,7 +22,9 @@ function env(name: string) {
 
 type Message = { text: string; react(emoji: string): Promise<unknown> };
 
-export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: number }) {
+// The gate: every key, the database, the channel and the plugins. `sockets` is the directory it shares with the main
+// agent; with `agent: false` the agent runs elsewhere (its own container), otherwise in this process.
+export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: string; agent?: boolean }) {
   const { dir } = opts;
   const plugins: Plugin[] = [crons, vault, ...opts.plugins];
   const db = openDb(`${dir}/biscotti.db`, env("DB_KEY"));
@@ -39,8 +44,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   for (const plugin of plugins) if (plugin.tools) gate.add(await plugin.tools(ctx));
   const recalls = await Promise.all(plugins.flatMap((p) => (p.recall ? [p.recall(ctx)] : [])));
 
-  const gateServer = await gate.listen("127.0.0.1", opts.gatePort ?? 0);
-  const gateUrl = `http://127.0.0.1:${(gateServer.address() as AddressInfo).port}`;
   if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot });
   if (vmDir) vms = taskVms(vmDir, env("FIRECRACKER"));
 
@@ -55,16 +58,15 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
   }
 
   let latest: Message | undefined;
-  const react = defineTool({
+  const react: LocalTool = {
     name: "react",
-    label: "Tapback",
     description: "Tapback the user's latest message (❤️ 👍 👎 😂 ‼️ ❓), e.g. 👍 when starting on something, ❤️ on thanks. Can replace a reply.",
-    parameters: Type.Object({ emoji: Type.String() }),
-    async execute(_id, { emoji }) {
-      await latest?.react(emoji);
-      return { content: [{ type: "text" as const, text: "Reacted." }], details: {} };
+    input: { type: "object", properties: { emoji: { type: "string" } }, required: ["emoji"] },
+    async run({ emoji }) {
+      await latest?.react(String(emoji));
+      return text("Reacted.");
     },
-  });
+  };
 
   const liveDesktop = process.env.LIVE_DESKTOP_URL ?? (process.env.TAILNET_HOST && `https://${process.env.TAILNET_HOST}`);
   const tasks = vms
@@ -76,12 +78,48 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
         ),
       ]
     : [];
+  gate.add(memoryTools(db, recalls));
+  gate.add(localTools([react, ...tasks]));
   const prompt = [readFileSync(new URL("../SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
-  const agent = await createAgent({ db, dir, gateUrl, prompt, tools: [...memoryTools(db, recalls), react, ...tasks] });
+
+  // The agent's way in: its model and tools, the system prompt, and its transcript, on a socket only it shares.
+  const sockets = opts.sockets ?? mkdtempSync(join(tmpdir(), "biscotti-"));
+  const agentSocket = createServer((req, res) => {
+    if (req.url === "/prompt") return void res.end(prompt);
+    if (req.url !== "/transcript") return gate.handle(req, res);
+    if (req.method !== "POST") return void res.end(JSON.stringify(db.select({ entry: transcripts.entry }).from(transcripts).orderBy(transcripts.seq).all().map((r) => r.entry)));
+    readBody(req).then((body) => {
+      const entries = JSON.parse(body) as FileEntry[];
+      if (entries.length) db.insert(transcripts).values(entries.map((entry) => ({ id: entry.id, entry, text: searchableText(entry) }))).onConflictDoNothing().run();
+      res.end();
+    });
+  });
+  rmSync(`${sockets}/gate.sock`, { force: true });
+  await new Promise<void>((resolve) => agentSocket.listen(`${sockets}/gate.sock`, resolve));
+  chmodSync(`${sockets}/gate.sock`, 0o666);
+  // In one process (tests, development), the agent runs alongside, and the gate answers on a loopback port too.
+  let gateUrl: string | undefined;
+  if (opts.agent !== false) {
+    await runAgent(sockets, join(dir, "agent"));
+    const server = await gate.listen("127.0.0.1", 0);
+    gateUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  }
+
+  // One turn of the agent. It may still be starting (its own container in production).
+  async function turn(message: string): Promise<string | undefined> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await post(`${sockets}/agent.sock`, JSON.stringify({ text: message }));
+      } catch (err) {
+        if (attempt >= 60 || !/ENOENT|ECONNREFUSED/.test(String(err))) throw err;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  }
 
   // A link on its own line goes as its own message, so it expands into a preview.
   async function send(reply: string) {
-    const lines = reply.split("\n");
+    const lines = reply.replaceAll(LOCK, "").split("\n");
     const isLink = (line: string) => /^https?:\/\/\S+$/.test(line.trim());
     const body = lines.filter((l) => !isLink(l)).join("\n").trim();
     if (body) await channel.send({ text: body });
@@ -90,7 +128,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
 
   async function deliver(text: string, image?: Buffer) {
     try {
-      const reply = await agent.reply(text);
+      const reply = await turn(text);
       if (reply) await send(reply);
       if (image) await channel.send({ image });
     } catch (err) {
@@ -106,4 +144,19 @@ export async function start(opts: { plugins: Plugin[]; dir: string; gatePort?: n
 
   for (const plugin of plugins) await plugin.start?.(ctx);
   return { db, gateUrl, channel, handle };
+}
+
+function post(socketPath: string, body: string) {
+  return new Promise<string | undefined>((resolve, reject) => {
+    const req = request({ socketPath, method: "POST", path: "/turn", headers: { "Content-Type": "application/json" } }, (res) => {
+      readBody(res).then((text) => (res.statusCode === 200 ? resolve(JSON.parse(text).reply) : reject(new Error(text))), reject);
+    });
+    req.on("error", reject).end(body);
+  });
+}
+
+async function readBody(stream: AsyncIterable<unknown>) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
 }
