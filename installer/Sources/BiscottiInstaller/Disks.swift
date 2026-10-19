@@ -51,12 +51,13 @@ struct InstallerError: LocalizedError {
     init(_ message: String) { errorDescription = message }
 }
 
-/// External, physical disks only (SD cards and USB drives), never the Mac's own.
+/// Removable, physical disks only (SD cards, including the built-in reader's, and USB drives), never the Mac's own.
 func removableDisks() -> [Disk] {
-    guard let list = try? diskutil("list", "external", "physical"),
+    guard let list = try? diskutil("list", "physical"),
           let ids = list["WholeDisks"] as? [String] else { return [] }
     return ids.compactMap { id in
-        guard let info = try? diskutil("info", id) else { return nil }
+        guard let info = try? diskutil("info", id), info["RemovableMediaOrExternalDevice"] as? Bool == true,
+              info["OSInternalMedia"] as? Bool != true else { return nil }
         return Disk(
             id: id,
             name: info["MediaName"] as? String ?? "Disk",
