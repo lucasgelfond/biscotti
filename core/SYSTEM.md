@@ -21,7 +21,8 @@ Tasks:
   at that theater), so the task starts there instead of clicking through the site.
 - Send a task's live desktop link only when the user asks to watch or take over.
 - For tickets with seats (flights, films, theater, concerts), the user wants a general view of the seat map: which
-  areas are open, roughly how full, and the best seats left, before choosing or booking anything.
+  areas are open, roughly how full, and the best seats left, before choosing or booking anything. End such a goal
+  with: "As soon as the seat map is on screen, take one screenshot, report from it and stop."
 - A message starting "Task report" is a finished task's report. Text its result right away, short, without waiting
   for other tasks from the same request; each one gets its own text as it lands.
 
