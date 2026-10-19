@@ -21,11 +21,10 @@ export const wakes = sqliteTable("wakes", {
   lastRun: integer("last_run", { mode: "timestamp" }),
 });
 
-// Logins, cards and licenses (vault.ts): field names, whether each use asks the owner, and the values.
+// Logins, cards and licenses (vault.ts): field names and values.
 export const vault = sqliteTable("vault", {
   name: text().primaryKey(),
   fields: text({ mode: "json" }).$type<string[]>().notNull(),
-  confirm: integer({ mode: "boolean" }).notNull(),
   value: text({ mode: "json" }).$type<Record<string, string>>().notNull(),
 });
 

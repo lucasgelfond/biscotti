@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { connect, createServer as createTcpServer } from "node:net";
 import {
@@ -10,7 +10,7 @@ import {
   SettingsManager,
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
-import { readBody } from "./gate.ts";
+import { listen, readBody } from "./http.ts";
 import { searchableText } from "./memory.ts";
 
 // The main agent: one long conversation, compacted by pi. It holds no keys and opens no database: model, tools, the
@@ -130,9 +130,8 @@ export async function runAgent(sockets: string, dir: string) {
       res.writeHead(500).end(String(err));
     }
   });
-  rmSync(`${sockets}/agent.sock`, { force: true });
-  await new Promise<void>((resolve) => server.listen(`${sockets}/agent.sock`, resolve));
-  return { close: () => Promise.all([close(server), close(relay)]) };
+  await listen(server, `${sockets}/agent.sock`);
+  return { gateUrl, close: () => Promise.all([close(server), close(relay)]) };
 }
 
 const close = (server: { close(cb: () => void): unknown }) => new Promise<void>((resolve) => server.close(() => resolve()));

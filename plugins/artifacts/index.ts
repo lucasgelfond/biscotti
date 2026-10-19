@@ -22,7 +22,7 @@ into a card, so keep the rest of the reply to a line or two.`,
 
   async tools(ctx) {
     const dir = `${ctx.dir}/pages`;
-    const baseUrl = process.env.PAGES_URL ?? `https://${ctx.env("TAILNET_HOST")}`;
+    const baseUrl = `https://${ctx.env("TAILNET_HOST")}`;
     mkdirSync(dir, { recursive: true });
     if (!existsSync(`${dir}/preview.jpg`))
       void fetch(PREVIEW_IMAGE)

@@ -42,9 +42,6 @@ hostname sandbox; printf '127.0.0.1 localhost sandbox\n172.16.0.1 gate\n' > /etc
 # Mirror Cua's service logs to the serial console so the host can see them.
 (while :; do echo "heartbeat $(cut -d" " -f1 /proc/uptime) $(date +%T)"; sleep 2; done) > /dev/console &
 (sleep 3; tail -qF /var/log/supervisor/*.log) > /dev/console 2>&1 &
-# Dev hook: `biscotti.run=<script>` runs a script once X is up, output to the console.
-run=$(sed -n 's/.*biscotti\.run=\([^ ]*\).*/\1/p' /proc/cmdline)
-[ -n "$run" ] && (until xdpyinfo -display :1 >/dev/null 2>&1; do sleep 0.2; done; sh "$run" > /dev/console 2>&1) &
 exec /usr/local/bin/biscotti-start > /dev/console 2>&1
 EOF
 chmod +x "$DIR/sbin/biscotti-init"

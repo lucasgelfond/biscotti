@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { readBody } from "./http.ts";
 import type { Caller, Tools } from "./plugin.ts";
 
 // The gate holds every key: the model at /llm, every plugin's tools at /mcp, and the owner's approvals. Saved secrets
@@ -19,8 +20,6 @@ export const LOCK = "🔐";
 export const LOCKS = /[🔐🔒🔓🔏]/gu;
 const ANSWER_TIMEOUT_MS = 10 * 60_000;
 const TASK_HOSTS = /^(gate|127\.0\.0\.1|172\.16\.0\.1|10\.200\.\d+\.1)(:\d+)?$/;
-// Model calls carry screenshots, so they're large, but not unbounded.
-const MAX_BODY = 32 * 1024 * 1024;
 
 // Some providers (Gemini) reject loose JSON Schema that MCP tools use: type lists, and properties on untyped or
 // non-object nodes.
@@ -182,15 +181,4 @@ export function createGate(opts: {
         server.listen(port, host, () => resolve(server));
       }),
   };
-}
-
-export async function readBody(req: AsyncIterable<unknown>, max = MAX_BODY) {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > max) throw new Error(`request over ${max / 1024 / 1024} MB`);
-    chunks.push(chunk as Buffer);
-  }
-  return Buffer.concat(chunks).toString("utf8");
 }

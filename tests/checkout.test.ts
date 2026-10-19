@@ -21,7 +21,7 @@ test.skipIf(!onThePi)("with no card saved, asks for one through a vault form ins
 
 test.skipIf(!onThePi)("checks out with the saved card once the owner says yes", { timeout: 15 * 60_000 }, async () => {
   const b = await boot([]);
-  b.db.$client.prepare("INSERT INTO vault VALUES ('Visa', ?, 1, ?)").run(JSON.stringify(Object.keys(CARD)), JSON.stringify(CARD));
+  b.db.$client.prepare("INSERT INTO vault VALUES ('Visa', ?, ?)").run(JSON.stringify(Object.keys(CARD)), JSON.stringify(CARD));
 
   await b.say(ORDER);
   await expect.poll(() => b.sent.join("\n"), { timeout: 10 * 60_000, interval: 1000 }).toContain("to approve");

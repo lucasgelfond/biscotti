@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runAgent } from "../core/src/agent.ts";
 import { start } from "../core/src/biscotti.ts";
 import type { Plugin } from "../core/src/plugin.ts";
 
@@ -21,9 +22,12 @@ export async function boot(names: (string | Plugin)[], dir = newDataDir()) {
   const plugins = await Promise.all(
     names.map(async (name) => (typeof name === "string" ? ((await import(/* @vite-ignore */ new URL(`../plugins/${name}/index.ts`, import.meta.url).href)).default as Plugin) : name)),
   );
-  const biscotti = await start({ plugins: [phone, ...plugins], dir });
+  // The agent as in production, reaching the gate only through the sockets; its relay is the tests' way in too.
+  const sockets = mkdtempSync(join(tmpdir(), "sockets-"));
+  const biscotti = await start({ plugins: [phone, ...plugins], dir, sockets });
+  const { gateUrl } = await runAgent(sockets, join(dir, "agent"));
   const say = (text: string) => biscotti.handle({ text, react: async (emoji) => void reactions.push(emoji) });
-  return { ...biscotti, dir, say, sent, images, reactions };
+  return { ...biscotti, gateUrl, dir, say, sent, images, reactions };
 }
 
 // The code the gate's latest question asks for: "yes <code>" approves it.

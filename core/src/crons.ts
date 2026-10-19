@@ -1,4 +1,4 @@
-import { localTools, text, type Plugin } from "./plugin.ts";
+import { declined, localTools, text, type Plugin } from "./plugin.ts";
 import { Cron } from "croner";
 import { eq } from "drizzle-orm";
 import { wakes } from "./schema.ts";
@@ -45,7 +45,7 @@ export default {
           const next = new Cron(when, { timezone }).nextRun();
           if (!next) return text(`"${when}" never comes up again; give a future time or a cron expression.`);
           const repeats = !!new Cron(when, { timezone }).nextRun(next);
-          if (!(await ask(`Schedule "${label}" (${repeats ? `${when}, ` : ""}next ${local(next)}): "${prompt.slice(0, 500)}"?`))) return text("The user declined.");
+          if (!(await ask(`Schedule "${label}" (${repeats ? `${when}, ` : ""}next ${local(next)}): "${prompt.slice(0, 500)}"?`))) return declined;
           const [wake] = db.insert(wakes).values({ label, when, prompt }).returning().all();
           return text(`Scheduled wake ${wake.id} (${label}); next ${local(next)}.`);
         },

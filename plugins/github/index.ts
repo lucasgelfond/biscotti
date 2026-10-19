@@ -1,4 +1,4 @@
-import { localTools, mcpTools, secret, text, type Context, type Plugin, type Tool } from "@biscotti/core";
+import { declined, localTools, mcpTools, secret, text, type Context, type Plugin, type Tool } from "@biscotti/core";
 import { codeTask } from "./code.ts";
 
 // GitHub's remote MCP server with the owner's fine-grained token, from .env or the vault ("GitHub", field "token").
@@ -28,7 +28,7 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
     const tools = mcpTools(URL, { Authorization: `Bearer ${pat}`, "X-MCP-Toolsets": TOOLSETS }, async (client, name, args) => {
       if (MERGE.test(name)) return text("biscotti doesn't merge; send the user the pull request link.");
       if (!readOnly.has(name) && !(await ctx.ask(`GitHub: ${name} with ${JSON.stringify(args).slice(0, 3000)}${JSON.stringify(args).length > 3000 ? " […longer than shown]" : ""}?`)))
-        return { content: [{ type: "text", text: "The user declined." }] };
+        return declined;
       return client.callTool({ name, arguments: args }) as never;
     });
     const code = localTools([codeTask(ctx, pat)]);
