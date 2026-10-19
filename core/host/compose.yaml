@@ -3,28 +3,51 @@
 name: biscotti
 
 services:
-  # Every key, the database, the channel and the plugins. Host networking: the gate listens on each VM slot's link, and
-  # Firecracker opens taps in the slots' namespaces.
+  # Every key, the database, the channel and the plugins. Host networking: the gate listens on each VM slot's link and
+  # reaches the VMs there. It runs no VM itself: the vms service does.
   gate:
     build:
       context: ../..
       dockerfile: core/Dockerfile
     image: biscotti/agent
     network_mode: host
-    # An init process reaps exited Firecracker processes.
-    init: true
     env_file: /var/lib/biscotti/.env
     environment:
       DATA_DIR: /data
       VM_DIR: /var/lib/biscotti/vm
-      FIRECRACKER: /usr/local/bin/firecracker
-    # Task VMs: KVM, the slots' network namespaces (entering one needs SYS_ADMIN, opening its tap NET_ADMIN), the
-    # patched Firecracker and the snapshot.
-    devices: [/dev/kvm, /dev/net/tun]
-    cap_add: [NET_ADMIN, SYS_ADMIN]
+      VMS_SOCKET: /run/biscotti-vms/vms.sock
     volumes:
       - /var/lib/biscotti/data:/data
       - /var/lib/biscotti/biscotti.json:/app/biscotti.json:ro
+      - /var/lib/biscotti/vm:/var/lib/biscotti/vm:ro
+      - /run/biscotti:/run/biscotti
+      - /run/biscotti-vms:/run/biscotti-vms
+    depends_on: [vms]
+    restart: unless-stopped
+
+  # Task VMs: KVM, the slots' network namespaces, the patched Firecracker and the snapshot, and nothing else: no keys,
+  # no data, no network of its own. Each slot's Firecracker runs as that slot's user with no capabilities, so a VM that
+  # broke out would find nothing worth having, and couldn't reach another slot's VM.
+  vms:
+    image: biscotti/agent
+    command: ["node", "core/src/vms-main.ts"]
+    network_mode: none
+    # An init process reaps exited Firecracker processes.
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    # Entering a slot's namespace needs SYS_ADMIN; becoming the slot's user, SETUID and SETGID; stopping its VM, KILL.
+    # In each slot's group, to reach its Firecracker's socket.
+    cap_drop: [ALL]
+    cap_add: [SYS_ADMIN, SETUID, SETGID, KILL]
+    group_add: ["1101", "1102", "1103"]
+    security_opt: [no-new-privileges:true]
+    devices: [/dev/kvm, /dev/net/tun]
+    environment:
+      VM_DIR: /var/lib/biscotti/vm
+      FIRECRACKER: /usr/local/bin/firecracker
+      TASK_UID_BASE: "1100"
+    volumes:
       - type: bind
         source: /run/netns
         target: /run/netns
@@ -32,7 +55,7 @@ services:
         bind: { propagation: rslave }
       - /var/lib/biscotti/vm:/var/lib/biscotti/vm:ro
       - ${FIRECRACKER_BIN:?}:/usr/local/bin/firecracker:ro
-      - /run/biscotti:/run/biscotti
+      - /run/biscotti-vms:/run/biscotti-vms
     restart: unless-stopped
 
   # The main agent: no keys, no data and no network. It reaches the gate only through the socket in /run/biscotti, so

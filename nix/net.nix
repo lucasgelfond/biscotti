@@ -20,7 +20,11 @@ let
       ip -n ${ns} addr replace ${inside}/30 dev veth0
       ip -n ${ns} link set veth0 up
       ip -n ${ns} route replace default via ${host}
-      ip -n ${ns} link show fc-task >/dev/null 2>&1 || ip -n ${ns} tuntap add fc-task mode tap
+      # The tap belongs to the slot's user, so the slot's Firecracker opens it without NET_ADMIN.
+      if [ "$(ip netns exec ${ns} cat /sys/class/net/fc-task/owner 2>/dev/null)" != ${toString (1100 + n)} ]; then
+        ip -n ${ns} link del fc-task 2>/dev/null || true
+        ip -n ${ns} tuntap add fc-task mode tap user ${toString (1100 + n)}
+      fi
       ip -n ${ns} addr replace 172.16.0.1/24 dev fc-task
       ip -n ${ns} link set fc-task up
       ip netns exec ${ns} sysctl -qw net.ipv4.ip_forward=1
@@ -54,7 +58,7 @@ in
     after = [ "docker.service" ];
     requires = [ "docker.service" ];
     wantedBy = [ "multi-user.target" ];
-    path = with pkgs; [ iproute2 iptables procps gnugrep ];
+    path = with pkgs; [ iproute2 iptables procps gnugrep coreutils ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;

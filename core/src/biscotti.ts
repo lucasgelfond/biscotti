@@ -10,7 +10,7 @@ import { createGate, LOCKS, readBody } from "./gate.ts";
 import { memoryTools, openDb, searchableText } from "./memory.ts";
 import { localTools, text, type Channel, type Context, type LocalTool, type Plugin, type TaskOptions } from "./plugin.ts";
 import { transcripts } from "./schema.ts";
-import { SLOTS, taskTool, taskVms } from "./tasks.ts";
+import { restore, SLOTS, taskTool, taskVms, vmService } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
 
 
@@ -45,7 +45,9 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
   const recalls = await Promise.all(plugins.flatMap((p) => (p.recall ? [p.recall(ctx)] : [])));
 
   if (vmDir) for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot, peer: `10.200.${slot}.2` });
-  if (vmDir) vms = taskVms(vmDir, env("FIRECRACKER"));
+  // The vms service restores VMs where there is one (VMS_SOCKET); otherwise (development) this process does.
+  const vmSocket = process.env.VMS_SOCKET;
+  if (vmDir) vms = taskVms(vmSocket ? vmService(vmSocket) : (slot) => restore(vmDir, env("FIRECRACKER"), slot));
 
   async function task(goal: string, { model, ...opts }: TaskOptions = {}) {
     if (!vms) throw new Error("Task VMs aren't running yet.");

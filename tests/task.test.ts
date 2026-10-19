@@ -1,13 +1,13 @@
 import { existsSync } from "node:fs";
 import { expect, test } from "vitest";
 import { createGate } from "../core/src/gate.ts";
-import { SLOTS, taskVms } from "../core/src/tasks.ts";
+import { restore, SLOTS, taskVms } from "../core/src/tasks.ts";
 
 // Runs on the Pi, with the live agent stopped (it holds the slots and the gate's ports).
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const onThePi = existsSync("/dev/kvm") && existsSync(`${VM_DIR}/desktop.snap`);
-const vms = onThePi ? taskVms(VM_DIR, FIRECRACKER) : undefined;
+const vms = onThePi ? taskVms((slot) => restore(VM_DIR, FIRECRACKER, slot)) : undefined;
 
 if (onThePi) {
   const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: process.env.TASK_MODEL! }, send: async () => {} });
