@@ -35,6 +35,10 @@ RUN case "$TARGETARCH" in \
     echo "$sum  /tmp/node.tar.xz" | sha256sum -c - && \
     tar -xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz && rm /tmp/node.tar.xz
 
+# pnpm for coding tasks, through corepack, fetched now so a task needn't.
+ENV COREPACK_HOME=/opt/corepack COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack install -g pnpm@10.29.1 && chmod -R a+rX /opt/corepack
+
 # Ad and tracker blocklist (StevenBlack/hosts at a pinned commit), appended to /etc/hosts at boot.
 RUN curl -fsSL -o /etc/hosts.block \
       https://raw.githubusercontent.com/StevenBlack/hosts/2025dea10a1d17c41acf1035056e5c4a2913ebfc/hosts && \
