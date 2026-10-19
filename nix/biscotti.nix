@@ -40,6 +40,10 @@ in
   services.chrony.enable = true;
   virtualisation.docker.enable = true;
   environment.systemPackages = [ firecracker pkgs.git pkgs.jq ];
+  # Firecracker restoring a huge-page snapshot (the Mac) opens /dev/userfaultfd; it runs as a slot's user in group kvm.
+  services.udev.extraRules = ''
+    KERNEL=="userfaultfd", GROUP="kvm", MODE="0660"
+  '';
   networking.firewall.trustedInterfaces = [ "tailscale0" ];
 
   nix.settings.experimental-features = [ "nix-command" "flakes" ];

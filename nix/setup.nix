@@ -8,6 +8,8 @@
     "d /var/lib/biscotti/data 0700 root root -"
     # The gate's and the agent's sockets: only the agent (uid 1000) and root get in.
     "d /run/biscotti 0700 1000 1000 -"
+    # The gate's and the vms service's.
+    "d /run/biscotti-vms 0700 root root -"
   ];
 
   systemd.services.biscotti-setup = {
@@ -82,13 +84,13 @@
         HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
         echo "$vm_source" > "$STATE/vm/source"
       fi
-      # The agent, plus the services of the plugins that bring one. Nix-built binaries mounted into the agent (the
-      # patched Firecracker) load their libraries from the Nix store.
+      # The gate, the agent and the vms service, plus the services of the plugins that bring one. Nix-built binaries
+      # mounted into the vms service (the patched Firecracker) load their libraries from the Nix store.
       {
         echo "include:"
         for p in $plugins; do [ -f "${repo}/plugins/$p/compose.yaml" ] && echo "  - ${repo}/plugins/$p/compose.yaml"; done
         echo "services:"
-        echo "  gate:"
+        echo "  vms:"
         echo "    volumes: [ /nix/store:/nix/store:ro ]"
         [ -z "$huge" ] || echo "    environment: { UFFD_HANDLER: ${faultAll}/bin/fault-all }"
         [ -z "$huge" ] || echo "    devices: [ /dev/userfaultfd ]"
