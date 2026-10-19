@@ -26,7 +26,6 @@
     <div class="examples">
       <figure><img src="img/examples/landlord.gif" width="360" alt="Asking biscotti when the landlord last fixed the AC; it answers from Gmail" loading="lazy" /><figcaption>Email and Calendar</figcaption></figure>
       <figure><img src="img/examples/flights.gif" width="360" alt="Asking about JFK to SFO flights; biscotti checks the calendar and starts looking" loading="lazy" /><figcaption>Flights</figcaption></figure>
-      <figure><img src="img/examples/cameron.gif" width="360" alt="Finding screenings and seats for the Cameron Winter concert film, then checkout" loading="lazy" /><figcaption>Tickets and checkout</figcaption></figure>
     </div>
   </details>
 
