@@ -11,8 +11,9 @@ Acknowledgements: Shoutout to [Diego Rodriguez](https://www.diego.computer/) for
 ![biscotti](site/public/tweet.png)
 
 <table><tr>
-<td><img src="site/public/img/examples/landlord.gif" width="260" alt="Email and Calendar"><br>Email and Calendar</td>
-<td><img src="site/public/img/examples/flights.gif" width="260" alt="Flights"><br>Flights</td>
+<td><img src="site/public/img/examples/email.gif" width="260" alt="Email"><br>Email</td>
+<td><img src="site/public/img/examples/flights.gif" width="260" alt="Flights / Computer Use"><br>Flights / Computer Use</td>
+<td><img src="site/public/img/examples/reminders.gif" width="260" alt="Reminders and recurring jobs"><br>Reminders and recurring jobs</td>
 </tr></table>
 
 [Watch the full demo (2 min)](https://dl.biscotti.lucasgelfond.online/media/biscotti-demo.mp4)
