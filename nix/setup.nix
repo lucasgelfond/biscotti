@@ -75,7 +75,13 @@
 
       # Huge pages reserved (the Mac): task VMs run on them.
       huge=$([ "$(cat /proc/sys/vm/nr_hugepages)" -gt 0 ] && echo 2M || true)
-      [ -f "$STATE/vm/desktop.snap" ] || HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
+      # Rebuilt when the VM's source changes (an update to the task agent or the desktop).
+      vm_source=$(cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+      if [ ! -f "$STATE/vm/desktop.snap" ] || [ "$(cat "$STATE/vm/source" 2>/dev/null)" != "$vm_source" ]; then
+        rm -f "$STATE/vm/desktop.snap"
+        HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
+        echo "$vm_source" > "$STATE/vm/source"
+      fi
       # The agent, plus the services of the plugins that bring one. Nix-built binaries mounted into the agent (the
       # patched Firecracker) load their libraries from the Nix store.
       {
