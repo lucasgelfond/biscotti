@@ -4,7 +4,10 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import { fill, totp } from "../core/src/vault.ts";
+import { openDb } from "../core/src/memory.ts";
+import type { Plugin } from "../core/src/plugin.ts";
+import { vault as vaultTable } from "../core/src/schema.ts";
+import vault, { fill, newPassword, totp } from "../core/src/vault.ts";
 import { boot, newDataDir, toolCalls } from "./support.ts";
 
 const biscotti = boot([]);
@@ -142,4 +145,53 @@ test.skipIf(!existsSync(CHROME))("stops when focus moves to another site after t
   expect(asked).toEqual([server.page]);
   page.close();
   server.close();
+});
+
+test.for([0, 1, 2, 3, 4])("makes a new password with both cases and a digit, in three groups of six (%i)", () => {
+  const password = newPassword();
+
+  expect(password).toMatch(/^[A-Za-z0-9]{6}-[A-Za-z0-9]{6}-[A-Za-z0-9]{6}$/);
+  expect(password).toMatch(/[a-z]/);
+  expect(password).toMatch(/[A-Z]/);
+  expect(password).toMatch(/\d/);
+});
+
+test.skipIf(!existsSync(CHROME))("sets a new password into the page and the vault, keeps the old one, and never shows it", async () => {
+  const page = await chrome(`<input type="password" aria-label="New password" autofocus><input type="password" aria-label="Confirm password">`, 9345);
+  process.env.TASK_BROWSER = page.url;
+  const dir = newDataDir();
+  const db = openDb(`${dir}/biscotti.db`, "test-key");
+  db.insert(vaultTable).values({ name: "Delta login", fields: ["username", "password"], confirm: true, value: { username: "ada@example.com", password: "old-password-1" } }).run();
+  const asked: string[] = [];
+  const ctx = { db, dir, env: (n: string) => n, ask: async (q: string) => (asked.push(q), true), deliver: async () => {} };
+  const tools = await vault.tools!(ctx);
+
+  const result = await tools.tasks!.call("vault_new_password", { name: "Delta login", why: "the old one expired", confirm: true }, { slot: 1 });
+  const typed = (await page.title()).split("|");
+  page.close();
+  delete process.env.TASK_BROWSER;
+  const saved = db.select().from(vaultTable).all()[0].value;
+  const said = JSON.stringify(result) + asked.join("\n");
+
+  expect(typed).toEqual([saved.password, saved.password]);
+  expect(saved.password).not.toBe("old-password-1");
+  expect(saved["previous password"]).toBe("old-password-1");
+  expect(saved.username).toBe("ada@example.com");
+  expect(asked[0]).toContain('set a new password for "Delta login"');
+  expect(said).not.toContain(saved.password);
+});
+
+test("never texts a saved secret, whoever wrote the text", async () => {
+  const leaky: Plugin = {
+    async start(ctx) {
+      ctx.db.insert(vaultTable).values({ name: "Delta login", fields: ["password"], confirm: true, value: { password: "hunter2-biscotti" } }).run();
+      void ctx.ask("Is the Delta password still hunter2-biscotti?");
+    },
+  };
+  const { sent } = await boot([leaky]);
+
+  await expect.poll(() => sent.length).toBeGreaterThan(0);
+
+  expect(sent[0]).toContain("[vault:Delta login.password]");
+  expect(sent.join("\n")).not.toContain("hunter2-biscotti");
 });

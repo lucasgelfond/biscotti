@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { runAgent } from "./agent.ts";
 import crons from "./crons.ts";
-import { createGate, LOCKS, readBody } from "./gate.ts";
+import { createGate, LOCKS, readBody, scrub } from "./gate.ts";
 import { memoryTools, openDb, searchableText } from "./memory.ts";
 import { localTools, text, type Channel, type Context, type LocalTool, type Plugin, type TaskOptions } from "./plugin.ts";
 import { transcripts } from "./schema.ts";
@@ -28,10 +28,12 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
   const { dir } = opts;
   const plugins: Plugin[] = [crons, vault, ...opts.plugins];
   const db = openDb(`${dir}/biscotti.db`, env("DB_KEY"));
+  // No text biscotti sends carries a saved secret, whoever wrote it: each becomes a placeholder.
+  const outbound = (s: string) => ({ text: scrub(s, secrets(db)) as string });
   const gate = createGate({
     llm: { url: env("LLM_BASE_URL"), key: env("LLM_API_KEY") },
     models: { main: env("MODEL"), task: env("TASK_MODEL"), code: process.env.CODE_MODEL || env("TASK_MODEL") },
-    send: (text) => channel.send({ text }),
+    send: (s) => channel.send(outbound(s)),
     secrets: () => secrets(db),
   });
   const vmDir = process.env.VM_DIR;
@@ -131,8 +133,8 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets?: st
     const lines = reply.replace(LOCKS, "").split("\n");
     const isLink = (line: string) => /^https?:\/\/\S+$/.test(line.trim());
     const body = lines.filter((l) => !isLink(l)).join("\n").trim();
-    if (body) await channel.send({ text: body });
-    for (const link of lines.filter(isLink)) await channel.send({ text: link.trim() });
+    if (body) await channel.send(outbound(body));
+    for (const link of lines.filter(isLink)) await channel.send(outbound(link.trim()));
   }
 
   async function deliver(text: string, image?: Buffer) {

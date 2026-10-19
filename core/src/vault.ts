@@ -1,12 +1,13 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, randomInt } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { localTools, text, type LocalTool, type Plugin } from "./plugin.ts";
 import type { Db } from "./memory.ts";
 import { eq } from "drizzle-orm";
 import { vault } from "./schema.ts";
 
-// Logins, cards and licenses in the encrypted database. Entered through one-time forms on the tailnet, and typed into
-// task VMs' pages by the gate: no model ever sees a secret value.
+// Logins, cards and licenses in the encrypted database. Entered through one-time forms on the tailnet, made by the gate
+// for password resets and new accounts, and typed into task VMs' pages by the gate: no model ever sees a secret value,
+// and none is ever texted.
 
 const PORT = 4791;
 const FORM_TTL_MS = 30 * 60_000;
@@ -17,6 +18,9 @@ const SECRET = /pass|pin\b|cvc|cvv|code|secret|token|key|totp|number|ssn|account
 const isPublic = (field: string) => IDENTIFYING.test(field) && !SECRET.test(field);
 // Shorter values (a ZIP, a month) would scrub ordinary text.
 const MIN_SCRUBBED = 6;
+
+// The slot's VM's Chromium, over DevTools.
+const browser = (slot?: number) => process.env.TASK_BROWSER ?? `http://10.200.${slot}.2:9223`;
 
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
@@ -36,6 +40,16 @@ export function secrets(db: Db) {
     .from(vault)
     .all()
     .flatMap((row) => Object.entries(row.value).filter(([field, value]) => !isPublic(field) && value.length >= MIN_SCRUBBED).map(([field, value]) => ({ label: `${row.name}.${field}`, value })));
+}
+
+// A new password, like Apple's: three groups of six letters and digits, with at least one of each case and a digit, so
+// it suits most sites' rules.
+export function newPassword() {
+  const chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (;;) {
+    const password = [0, 1, 2].map(() => Array.from({ length: 6 }, () => chars[randomInt(chars.length)]).join("")).join("-");
+    if (/[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password)) return password;
+  }
 }
 
 // The current code for an authenticator setup key (base32, or an otpauth:// URI), per RFC 6238.
@@ -146,7 +160,9 @@ export default {
   prompt: `Vault: \`vault_list\` shows the saved logins, cards and licenses: their fields, and non-secret values like
 usernames. You never see secret values: a task types them into the page itself (\`vault_fill\`), so for a login or
 checkout, start a task and name the vault entry in its goal. To save a new one, \`vault_request\` gives a one-time form
-link; if the user pastes a secret in chat anyway, \`vault_save\` it.`,
+link; if the user pastes a secret in chat anyway, \`vault_save\` it. For a password reset or a new account, start a
+task and tell it to set the password with \`vault_new_password\` (naming the entry): the vault makes it, types it and
+keeps it. Never text a password; if the user wants to see one, they can look it up on their own devices.`,
 
   async tools(ctx) {
     const { db } = ctx;
@@ -205,7 +221,7 @@ link; if the user pastes a secret in chat anyway, \`vault_save\` it.`,
         const approve = (where: string) => ctx.ask(`A task wants to type "${row.name}" (${(fields as string[]).join(", ")}) into ${where}, for ${String(why).slice(0, 200)}. Is ${where} the right site?`);
         const values = () => (fields as string[]).map((f) => (f === "totp" ? totp(row.value[f]) : row.value[f]));
         try {
-          const into = await fill(`http://10.200.${slot}.2:9223`, values, approve);
+          const into = await fill(browser(slot), values, approve);
           if (!into) return text("The user declined.");
           return text(`Typed ${(fields as string[]).join(", ")} into: ${into.join(", ")}. Check the page before submitting.`);
         } catch (err) {
@@ -248,6 +264,36 @@ link; if the user pastes a secret in chat anyway, \`vault_save\` it.`,
         return text(`${process.env.VAULT_URL ?? `https://${ctx.env("TAILNET_HOST")}:9443`}/${token}`);
       },
     };
-    return { ...localTools([list, saveTool, request]), tasks: localTools([list, fillTool]) };
+    const newPasswordTool: LocalTool = {
+      name: "vault_new_password",
+      description:
+        "Set a new password (a reset, or a new account) without seeing it: the vault makes a strong one, types it into the focused input and saves it to the entry, keeping the old one as 'previous password'. Click the new-password input first; with confirm, it's typed again in the next field (Tab) too. Never make up or type a password yourself. Waits for the owner's approval.",
+      input: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "The vault entry, from vault_list, or a new one, e.g. 'Delta login'." },
+          username: { type: "string", description: "For a new account: the username or email it's for." },
+          confirm: { type: "boolean", description: "Type it in the next field too, for a 'confirm password' box." },
+          why: { type: "string", description: "Shown to the owner, e.g. 'resetting the Delta password, which expired'." },
+        },
+        required: ["name", "why"],
+      },
+      async run({ name, username, confirm, why }, { slot }) {
+        const row = db.select().from(vault).where(eq(vault.name, name as string)).get();
+        const password = newPassword();
+        const approve = (where: string) =>
+          ctx.ask(`A task wants to set a new password for "${name}" on ${where}, for ${String(why).slice(0, 200)}. biscotti makes it, types it and saves it to the vault; it's never texted. Is ${where} the right site?`);
+        try {
+          const into = await fill(browser(slot), () => (confirm ? [password, password] : [password]), approve);
+          if (!into) return text("The user declined.");
+          const old = row?.value.password;
+          save(name as string, { ...row?.value, ...(username ? { username: String(username) } : {}), ...(old ? { "previous password": old } : {}), password });
+          return text(`Typed a new password into ${into.join(", ")} and saved it to "${name}". Submit the form and check it took; if it didn't, the old one is the entry's "previous password".`);
+        } catch (err) {
+          return text(`Couldn't set it: ${(err as Error).message}`);
+        }
+      },
+    };
+    return { ...localTools([list, saveTool, request]), tasks: localTools([list, fillTool, newPasswordTool]) };
   },
 } satisfies Plugin;
