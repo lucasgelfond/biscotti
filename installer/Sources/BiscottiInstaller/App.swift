@@ -312,6 +312,10 @@ struct InstallerView: View {
             } else {
                 field("Your phone number", $settings.phone)
             }
+            if !settings.phone.isEmpty, Settings.e164(settings.phone) == nil {
+                Text("This doesn't look like a phone number. Include the country code, like +44 20 7946 0958, unless it's a US number.")
+                    .font(.callout).foregroundStyle(.red)
+            }
         }
         .settingsForm()
         .task {
@@ -420,7 +424,7 @@ struct InstallerView: View {
             LabeledContent("Target", value: target.title)
             row(.tailscale, skipped.contains(.tailscale) ? "Skipped" : phone ?? "Ready")
             if target == .pi { row(.wifi, settings.wifiName) }
-            row(.you, settings.phone)
+            row(.you, Settings.e164(settings.phone) ?? settings.phone)
             row(.photon, settings.photonID)
             row(.llm, "\(settings.model) via \(URL(string: settings.llmBaseURL)?.host() ?? settings.llmBaseURL)")
             row(.plugins, (Settings.optionalPlugins.filter { settings.plugins.contains($0.id) }.map(\.name)

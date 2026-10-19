@@ -37,7 +37,16 @@ struct Settings: Equatable {
     static func is5GHz(_ name: String) -> Bool {
         name.range(of: #"(^|[^0-9])5(\.0)? ?(G|GHz)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
-    var hasOwner: Bool { !phone.isEmpty }
+    var hasOwner: Bool { Settings.e164(phone) != nil }
+
+    /// The number as Photon takes it, with its country code: ten digits are a US number.
+    static func e164(_ phone: String) -> String? {
+        let digits = phone.filter(\.isASCII).filter(\.isNumber)
+        if phone.trimmingCharacters(in: .whitespaces).hasPrefix("+") { return (8...15).contains(digits.count) ? "+" + digits : nil }
+        if digits.count == 10 { return "+1" + digits }
+        if digits.count == 11, digits.hasPrefix("1") { return "+" + digits }
+        return nil
+    }
     var hasPhoton: Bool { !photonID.isEmpty && !photonSecret.isEmpty }
     var hasAI: Bool { ![llmBaseURL, llmKey, model].contains { $0.isEmpty } }
     func hasKeys(_ plugin: String) -> Bool {
@@ -132,7 +141,7 @@ struct Settings: Equatable {
     /// biscotti's `.env`.
     var env: String {
         [
-            ("OWNER", phone), ("LLM_BASE_URL", llmBaseURL), ("LLM_API_KEY", llmKey), ("MODEL", model),
+            ("OWNER", Settings.e164(phone) ?? phone), ("LLM_BASE_URL", llmBaseURL), ("LLM_API_KEY", llmKey), ("MODEL", model),
             ("SPECTRUM_PROJECT_ID", photonID), ("SPECTRUM_PROJECT_SECRET", photonSecret),
             ("EXA_API_KEY", exaKey), ("TZ", TimeZone.current.identifier), ("TS_HOSTNAME", tailscaleName),
             ("GOOGLE_CLIENT_ID", googleClientID), ("GOOGLE_CLIENT_SECRET", googleClientSecret), ("GITHUB_TOKEN", githubToken),
