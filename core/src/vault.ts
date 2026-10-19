@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, randomInt } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { declined, localTools, text, type LocalTool, type Plugin } from "./plugin.ts";
+import { bool, declined, input, list, localTools, optional, str, text, type LocalTool, type Plugin } from "./plugin.ts";
 import type { Db } from "./memory.ts";
 import { eq } from "drizzle-orm";
 import { vault } from "./schema.ts";
@@ -186,10 +186,10 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
       void ctx.deliver(`"${pending.name}" was saved to the vault by the user.`);
     }).listen(Number(process.env.VAULT_PORT ?? PORT), "127.0.0.1"));
 
-    const list: LocalTool = {
+    const listTool: LocalTool = {
       name: "vault_list",
       description: "List saved secrets (logins, cards, licenses): their names, fields, and non-secret values like usernames.",
-      input: { type: "object", properties: {} },
+      input: input(),
       async run() {
         const rows = db.select().from(vault).orderBy(vault.name).all();
         if (!rows.length) return text("No secrets saved.");
@@ -201,15 +201,11 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
       name: "vault_fill",
       description:
         "Type saved values into the page without seeing them. Click the first input (e.g. the username box), then call this; several fields are typed in order with Tab between, e.g. ['username', 'password'] or ['number', 'expiry', 'cvc']. The field 'totp' types the current 2FA code. Waits for the owner's approval.",
-      input: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "The entry's name, from vault_list." },
-          fields: { type: "array", items: { type: "string" } },
-          why: { type: "string", description: "What it's for, shown to the owner when they're asked, e.g. 'checkout for 2 train tickets, $34'." },
-        },
-        required: ["name", "fields", "why"],
-      },
+      input: input({
+        name: str("The entry's name, from vault_list."),
+        fields: list(str()),
+        why: str("What it's for, shown to the owner when they're asked, e.g. 'checkout for 2 train tickets, $34'."),
+      }),
       async run({ name, fields, why }, { slot }) {
         const row = db.select().from(vault).where(eq(vault.name, name as string)).get();
         if (!row) return text(`No secret named "${name}".`);
@@ -229,14 +225,10 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
     const saveTool: LocalTool = {
       name: "vault_save",
       description: "Save a secret the user typed in chat (so it needn't be typed again), or replace one's values. For new ones, prefer vault_request.",
-      input: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "e.g. 'Delta login'." },
-          values: { type: "object", additionalProperties: { type: "string" }, description: "e.g. { username, password }." },
-        },
-        required: ["name", "values"],
-      },
+      input: input({
+        name: str("e.g. 'Delta login'."),
+        values: { type: "object", additionalProperties: str(), description: "e.g. { username, password }." },
+      }),
       async run({ name, values }) {
         save(name as string, values as Record<string, string>);
         return text(`Saved "${name}".`);
@@ -245,14 +237,10 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
     const request: LocalTool = {
       name: "vault_request",
       description: "Get a one-time link to a form where the user enters a new secret (or replaces one). Text the link; you'll get a message once it's saved.",
-      input: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "e.g. 'Chase Sapphire card' or 'Delta login'." },
-          fields: { type: "array", items: { type: "string" }, description: "e.g. ['number', 'expiry', 'cvc', 'name on card'], ['username', 'password'], or 'totp' for a 2FA setup key." },
-        },
-        required: ["name", "fields"],
-      },
+      input: input({
+        name: str("e.g. 'Chase Sapphire card' or 'Delta login'."),
+        fields: list(str(), "e.g. ['number', 'expiry', 'cvc', 'name on card'], ['username', 'password'], or 'totp' for a 2FA setup key."),
+      }),
       async run({ name, fields }) {
         serve();
         const token = randomBytes(16).toString("hex");
@@ -265,16 +253,12 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
       name: "vault_new_password",
       description:
         "Set a new password (a reset, or a new account) without seeing it: the vault makes a strong one, types it into the focused input and saves it to the entry, keeping the old one as 'previous password'. Click the new-password input first; with confirm, it's typed again in the next field (Tab) too. Never make up or type a password yourself. Waits for the owner's approval.",
-      input: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "The vault entry, from vault_list, or a new one, e.g. 'Delta login'." },
-          username: { type: "string", description: "For a new account: the username or email it's for." },
-          confirm: { type: "boolean", description: "Type it in the next field too, for a 'confirm password' box." },
-          why: { type: "string", description: "Shown to the owner, e.g. 'resetting the Delta password, which expired'." },
-        },
-        required: ["name", "why"],
-      },
+      input: input({
+        name: str("The vault entry, from vault_list, or a new one, e.g. 'Delta login'."),
+        username: optional(str("For a new account: the username or email it's for.")),
+        confirm: optional(bool("Type it in the next field too, for a 'confirm password' box.")),
+        why: str("Shown to the owner, e.g. 'resetting the Delta password, which expired'."),
+      }),
       async run({ name, username, confirm, why }, { slot }) {
         const row = db.select().from(vault).where(eq(vault.name, name as string)).get();
         const password = newPassword();
@@ -291,6 +275,6 @@ keeps it. Never text a password; if the user wants to see one, they can look it 
         }
       },
     };
-    return { ...localTools([list, saveTool, request]), tasks: localTools([list, fillTool, newPasswordTool]) };
+    return { ...localTools([listTool, saveTool, request]), tasks: localTools([listTool, fillTool, newPasswordTool]) };
   },
 } satisfies Plugin;

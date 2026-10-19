@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { localTools, text, type Plugin } from "@biscotti/core";
+import { input, localTools, str, text, type Plugin } from "@biscotti/core";
 
 // Pages the agent texts as links. Public (Funnel) under unguessable names, so iMessage can fetch the preview tags.
 
@@ -35,15 +35,11 @@ into a card, so keep the rest of the reply to a line or two.`,
         name: "publish_page",
         description:
           "Publish a self-contained HTML page (inline CSS/JS/images; it can load nothing from elsewhere; phone-friendly) and get its link. Use it when an answer is better as a page than a text: tables, comparisons, itineraries, charts. The link is sent to the user as its own message, which expands into a card with the title and summary.",
-        input: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "The page's name, shown on the link card." },
-            summary: { type: "string", description: "One sentence for the link card." },
-            html: { type: "string", description: "A complete HTML document." },
-          },
-          required: ["title", "summary", "html"],
-        },
+        input: input({
+          title: str("The page's name, shown on the link card."),
+          summary: str("One sentence for the link card."),
+          html: str("A complete HTML document."),
+        }),
         async run(args) {
           const { title, summary, html } = args as { title: string; summary: string; html: string };
           const name = `${randomBytes(12).toString("hex")}.html`;

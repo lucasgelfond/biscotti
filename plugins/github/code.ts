@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { text, type Context, type LocalTool } from "@biscotti/core";
+import { input, optional, str, text, type Context, type LocalTool } from "@biscotti/core";
 
 // Coding tasks with no token in the VM: a git bundle in, its commits out; the gate checks them, asks, pushes a
 // biscotti/ branch and opens a draft pull request. Never merged.
@@ -75,15 +75,11 @@ export function codeTask(ctx: Context, token: string): LocalTool {
     name: "code_task",
     description:
       "Change code in a GitHub repo: a coding agent works on a copy in a fresh VM, and its commits come back as a draft pull request for the user to review (never merged). Returns at once; a 'Code task report' message with the PR link follows, often many minutes later.",
-    input: {
-      type: "object",
-      properties: {
-        repo: { type: "string", description: "owner/name, e.g. lucasgelfond/biscotti." },
-        goal: { type: "string", description: "The change, complete on its own: the coding agent sees only this and the code." },
-        base: { type: "string", description: "Branch to start from; the repo's default branch if omitted." },
-      },
-      required: ["repo", "goal"],
-    },
+    input: input({
+      repo: str("owner/name, e.g. lucasgelfond/biscotti."),
+      goal: str("The change, complete on its own: the coding agent sees only this and the code."),
+      base: optional(str("Branch to start from; the repo's default branch if omitted.")),
+    }),
     async run({ repo, goal, base }) {
       if (!ctx.task) return text("Coding tasks need task VMs, which this machine doesn't have.");
       if (typeof repo !== "string" || !REPO.test(repo)) return text("repo should be owner/name.");

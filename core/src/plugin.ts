@@ -67,6 +67,21 @@ export interface Plugin {
 }
 
 export const text = (s: string): CallToolResult => ({ content: [{ type: "text", text: s }] });
+
+// Tool input schemas, e.g. `input({ to: str("An email address."), max: optional(int()) })`: every property is
+// required unless it's `optional`.
+type Schema = Record<string, unknown>;
+const typed = (type: string) => (description?: string): Schema => ({ type, ...(description && { description }) });
+export const str = typed("string");
+export const int = typed("integer");
+export const bool = typed("boolean");
+export const list = (items: Schema, description?: string): Schema => ({ ...typed("array")(description), items });
+const OPTIONAL = Symbol("optional");
+export const optional = (schema: Schema): Schema => ({ ...schema, [OPTIONAL]: true });
+export function input(properties: Record<string, Schema> = {}): Tool["inputSchema"] {
+  const required = Object.keys(properties).filter((k) => !properties[k][OPTIONAL as never]);
+  return { type: "object", properties, ...(required.length && { required }) };
+}
 export const declined = text("The user declined.");
 
 export interface LocalTool {
