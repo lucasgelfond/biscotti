@@ -35,6 +35,18 @@ in
 {
   boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
 
+  # The namespaces exist before Docker starts the agent, which only sees /run/netns as it was when it started.
+  systemd.services.biscotti-netns = {
+    before = [ "docker.service" ];
+    wantedBy = [ "docker.service" ];
+    path = with pkgs; [ iproute2 gnugrep ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = lib.concatMapStrings (n: "ip netns list | grep -qw fc${toString n} || ip netns add fc${toString n}\n") slots;
+  };
+
   systemd.services.biscotti-net = {
     description = "biscotti task VM network";
     # Docker owns FORWARD and creates DOCKER-USER, which runs first; these rules go there.

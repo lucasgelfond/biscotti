@@ -85,13 +85,18 @@ export async function restore(vmDir: string, firecracker: string, slot: number):
   let pager: ReturnType<typeof spawn> | undefined;
   // The next VM in this slot can't open the tap until this one has exited.
   const stop = async () => {
-    const exited = once(vm, "exit");
+    const exited = vm.exitCode === null && vm.signalCode === null ? once(vm, "exit") : undefined;
     vm.kill("SIGKILL");
     pager?.kill("SIGKILL");
     await exited;
   };
   try {
-    while (!existsSync(sock)) await new Promise((r) => setTimeout(r, 20));
+    let exited = false;
+    vm.once("exit", () => (exited = true));
+    while (!existsSync(sock)) {
+      if (exited) throw new Error(`firecracker didn't start in slot ${slot}`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
     if (handler) {
       rmSync(uffd, { force: true });
       pager = spawn(handler, [uffd, `${vmDir}/desktop.mem`], { stdio: "ignore", env: {} });
