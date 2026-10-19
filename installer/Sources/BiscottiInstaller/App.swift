@@ -332,10 +332,12 @@ struct InstallerView: View {
             Text("Because iMessage has no native API, biscotti texts you through Photon. You'll need to set up a Photon Spectrum project and get the keys.")
             serviceButtons("photon")
             Form {
-                field("Photon project ID", $settings.photonID)
+                field("Photon project ID", $settings.photonID, prompt: "or paste the .env lines from Photon")
                 field("Photon project secret", $settings.photonSecret, secure: true)
             }
             .settingsForm()
+            .onChange(of: settings.photonID) { if $1.contains("SPECTRUM_PROJECT_") { settings.loadPhoton($1) } }
+            .onChange(of: settings.photonSecret) { if $1.contains("SPECTRUM_PROJECT_") { settings.loadPhoton($1) } }
         }
     }
 
