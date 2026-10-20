@@ -60,20 +60,23 @@ export function taskVms(restore: (slot: number) => Promise<Vm>) {
     return ready ?? restore(await acquire());
   }
 
-  async function run(goal: string, onStart?: (slot: number) => void, opts: TaskOptions = {}): Promise<TaskResult> {
+  // A fresh VM for `use`, gone once it's done.
+  async function lease<T>(use: (slot: number) => Promise<T>): Promise<T> {
     const vm = await take();
     warmUp();
     try {
-      onStart?.(vm.slot);
-      return await runPi(`10.200.${vm.slot}.2`, goal, opts);
+      return await use(vm.slot);
     } finally {
       await vm.stop();
       release(vm.slot);
     }
   }
 
+  const run = (goal: string, onStart?: (slot: number) => void, opts: TaskOptions = {}) =>
+    lease((slot) => (onStart?.(slot), runPi(`10.200.${slot}.2`, goal, opts)));
+
   warmUp();
-  return { run };
+  return { run, lease };
 }
 
 // Firecracker in the slot's namespace, as the slot's own user (`uid`) with no capabilities, like Firecracker's jailer.
@@ -190,6 +193,8 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
         if (slot) gate.route(slot);
       }
     },
+    // A VM's Chromium, over DevTools, for plugins that drive it themselves.
+    vm: <T>(use: (browser: string) => Promise<T>) => vms.lease((slot) => use(`http://10.200.${slot}.2:9223`)),
     tool: taskTool(vms, report, watch),
   };
 }

@@ -22,6 +22,8 @@ export interface Context {
   // A goal for a task VM, where this machine has them. With `repo` (a git bundle), the VM works on it in ~/repo and
   // its new commits come back as `bundle`; `model` names one of the gate's models.
   task?(goal: string, opts?: TaskOptions): Promise<TaskResult>;
+  // A fresh task VM, for as long as `use` runs: `browser` is its Chromium's DevTools address.
+  vm?<T>(use: (browser: string) => Promise<T>): Promise<T>;
 }
 
 export interface TaskOptions {
