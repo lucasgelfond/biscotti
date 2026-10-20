@@ -125,3 +125,28 @@ export function saveSecret(db: Db, name: string, value: Record<string, string>) 
   const row = { name, fields: Object.keys(value), value };
   db.insert(vault).values(row).onConflictDoUpdate({ target: vault.name, set: row }).run();
 }
+
+// A page biscotti serves the owner (a vault form, a sign-in callback), styled like biscotti's site.
+export const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+const ART = [
+  "        _.-~~~~~~~~~~~~~~~~~~~~-._",
+  "     .-'  o    .   (_)    .   o   '-.",
+  "    /  .   (_)   .    o   (_)   .    \\",
+  "   /  o   .    o   (_)   .    o   .   \\",
+  "  /__(_)____.____o____.____(_)____o____\\",
+].join("\n");
+export const htmlPage = (title: string, body: string) => `<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title>
+<style>
+body{margin:0;background:#fff;color:#000;font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;letter-spacing:-.01em}
+main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
+pre{margin:0 0 24px;font-size:11px;line-height:1.2;overflow-x:auto}
+h1{font-size:15px;font-weight:600;margin:0 0 24px}
+a{color:#2400ff}
+label{display:block;margin:0 0 16px}
+input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;font:inherit;border:1px solid #000;border-radius:0;background:#fff}
+input:focus{outline:2px solid #2400ff;outline-offset:-1px}
+button{font:inherit;padding:6px 14px;border:1px solid #000;background:#fff;color:#000;cursor:pointer}
+button:hover{background:#000;color:#fff}
+</style>
+<main><pre aria-hidden="true">${ART}</pre>${body}</main>`;
