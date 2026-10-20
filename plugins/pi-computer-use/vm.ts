@@ -5,15 +5,16 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 
 const VERSION = "0.5.1";
 const INTEGRITY = "sha512-eBYKTUYfLeaCE33TF6CBb0rklXbgS/4GNDsnl+cBTXv6HTkkMc/Gq/ft3RdcDL0hiRmQBwU9Ohx9jWz4r/l9xQ==";
 const env = process.env;
-const DIR = env.PCU_DIR ?? "/opt/pi/node_modules/@injaneity/pi-computer-use";
+// All in the task user's own /tmp: the package's setup re-chmods its helper, so the user must own it.
+const DIR = env.PCU_DIR ?? "/tmp/pi-computer-use";
 const PI = env.PCU_PI ?? "/opt/pi/node_modules/.bin/pi";
+const MODULES = env.PCU_MODULES ?? "/opt/pi/node_modules";
 const AGENT = env.PCU_AGENT_DIR ?? "/tmp/pcu-agent";
-const USER = env.PCU_USER ?? "cua";
 
 const PROMPT = `You are a task agent in a disposable Linux VM; Chromium is open on its desktop, and the requester may be watching.
 Use the computer-use tools: observe, then act; each action reports whether it worked, so check before moving on.
@@ -26,29 +27,38 @@ const log = (line: string) => console.error(`pi-computer-use: ${line}`);
 let goal = "";
 for await (const chunk of process.stdin) goal += chunk;
 
-const tgz = Buffer.from(await (await fetch(`https://registry.npmjs.org/@injaneity/pi-computer-use/-/pi-computer-use-${VERSION}.tgz`)).arrayBuffer());
+const tgz = Buffer.from(await (await fetch(`https://registry.npmjs.org/@injaneity/pi-computer-use/-/pi-computer-use-${VERSION}.tgz`, { signal: AbortSignal.timeout(180_000) })).arrayBuffer());
 if (`sha512-${createHash("sha512").update(tgz).digest("base64")}` !== INTEGRITY) throw new Error("pi-computer-use's download doesn't match its pinned hash");
 mkdirSync(DIR, { recursive: true });
-writeFileSync("/tmp/pcu.tgz", tgz);
-execFileSync("tar", ["-xzf", "/tmp/pcu.tgz", "-C", DIR, "--strip-components=1"]);
+execFileSync("tar", ["-xz", "-C", DIR, "--strip-components=1"], { input: tgz });
+// Its imports (pi itself, typebox) resolve to the VM's pi install.
+execFileSync("ln", ["-sfn", MODULES, `${DIR}/node_modules`]);
 log(`installed ${VERSION}`);
 
 // The task model, and the gate's tools only.
 mkdirSync(AGENT, { recursive: true });
 writeFileSync(`${AGENT}/models.json`, readFileSync(env.PCU_MODELS ?? "/home/cua/.pi/agent/models.json"));
 writeFileSync(`${AGENT}/mcp.json`, JSON.stringify({ mcpServers: { biscotti: { url: `${env.GATE_URL ?? "http://gate"}/mcp`, exposure: "direct", timeout: 900 } } }));
-execFileSync("chmod", ["-R", "a+rX", DIR, AGENT]);
+
+// Its Linux side reads the desktop through AT-SPI, on the desktop session's D-Bus, which a task's shell doesn't inherit.
+const desktopBus = () => {
+  for (const pid of readdirSync("/proc").filter((p) => /^\d+$/.test(p))) {
+    try {
+      if (readFileSync(`/proc/${pid}/comm`, "utf8").trim() !== "xfce4-session") continue;
+      return readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").find((v) => v.startsWith("DBUS_SESSION_BUS_ADDRESS="))?.slice(25);
+    } catch {}
+  }
+};
 
 const vars = {
   PI_CODING_AGENT_DIR: AGENT,
   PI_COMPUTER_USE_CDP_PORT: env.PCU_CDP_PORT ?? "9222",
   PI_COMPUTER_USE_LINUX_HELPER_PATH: `${DIR}/prebuilt/linux/${process.arch === "arm64" ? "arm64" : "x64"}/linux-bridge`,
   DISPLAY: ":1",
+  DBUS_SESSION_BUS_ADDRESS: env.DBUS_SESSION_BUS_ADDRESS ?? desktopBus() ?? "",
 };
 const args = ["--mode", "json", "--no-session", "--model", env.PCU_MODEL ?? "biscotti/task", "-e", `${DIR}/extensions/computer-use.ts`, "--append-system-prompt", PROMPT, goal];
-const pi = USER
-  ? spawn("runuser", ["-u", USER, "--", "env", `HOME=/home/${USER}`, ...Object.entries(vars).map(([k, v]) => `${k}=${v}`), PI, ...args], { stdio: ["ignore", "pipe", "inherit"] })
-  : spawn(PI, args, { env: { ...env, ...vars }, stdio: ["ignore", "pipe", "inherit"] });
+const pi = spawn(PI, args, { env: { ...env, ...vars }, stdio: ["ignore", "pipe", "inherit"] });
 let report = "";
 createInterface({ input: pi.stdout }).on("line", (line) => {
   let event: { type?: string; toolName?: string; isError?: boolean; message?: { role: string; content: { type: string; text?: string }[] } };
