@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- A task VM's live desktop, in biscotti's style: noVNC's client (core/rfb.js) with a bar of our own. Watching only
+     until the owner takes control. The password comes in the link's fragment, which the browser never sends. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>biscotti · task desktop</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; background: #fff; color: #000; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+  header { display: flex; align-items: center; gap: 16px; padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left)); border-bottom: 1px solid #000; }
+  .name { font-weight: 600; }
+  #status { color: #555; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status.live::before { content: "● "; color: #2400ff; }
+  button { font: inherit; padding: 3px 10px; border: 1px solid #000; background: #fff; color: #000; cursor: pointer; }
+  button:hover, button[aria-pressed="true"] { background: #000; color: #fff; }
+  #screen { flex: 1; min-height: 0; background: #f4f4f4; }
+</style>
+<header>
+  <span class="name">biscotti</span>
+  <span id="status">connecting…</span>
+  <button id="control" aria-pressed="false">[ take control ]</button>
+  <button id="full">[ full screen ]</button>
+</header>
+<div id="screen"></div>
+<script type="module">
+  import RFB from "./core/rfb.js";
+
+  const status = document.getElementById("status");
+  const control = document.getElementById("control");
+  const password = new URLSearchParams(location.hash.slice(1)).get("password") ?? "";
+  const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/websockify`;
+
+  const rfb = new RFB(document.getElementById("screen"), url, { credentials: { password } });
+  rfb.viewOnly = true;
+  rfb.scaleViewport = true;
+  rfb.background = "#f4f4f4";
+  const say = (text, live = false) => ((status.textContent = text), status.classList.toggle("live", live));
+  rfb.addEventListener("connect", () => say("watching the task", true));
+  rfb.addEventListener("disconnect", (e) => say(e.detail.clean ? "the task ended" : "can't reach the desktop"));
+  rfb.addEventListener("securityfailure", () => say("the link's password didn't work"));
+
+  control.onclick = () => {
+    rfb.viewOnly = !rfb.viewOnly;
+    control.setAttribute("aria-pressed", String(!rfb.viewOnly));
+    control.textContent = rfb.viewOnly ? "[ take control ]" : "[ hand back ]";
+    say(rfb.viewOnly ? "watching the task" : "you're in control", true);
+  };
+  document.getElementById("full").onclick = () => document.documentElement.requestFullscreen?.();
+</script>

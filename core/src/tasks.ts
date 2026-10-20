@@ -190,7 +190,7 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
   // The live desktop's password goes in the link's fragment, which the browser never sends to the server.
   const host = process.env.TAILNET_HOST;
   const password = () => (existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : "");
-  const watch = host ? (slot: number) => `https://${host}:${10440 + slot}/vnc.html#autoconnect=1&password=${password()}` : undefined;
+  const watch = host ? (slot: number) => `https://${host}:${10440 + slot}/biscotti.html#password=${password()}` : undefined;
   return {
     async task(goal: string, { model, ...opts }: TaskOptions = {}) {
       let slot: number | undefined;
