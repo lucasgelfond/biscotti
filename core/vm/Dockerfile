@@ -58,6 +58,7 @@ RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modul
 COPY task/biscotti-task task/biscotti-start /usr/local/bin/
 COPY task/models.json task/mcp.json /home/cua/.pi/agent/
 COPY task/reload.ts /home/cua/.pi/agent/extensions/
+COPY biscotti.html /opt/noVNC/
 
 # Wallpaper: "biscotti" by Geertje Caliguire on Unsplash (Unsplash License), fetched at a pinned size and checksum.
 RUN mkdir -p /usr/share/backgrounds && \
