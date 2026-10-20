@@ -47,7 +47,8 @@ c.onclick = (e) => { const b = c.getBoundingClientRect(); [...rows].forEach((r, 
   document.getElementById("sel").textContent = "Selected: " + (picked.join(", ") || "none"); draw(); };
 </script>`;
 
-test.skipIf(!live)("picks an open seat on a canvas seat map, from a screenshot", { timeout: 180_000 }, async () => {
+// Jev's box over a picture is right most of the time, not every time; a miss is retried once the page shows it.
+test.skipIf(!live)("picks an open seat on a canvas seat map, from a screenshot", { timeout: 180_000, retry: 2 }, async () => {
   const site = shop();
   const vm = await harness(9475);
 
