@@ -3,7 +3,7 @@ import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { readBody } from "./http.ts";
-import type { Caller, Tools } from "./plugin.ts";
+import { input, localTools, str, text, type Caller, type Tools } from "./plugin.ts";
 
 // The gate holds every key: the model at /llm, every plugin's tools at /mcp, and the owner's approvals. Saved secrets
 // never reach the model provider: any in a model call becomes a placeholder.
@@ -60,9 +60,22 @@ export function createGate(opts: {
   send: (text: string) => Promise<void>;
   secrets?: () => { label: string; value: string }[];
 }) {
-  // Two sets: everything for the main agent, and the subset plugins allow task VMs.
+  // Two sets: everything for the main agent, and the subset plugins allow task VMs. The rest is delegated: a task VM
+  // can't call it, but can propose it, and the proposal goes to the main agent with the task's report.
   const sets = { main: [] as Tools[], tasks: [] as Tools[] };
   const byTool = { main: new Map<string, Tools>(), tasks: new Map<string, Tools>() };
+  const proposals = new Map<number, string[]>();
+  const propose = localTools([
+    {
+      name: "propose",
+      description: "Propose something only the main agent may do (texting the user, email, calendar, GitHub changes…): it sees the proposal with your report and decides.",
+      input: input({ tool: str("The main agent's tool, from the list in this description."), args: { type: "object" }, why: str() }),
+      async run({ tool, args, why }, { slot = 0 }) {
+        proposals.set(slot, [...(proposals.get(slot) ?? []), `${tool} ${JSON.stringify(args)}: ${why}`]);
+        return text("Proposed; the main agent decides once your report is in.");
+      },
+    },
+  ]);
 
   // Questions go out one at a time, in order: a yes or a no answers the one asked.
   const queue: { question: string; resolve: (yes: boolean) => void }[] = [];
@@ -101,6 +114,12 @@ export function createGate(opts: {
 
   async function listTools(set: keyof typeof sets) {
     const lists = await Promise.all(sets[set].map(async (p) => ({ p, tools: await p.list() })));
+    if (set === "tasks") {
+      const own = new Set(lists.flatMap(({ tools }) => tools.map((t) => t.name)));
+      const delegated = (await listTools("main")).map((t) => t.name).filter((n) => !own.has(n));
+      const [tool] = await propose.list();
+      lists.push({ p: propose, tools: [{ ...tool, description: `${tool.description} The main agent's tools: ${delegated.join(", ")}.` }] });
+    }
     byTool[set] = new Map(lists.flatMap(({ p, tools }) => tools.map((t) => [t.name, p] as const)));
     return lists.flatMap(({ tools }) => tools);
   }
@@ -161,6 +180,12 @@ export function createGate(opts: {
     add(tools: Tools) {
       sets.main.push(tools);
       if (tools.tasks) sets.tasks.push(tools.tasks);
+    },
+    // What a task VM in `slot` proposed for the main agent, cleared as it's read.
+    proposed(slot: number) {
+      const said = proposals.get(slot) ?? [];
+      proposals.delete(slot);
+      return said;
     },
     listen: (host: string, port: number, opts: { slot?: number; peer?: string } = {}) =>
       new Promise<Server>((resolve, reject) => {

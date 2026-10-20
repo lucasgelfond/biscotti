@@ -1,4 +1,4 @@
-import { declined, localTools, mcpTools, secret, text, type Context, type Plugin, type Tool } from "@biscotti/core";
+import { declined, input, localTools, mcpTools, secret, text, type Context, type Plugin, type Tool } from "@biscotti/core";
 import { codeTask } from "./code.ts";
 
 // GitHub's remote MCP server with the owner's fine-grained token, from .env or the vault ("GitHub", field "token").
@@ -15,16 +15,23 @@ const token = (ctx: Context) =>
 
 export default {
   prompt: `GitHub: repos, issues and pull requests through the GitHub tools. Edits and deletions ask the user themselves. If
-there are no GitHub tools, GitHub isn't connected: \`vault_request\` a secret named "GitHub" with the field "token", and
-tell the user to create a fine-grained token at https://github.com/settings/personal-access-tokens/new (the repos they
-choose; Contents, Issues and Pull requests: read and write) and paste it into the form.
+GitHub isn't connected, \`github_connect\` says how.
 
 Code changes: \`code_task\` has a coding agent make the change in a VM and opens a draft pull request. Text the user
 the PR link from its report. Never merge pull requests; that's the user's call.`,
 
   async tools(ctx) {
     const pat = token(ctx);
-    if (!pat) return { list: async () => [], call: async () => ({ content: [{ type: "text", text: "GitHub isn't connected." }] }) };
+    // Not connected: one tool that says how, as Google's and other services' do.
+    if (!pat)
+      return localTools([
+        {
+          name: "github_connect",
+          description: "GitHub isn't connected yet. Call this for how to connect it.",
+          input: input(),
+          run: async () => text(`vault_request a secret named "GitHub" with the field "token", and tell the user to create a fine-grained token at https://github.com/settings/personal-access-tokens/new (the repos they choose; Contents, Issues and Pull requests: read and write) and paste it into the form.`),
+        },
+      ]);
     const readOnly = new Set<string>();
     const tools = mcpTools(URL, { Authorization: `Bearer ${pat}`, "X-MCP-Toolsets": TOOLSETS }, async (client, name, args) => {
       if (MERGE.test(name)) return text("biscotti doesn't merge; send the user the pull request link.");
