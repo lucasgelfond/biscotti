@@ -80,9 +80,10 @@
       plugins=$(jq -r '.plugins[]' "$STATE/biscotti.json")
       has() { grep -qx "$1" <<< "$plugins"; }
       for n in 1 2 3; do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
-      # The vault's one-time forms, and Google's sign-in callback.
+      # The vault's one-time forms, and Google's and other services' sign-in callbacks.
       tailscale serve --bg --https=9443 http://127.0.0.1:4791
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
+      if has mcp; then tailscale serve --bg --https=9443 --set-path=/mcp-oauth http://127.0.0.1:4793; fi
       if has artifacts; then tailscale funnel --bg --https=443 http://127.0.0.1:8082; fi
 
       # Huge pages reserved (the Mac): task VMs run on them.

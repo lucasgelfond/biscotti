@@ -29,6 +29,7 @@ struct Settings: Equatable {
         (id: "google", name: "Gmail and Google Calendar"),
         (id: "github", name: "GitHub"),
         (id: "discriminative-computer-use", name: "Fast browsing (TypeSafe Jev)"),
+        (id: "mcp", name: "Other services (Notion, Linear… over MCP)"),
         (id: "artifacts", name: "Artifacts"),
         (id: "embedding", name: "Semantic memory"),
     ]
