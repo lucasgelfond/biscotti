@@ -43,7 +43,7 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
     };
   },
 
-  // Once a token is saved to the vault, restart (the service restarts us) so the agent picks up GitHub's tools.
+  // Once a token is saved to the vault, restart (the service restarts us, and the agent reloads) to load GitHub's tools.
   async start(ctx) {
     if (token(ctx)) return;
     const timer = setInterval(() => {

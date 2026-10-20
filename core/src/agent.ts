@@ -111,18 +111,20 @@ export async function runAgent(sockets: string, dir: string) {
       await new Promise((r) => setTimeout(r, 1000));
     }
   };
-  const prompt = await (await get("/prompt")).text();
-  const entries = (await (await get("/transcript")).json()) as FileEntry[];
-  const agent = await createAgent({
-    dir,
-    gateUrl,
-    prompt,
-    entries,
-    save: async (fresh) => void (await fetch(`${gateUrl}/transcript`, { method: "POST", body: JSON.stringify(fresh) })),
-  });
+  const session = async () =>
+    createAgent({
+      dir,
+      gateUrl,
+      prompt: await (await get("/prompt")).text(),
+      entries: (await (await get("/transcript")).json()) as FileEntry[],
+      save: async (fresh) => void (await fetch(`${gateUrl}/transcript`, { method: "POST", body: JSON.stringify(fresh) })),
+    });
+  let agent = await session();
 
   const server = createServer(async (req, res) => {
     try {
+      // A restarted gate may bring new tools and prompts: start over from the saved conversation.
+      if (req.url === "/reload") return void res.end(void (agent = await session()));
       const { text } = JSON.parse(await readBody(req));
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await agent.reply(text) }));
     } catch (err) {

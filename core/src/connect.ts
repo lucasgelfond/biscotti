@@ -23,6 +23,8 @@ export async function connectAgent(sockets: string, opts: { db: Db; prompt: stri
   });
   // Only the agent's user (uid 1000, in its own container) may connect.
   await listen(server, `${sockets}/gate.sock`, 1000);
+  // An agent still running from before this gate started has the old one's tools.
+  await call(`${sockets}/agent.sock`, "POST", "/reload").catch(() => {});
 
   // One turn of the agent: its reply, or undefined when the message steered one already underway. The agent may still
   // be starting.

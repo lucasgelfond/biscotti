@@ -131,7 +131,8 @@ function runPi(host: string, goal: string, { repo, runner, timeoutMs = TASK_TIME
     let report = "";
     let screenshot: Buffer | undefined;
     let bundle: Buffer | undefined;
-    createInterface({ input: socket }).on("line", (line) => {
+    // The socket's errors end the task (below); unhandled here, they'd take the gate down.
+    createInterface({ input: socket }).on("error", () => {}).on("line", (line) => {
       let event: { type: string; png?: string; data?: string; message?: { role: string; content: { type: string; text?: string }[] } };
       try {
         event = JSON.parse(line);

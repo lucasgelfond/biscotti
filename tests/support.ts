@@ -11,7 +11,9 @@ import { asTexts, tapbacks } from "../plugins/channels/spectrum/index.ts";
 
 export const newDataDir = () => mkdtempSync(join(tmpdir(), "biscotti-"));
 
-export async function boot(names: (string | Plugin)[], dir = newDataDir()) {
+// With `restart` (an earlier boot), a new gate over its data and sockets, as after the service restarts: its agent
+// keeps running.
+export async function boot(names: (string | Plugin)[], dir = newDataDir(), restart?: { sockets: string; gateUrl: string }) {
   const sent: string[] = [];
   const images: Buffer[] = [];
   const reactions: string[] = [];
@@ -27,14 +29,14 @@ export async function boot(names: (string | Plugin)[], dir = newDataDir()) {
     names.map(async (name) => (typeof name === "string" ? ((await import(/* @vite-ignore */ new URL(`../plugins/${name}/index.ts`, import.meta.url).href)).default as Plugin) : name)),
   );
   // The agent as in production, reaching the gate only through the sockets; its relay is the tests' way in too.
-  const sockets = mkdtempSync(join(tmpdir(), "sockets-"));
+  const sockets = restart?.sockets ?? mkdtempSync(join(tmpdir(), "sockets-"));
   const biscotti = await start({ plugins: [phone, ...plugins], dir, sockets });
-  const { gateUrl } = await runAgent(sockets, join(dir, "agent"));
+  const gateUrl = restart?.gateUrl ?? (await runAgent(sockets, join(dir, "agent"))).gateUrl;
   const say = (text: string) => {
     tapback.seen({ react: async (emoji) => void reactions.push(emoji) });
     return biscotti.handle({ text });
   };
-  return { ...biscotti, gateUrl, dir, say, sent, images, reactions };
+  return { ...biscotti, gateUrl, dir, sockets, say, sent, images, reactions };
 }
 
 
