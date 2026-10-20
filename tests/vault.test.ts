@@ -163,7 +163,7 @@ test.skipIf(!existsSync(CHROME))("sets a new password into the page and the vaul
   const db = openDb(`${dir}/biscotti.db`, "test-key");
   db.insert(vaultTable).values({ name: "Delta login", fields: ["username", "password"], value: { username: "ada@example.com", password: "old-password-1" } }).run();
   const asked: string[] = [];
-  const ctx = { db, dir, env: (n: string) => n, ask: async (q: string) => (asked.push(q), true), deliver: async () => {} };
+  const ctx = { db, dir, env: (n: string) => n, ask: async (q: string) => (asked.push(q), true), deliver: async () => {}, send: async () => {} };
   const tools = await secureFill.tools!(ctx);
 
   const result = await tools.tasks!.call("vault_new_password", { name: "Delta login", why: "the old one expired", confirm: true }, { slot: 1 });

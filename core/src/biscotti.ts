@@ -31,7 +31,11 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   const vms = process.env.VMS_SOCKET
     ? await gateTasks(gate, process.env.VMS_SOCKET, env("VM_DIR"), (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot))
     : undefined;
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, task: vms?.task };
+  const send = async (text: string, image?: Buffer) => {
+    if (image) await channel.send({ image });
+    if (text) await channel.send(outbound(text));
+  };
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, task: vms?.task };
 
   const channelPlugin = plugins.find((p) => p.channel);
   if (!channelPlugin) throw new Error("biscotti.json needs a channel plugin, e.g. channels/spectrum");
