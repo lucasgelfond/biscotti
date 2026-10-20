@@ -7,19 +7,21 @@ import { input, localTools, optional, str, text, type Plugin } from "@biscotti/c
 
 const API = process.env.TYPESAFE_URL ?? "https://api.typesafe.ai";
 const MODEL = process.env.TYPESAFE_MODEL ?? "jev-latest";
+const IMAGE_MODEL = process.env.TYPESAFE_IMAGE_MODEL ?? "jev-preview";
 
 // What the VM runs, sent with each errand.
 const RUNNER = Object.fromEntries(
   [["main.ts", "vm.ts"], ["loop.ts", "loop.ts"], ["page.ts", "page.ts"]].map(([as, file]) => [as, readFileSync(new URL(file, import.meta.url), "utf8")]),
 );
 
+// With `assets` (screenshots, by the names state refers to them by), on the model that reads images and boxes.
 export function jev(key: string) {
-  return async (state: object, questions: object) => {
+  return async (state: object, questions: object, assets?: object) => {
     const res = await fetch(`${API}/v1/systemone`, {
       signal: AbortSignal.timeout(30_000),
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: MODEL, state, questions }),
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...(assets && { "TypeSafe-Danger-Zone-Images": "true" }) },
+      body: JSON.stringify({ model: assets ? IMAGE_MODEL : MODEL, state, questions, ...(assets && { assets }) }),
     });
     if (!res.ok) throw new Error(`TypeSafe ${res.status}: ${(await res.text()).slice(0, 200)}`);
     return (await res.json()).answers;
@@ -29,7 +31,7 @@ export function jev(key: string) {
 export default {
   prompt: `Quick browsing: \`browse\` does an errand on a website (look something up, run a site search, log in with
 a saved login and check something) fast and cheaply. Use \`task\` for anything that needs judgment across pages:
-comparing options, seat maps and other pictures, several sites, or when browse comes back unsure.`,
+comparing options across pages, several sites, or when browse comes back unsure. Browse can pick seats on a seat map.`,
 
   async tools(ctx) {
     if (!ctx.task || !process.env.TYPESAFE_API_KEY) return localTools([]);
@@ -59,8 +61,8 @@ comparing options, seat maps and other pictures, several sites, or when browse c
         {
           name: "jev_decide",
           description: "Internal to browse: one Jev decision. Other task agents don't need it.",
-          input: input({ state: { type: "object" }, questions: { type: "object" } }),
-          run: async ({ state, questions }) => text(JSON.stringify(await decide(state as object, questions as object))),
+          input: input({ state: { type: "object" }, questions: { type: "object" }, assets: optional({ type: "object" }) }),
+          run: async ({ state, questions, assets }) => text(JSON.stringify(await decide(state as object, questions as object, assets as object | undefined))),
         },
       ]),
     };

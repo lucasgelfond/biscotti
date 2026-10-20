@@ -48,6 +48,6 @@ const vault: Vault = {
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const { goal, url } = JSON.parse(input) as { goal: string; url?: string };
-const decide = async (state: object, questions: object) => JSON.parse(await tool("jev_decide", { state, questions }));
+const decide = async (state: object, questions: object, assets?: object) => JSON.parse(await tool("jev_decide", { state, questions, ...(assets && { assets }) }));
 const { report, outcome, steps } = await browse(goal, BROWSER, { decide, write, vault, log: console.error }, url).catch((err: Error) => ({ report: `Browsing failed: ${err.message}`, outcome: "error", steps: [] }));
 console.log(`${report} (${outcome}, ${steps.length} steps)`.replace(/\n/g, " "));
