@@ -56,6 +56,28 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>. Text th
       return client;
     }
 
+    // An argument that's a string or an object (Notion's `parent`: "memory" or a page) tends to come from the model as
+    // the object written out in JSON, so such arguments take any string too, and JSON ones are parsed before the call.
+    type Schema = { type?: string; anyOf?: Schema[] };
+    const loose = new Map<string, string[]>();
+    function loosen(name: string, schema: Tool["inputSchema"]) {
+      const props = Object.entries((schema.properties ?? {}) as Record<string, Schema>).filter(
+        ([, s]) => s.anyOf?.some((b) => b.type === "string") && s.anyOf.some((b) => b.type === "object" || b.type === "array"),
+      );
+      for (const [, s] of props) s.anyOf!.push({ type: "string" });
+      loose.set(name, props.map(([key]) => key));
+    }
+    function parsed(name: string, args: Record<string, unknown>) {
+      const out = { ...args };
+      for (const key of loose.get(name) ?? []) {
+        try {
+          const value = typeof out[key] === "string" && JSON.parse(out[key]);
+          if (value && typeof value === "object") out[key] = value;
+        } catch {}
+      }
+      return out;
+    }
+
     // Each server's tools under its name, and whether each asks first; a server that's down or signed out lists none.
     const asks = new Map<string, boolean>();
     const servers: Tools = {
@@ -66,6 +88,7 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>. Text th
             if (!client) return [];
             const { tools } = await client.listTools().finally(() => client.close());
             return tools.map((t): Tool => {
+              loosen(`${row.name}_${t.name}`, t.inputSchema);
               asks.set(`${row.name}_${t.name}`, !t.annotations?.readOnlyHint && !(ADDS.test(t.name) && t.annotations?.destructiveHint !== true));
               return { ...t, name: `${row.name}_${t.name}`, description: `${row.name}: ${t.description ?? ""}` };
             });
@@ -77,6 +100,7 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>. Text th
         const row = rows().find((r) => name.startsWith(`${r.name}_`));
         if (!row) return text(`No server for ${name}.`);
         const tool = name.slice(row.name.length + 1);
+        args = parsed(name, args);
         if (asks.get(name) !== false && !(await ctx.ask(`${row.name}: ${tool} with ${JSON.stringify(args).slice(0, 1500)}?`))) return declined;
         const client = await connect(row);
         try {
