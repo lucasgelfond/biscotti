@@ -12,6 +12,39 @@ enum Prompts {
         "aws": "https://console.aws.amazon.com/iam/home#/users",
     ]
 
+    /// For a coding agent (Claude Code, Codex) on this Mac: check on biscotti read-only and say what's next.
+    static func diagnose(_ target: Target, host: String) -> String {
+        let reach = switch target {
+        case .pi: """
+            It's on a Raspberry Pi. Once it's on my Tailscale network, `ssh root@\(host)` works (my SSH key is on it). \
+            If it isn't reachable, ask me to put its card in this Mac: biscotti-status.txt on the card's boot partition \
+            has the network, Wi-Fi, Tailscale and setup log, with no secrets.
+            """
+        case .mac: "It runs in a Lima VM on this Mac: run each command as `limactl shell biscotti sudo <command>`."
+        case .cloud: """
+            It's on my AWS machine: `ssh -i "$HOME/Library/Application Support/biscotti/aws-key" root@<its address>` \
+            (the EC2 console lists the address; once it's on my Tailscale network, `root@\(host)` works too).
+            """
+        }
+        return """
+            Check on my biscotti install, a personal iMessage assistant (https://github.com/lucasgelfond/biscotti), and \
+            tell me in plain words where it is and what I should do next. Only look: don't change, restart or reinstall \
+            anything without asking me. Never print /var/lib/biscotti/.env, which holds my keys; to see whether a \
+            setting is there, use `grep -c '^NAME=' /var/lib/biscotti/.env`.
+            \(reach)
+            Then run:
+            - `systemctl is-active biscotti-setup` and `journalctl -u biscotti-setup -b -n 80 --no-pager`: setup's \
+            progress (settings, Tailscale, then building the task VMs' desktop, about 20 minutes the first time)
+            - `tailscale status`
+            - `docker ps --format '{{.Names}} {{.Status}}'`: biscotti-gate-1, biscotti-agent-1 and biscotti-vms-1 \
+            should be up
+            - `docker logs biscotti-gate-1 --tail 60`: the iMessage (Photon) connection, the model and plugin errors
+            - `jq .plugins /var/lib/biscotti/biscotti.json` and `cat /var/lib/biscotti/version`
+            Usual causes: Tailscale not added yet (biscotti texts a link), Wi-Fi not joined (a 5 GHz network), wrong \
+            Photon keys or phone number, or the model provider rejecting the key (it shows in the gate's log).
+            """
+    }
+
     static let redirectPlaceholder = """
         https://biscotti.<tailnet>.ts.net:9443/oauth/callback, where <tailnet> is my tailnet name from the Tailscale \
         admin console under DNS (https://login.tailscale.com/admin/dns). If I don't know it yet, skip it: biscotti \
