@@ -29,7 +29,7 @@ export interface Context {
 export interface TaskOptions {
   repo?: Buffer;
   // A plugin's own agent instead of pi: file name -> source, run in the VM as `node main.ts` with the goal on stdin
-  // (its last stdout line is the report). It reaches the gate at http://gate like pi does.
+  // (what it prints is the report). It reaches the gate at http://gate like pi does.
   runner?: Record<string, string>;
   model?: string;
   timeoutMs?: number;
