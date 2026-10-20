@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { runAgent } from "../core/src/agent.ts";
 import { start } from "../core/src/biscotti.ts";
 import type { Plugin } from "../core/src/plugin.ts";
+import { asTexts, tapbacks } from "../plugins/channels/spectrum/index.ts";
 
-// biscotti as main.ts starts it, with a stand-in phone: `say` texts it (resolving once it replied), `sent` is its texts.
+// biscotti as main.ts starts it, with a stand-in phone that splits texts and takes tapbacks as iMessage does: `say`
+// texts it (resolving once it replied), `sent` is its texts.
 
 export const newDataDir = () => mkdtempSync(join(tmpdir(), "biscotti-"));
 
@@ -13,11 +15,13 @@ export async function boot(names: (string | Plugin)[], dir = newDataDir()) {
   const sent: string[] = [];
   const images: Buffer[] = [];
   const reactions: string[] = [];
+  const tapback = tapbacks();
   const phone: Plugin = {
     channel: async () => ({
       messages: (async function* () {})(),
-      send: async (m) => void ("text" in m ? sent.push(m.text) : images.push(m.image)),
+      send: async (m) => void ("text" in m ? sent.push(...asTexts(m.text)) : images.push(m.image)),
     }),
+    tools: async () => tapback.tools,
   };
   const plugins = await Promise.all(
     names.map(async (name) => (typeof name === "string" ? ((await import(/* @vite-ignore */ new URL(`../plugins/${name}/index.ts`, import.meta.url).href)).default as Plugin) : name)),
@@ -26,7 +30,10 @@ export async function boot(names: (string | Plugin)[], dir = newDataDir()) {
   const sockets = mkdtempSync(join(tmpdir(), "sockets-"));
   const biscotti = await start({ plugins: [phone, ...plugins], dir, sockets });
   const { gateUrl } = await runAgent(sockets, join(dir, "agent"));
-  const say = (text: string) => biscotti.handle({ text, react: async (emoji) => void reactions.push(emoji) });
+  const say = (text: string) => {
+    tapback.seen({ react: async (emoji) => void reactions.push(emoji) });
+    return biscotti.handle({ text });
+  };
   return { ...biscotti, gateUrl, dir, say, sent, images, reactions };
 }
 

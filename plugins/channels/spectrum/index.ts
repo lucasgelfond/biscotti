@@ -1,9 +1,39 @@
-import type { Channel, Plugin } from "@biscotti/core";
+import { input, localTools, str, text, type Channel, type Plugin } from "@biscotti/core";
 import { attachment, Spectrum } from "@spectrum-ts/core";
 import { imessage } from "@spectrum-ts/imessage";
 
 // iMessage through Photon's Spectrum. Only the owner's one-on-one texts come through, never their group chats.
-export async function connect(env: (name: string) => string): Promise<Channel & { close(): Promise<void> }> {
+
+type Reactable = { react(emoji: string): Promise<unknown> };
+
+// A link on its own line goes as its own message, so it expands into a preview.
+export function asTexts(reply: string) {
+  const lines = reply.split("\n");
+  const isLink = (line: string) => /^https?:\/\/\S+$/.test(line.trim());
+  const body = lines.filter((l) => !isLink(l)).join("\n").trim();
+  return [...(body ? [body] : []), ...lines.filter(isLink).map((l) => l.trim())];
+}
+
+// Tapbacks on the owner's latest text.
+export function tapbacks() {
+  let latest: Reactable | undefined;
+  return {
+    seen: (message: Reactable) => void (latest = message),
+    tools: localTools([
+      {
+        name: "react",
+        description: "Tapback the user's latest message (❤️ 👍 👎 😂 ‼️ ❓), e.g. 👍 when starting on something, ❤️ on thanks. Can replace a reply.",
+        input: input({ emoji: str() }),
+        async run({ emoji }) {
+          await latest?.react(String(emoji));
+          return text("Reacted.");
+        },
+      },
+    ]),
+  };
+}
+
+export async function connect(env: (name: string) => string, seen: (message: Reactable) => void = () => {}): Promise<Channel & { close(): Promise<void> }> {
   const app = await Spectrum({
     projectId: env("SPECTRUM_PROJECT_ID"),
     projectSecret: env("SPECTRUM_PROJECT_SECRET"),
@@ -21,7 +51,8 @@ export async function connect(env: (name: string) => string): Promise<Channel & 
         console.warn(`ignoring message from ${message.sender?.id}${group ? " in a group chat" : ""}`);
         continue;
       }
-      yield { text: message.content.text, react: (emoji: string) => message.react(emoji) };
+      seen(message);
+      yield { text: message.content.text };
     }
   }
 
@@ -33,9 +64,15 @@ export async function connect(env: (name: string) => string): Promise<Channel & 
     close,
     messages: messages(),
     async send(m) {
-      await space.send("text" in m ? m.text : attachment(m.image, { mimeType: "image/png", name: "screen.png" }));
+      if ("image" in m) return void (await space.send(attachment(m.image, { mimeType: "image/png", name: "screen.png" })));
+      for (const t of asTexts(m.text)) await space.send(t);
     },
   };
 }
 
-export default { channel: (ctx) => connect(ctx.env) } satisfies Plugin;
+const tapback = tapbacks();
+export default {
+  prompt: "A tapback (`react`) is a fine acknowledgment or answer on its own.",
+  channel: (ctx) => connect(ctx.env, tapback.seen),
+  tools: async () => tapback.tools,
+} satisfies Plugin;

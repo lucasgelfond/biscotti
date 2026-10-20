@@ -37,7 +37,7 @@ export interface TaskResult {
 }
 
 export interface Channel {
-  messages: AsyncIterable<{ text: string; react(emoji: string): Promise<unknown> }>;
+  messages: AsyncIterable<{ text: string }>;
   send(message: { text: string } | { image: Buffer }): Promise<void>;
 }
 
