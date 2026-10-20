@@ -45,6 +45,9 @@ in
     KERNEL=="userfaultfd", GROUP="kvm", MODE="0660"
   '';
   networking.firewall.trustedInterfaces = [ "tailscale0" ];
+  # Docker's and the VM slots' links have fixed addresses; dhcpcd segfaults on them as they come and go, taking Wi-Fi
+  # down with it.
+  networking.dhcpcd.denyInterfaces = [ "veth*" "docker*" "br-*" "tailscale*" ];
 
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   system.stateVersion = "26.05";
