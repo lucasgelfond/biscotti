@@ -1,0 +1,8 @@
+{
+  "name": "@biscotti/secure-fill",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*"
+  }
+}
