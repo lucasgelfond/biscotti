@@ -87,6 +87,19 @@ test("asks the owner before a tool that needs a yes, and goes ahead on their yes
   expect(biscotti.sent).toContain("Approved.");
 });
 
+test("after the gate restarts with a new plugin, the running agent uses its tools", { timeout: 120_000 }, async () => {
+  const before = await boot([]);
+  await before.say("Hi! Just say hello back.");
+  const after = await boot([outbox], before.dir, before);
+
+  const replied = after.say("Send a postcard to Grandpa at 3 Oak Lane with send_postcard. Go ahead.");
+  await expect.poll(() => after.sent.join("\n"), { timeout: 60_000 }).toContain("Send a postcard to");
+  await after.say("no");
+  await replied;
+
+  expect(after.sent).toContain("Declined.");
+});
+
 test("lists every plugin's tools at the gate's /mcp", async () => {
   const { gateUrl } = await boot([outbox]);
 
