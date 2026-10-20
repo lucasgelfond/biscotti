@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 WORKDIR /app
 # Dependencies from the lockfile alone, so a code change doesn't refetch them.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm fetch --prod
+# A stalled download can hang pnpm for good, so each try gets 10 minutes.
+RUN for try in 1 2 3; do timeout 600 pnpm fetch --prod && exit 0; done; exit 1
 COPY . .
 RUN pnpm install --offline --frozen-lockfile --prod
 CMD ["node", "core/src/main.ts"]
