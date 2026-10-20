@@ -5,7 +5,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 
 const VERSION = "0.5.1";
 const INTEGRITY = "sha512-eBYKTUYfLeaCE33TF6CBb0rklXbgS/4GNDsnl+cBTXv6HTkkMc/Gq/ft3RdcDL0hiRmQBwU9Ohx9jWz4r/l9xQ==";
@@ -41,11 +41,22 @@ mkdirSync(AGENT, { recursive: true });
 writeFileSync(`${AGENT}/models.json`, readFileSync(env.PCU_MODELS ?? "/home/cua/.pi/agent/models.json"));
 writeFileSync(`${AGENT}/mcp.json`, JSON.stringify({ mcpServers: { biscotti: { url: `${env.GATE_URL ?? "http://gate"}/mcp`, exposure: "direct", timeout: 900 } } }));
 
+// Its Linux side reads the desktop through AT-SPI, on the desktop session's D-Bus, which a task's shell doesn't inherit.
+const desktopBus = () => {
+  for (const pid of readdirSync("/proc").filter((p) => /^\d+$/.test(p))) {
+    try {
+      if (readFileSync(`/proc/${pid}/comm`, "utf8").trim() !== "xfce4-session") continue;
+      return readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").find((v) => v.startsWith("DBUS_SESSION_BUS_ADDRESS="))?.slice(25);
+    } catch {}
+  }
+};
+
 const vars = {
   PI_CODING_AGENT_DIR: AGENT,
   PI_COMPUTER_USE_CDP_PORT: env.PCU_CDP_PORT ?? "9222",
   PI_COMPUTER_USE_LINUX_HELPER_PATH: `${DIR}/prebuilt/linux/${process.arch === "arm64" ? "arm64" : "x64"}/linux-bridge`,
   DISPLAY: ":1",
+  DBUS_SESSION_BUS_ADDRESS: env.DBUS_SESSION_BUS_ADDRESS ?? desktopBus() ?? "",
 };
 const args = ["--mode", "json", "--no-session", "--model", env.PCU_MODEL ?? "biscotti/task", "-e", `${DIR}/extensions/computer-use.ts`, "--append-system-prompt", PROMPT, goal];
 const pi = spawn(PI, args, { env: { ...env, ...vars }, stdio: ["ignore", "pipe", "inherit"] });
