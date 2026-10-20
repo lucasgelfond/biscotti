@@ -1,6 +1,6 @@
 {
   "name": "biscotti",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Biscotti: a lightweight, Instinct-like agent harness",
   "private": true,
   "packageManager": "pnpm@10.29.1",
