@@ -1,0 +1,8 @@
+{
+  "name": "@biscotti/screenshots",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*"
+  }
+}

@@ -23,7 +23,7 @@ struct Settings: Equatable {
     var typesafeKey = ""
     var plugins = Set(Settings.optionalPlugins.map(\.id))
 
-    /// The plugins biscotti.json can turn on; iMessage (channels/spectrum) and vault filling (secure-fill) are always on.
+    /// The plugins biscotti.json can turn on; iMessage (channels/spectrum), vault filling (secure-fill) and task screenshots are always on.
     static let optionalPlugins = [
         (id: "exa", name: "Web search (Exa)"),
         (id: "google", name: "Gmail and Google Calendar"),
@@ -193,7 +193,7 @@ struct Settings: Equatable {
 
     /// biscotti.json: the plugins to load.
     func pluginsJSON() throws -> Data {
-        let enabled = ["channels/spectrum", "secure-fill"] + Settings.optionalPlugins.map(\.id).filter(plugins.contains)
+        let enabled = ["channels/spectrum", "secure-fill", "screenshots"] + Settings.optionalPlugins.map(\.id).filter(plugins.contains)
         return try JSONSerialization.data(withJSONObject: ["plugins": enabled], options: [.prettyPrinted, .withoutEscapingSlashes])
     }
 

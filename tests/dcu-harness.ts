@@ -38,7 +38,7 @@ export async function harness(port: number, approve: (question: string) => boole
     },
     secrets: () => secrets(db),
   });
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver: async () => {}, task: async () => ({ report: "" }) };
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver: async () => {}, send: async () => {}, task: async () => ({ report: "" }) };
   for (const plugin of [vault, secureFill, dcu]) gate.add(await plugin.tools!(ctx));
   const server: Server = await gate.listen("127.0.0.1", port + 1, { slot: 1, peer: "127.0.0.1" });
 
