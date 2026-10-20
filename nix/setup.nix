@@ -81,6 +81,8 @@
       vm_source=$(cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
       if [ ! -f "$STATE/vm/desktop.snap" ] || [ "$(cat "$STATE/vm/source" 2>/dev/null)" != "$vm_source" ]; then
         rm -f "$STATE/vm/desktop.snap"
+        # The warm VMs hold the slots' network devices the build boots on; compose starts them again below.
+        docker stop biscotti-vms-1 2>/dev/null || true
         HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
         echo "$vm_source" > "$STATE/vm/source"
       fi
