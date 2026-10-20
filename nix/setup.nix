@@ -39,6 +39,16 @@
       fi
       [ -f /boot/firmware/biscotti.json ] && mv /boot/firmware/biscotti.json "$STATE/biscotti.json"
       [ -f "$STATE/biscotti.json" ] || cp ${repo}/biscotti.json "$STATE/biscotti.json"
+      # Plugins biscotti turned on by default after this machine was set up are turned on here too; ones the owner turned
+      # off stay off. (Before this list was kept, the defaults were the first six.)
+      seen=$STATE/plugins-seen
+      [ -f "$seen" ] || printf '%s\n' channels/spectrum exa google github artifacts embedding > "$seen"
+      for p in $(jq -r '.plugins[]' ${repo}/biscotti.json); do
+        grep -qx "$p" "$seen" && continue
+        jq --arg p "$p" '.plugins |= if index($p) then . else . + [$p] end' "$STATE/biscotti.json" > "$STATE/biscotti.json.new"
+        mv "$STATE/biscotti.json.new" "$STATE/biscotti.json"
+        echo "$p" >> "$seen"
+      done
       # Or the settings are copied in over SSH (cloud): wait for them.
       [ -n "$(get AI_GATEWAY_API_KEY)" ] && set_default LLM_API_KEY "$(get AI_GATEWAY_API_KEY)"
       until [ -n "$(get LLM_API_KEY)" ]; do echo "waiting for settings in $ENV"; sleep 10; done

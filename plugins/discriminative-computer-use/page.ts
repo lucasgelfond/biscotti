@@ -9,7 +9,14 @@ export interface Element {
   field: boolean;
   secret: boolean;
   covered: boolean;
+  // Checked, expanded, selected…, and a native <select>'s options (and which is chosen).
+  state?: string;
+  options?: string[];
+  // For a label others share: the nearest one before it that appears once.
+  near?: string;
 }
+
+export type Rect = { x: number; y: number; w: number; h: number };
 
 export interface Page {
   url: string;
@@ -18,6 +25,10 @@ export interface Page {
   text: string[];
   canScroll: boolean;
   canGoBack: boolean;
+  // Drawings the DOM can't read (a canvas seat map, an SVG map), big enough to matter: where they are, largest first.
+  pictures: Rect[];
+  // A seat map's legend, read from its swatches: the color of open, selected and taken seats.
+  legend: { open?: string; selected?: string; taken?: string };
 }
 
 // Each element is stamped data-dcu="<i>" so actions can find it again; the previous stamps are cleared first.
@@ -30,11 +41,20 @@ const PERCEIVE = `(() => {
   const onScreen = (r) => r.width > 1 && r.height > 1 && r.top < vh && r.bottom > 0 && r.left < vw && r.right > 0;
   const shown = (el) => { const s = getComputedStyle(el); return s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0"; };
   const elements = [], seen = new Set();
-  for (const el of document.querySelectorAll("a,button,input,select,textarea,summary,[role],[onclick],[tabindex]")) {
+  const CONTROLS = "a,button,input,select,textarea,summary,[role],[onclick],[tabindex]";
+  // Plus what only a script makes clickable (a showtime drawn as a <div>): short on-screen text with a pointer cursor,
+  // inside no control.
+  const pointers = [...document.querySelectorAll("div,span,li,td,p,label,img,svg")].filter((el) => {
+    const r = el.getBoundingClientRect();
+    if (!onScreen(r) || r.width > 400 || el.closest(CONTROLS)) return false;
+    const t = (el.innerText || el.getAttribute("alt") || el.getAttribute("aria-label") || "").trim();
+    return t.length > 0 && t.length <= 60 && getComputedStyle(el).cursor === "pointer" && (!el.parentElement || getComputedStyle(el.parentElement).cursor !== "pointer");
+  });
+  for (const el of [...document.querySelectorAll(CONTROLS), ...pointers]) {
     const r = el.getBoundingClientRect();
     if (!onScreen(r) || el.disabled || el.getAttribute("aria-hidden") === "true" || !shown(el)) continue;
     const role = (el.getAttribute("role") || "").toLowerCase();
-    if (!/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(el.tagName) && !ROLES.test(role) && !el.onclick && !el.hasAttribute("tabindex")) continue;
+    if (!/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(el.tagName) && !ROLES.test(role) && !el.onclick && !el.hasAttribute("tabindex") && !pointers.includes(el)) continue;
     const type = el.tagName === "INPUT" ? (el.type || "text").toLowerCase() : "";
     const field = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && TEXT_TYPES.test(type));
     const typedInto = field || el.isContentEditable || role === "textbox" || role === "searchbox";
@@ -51,11 +71,27 @@ const PERCEIVE = `(() => {
       href: el.tagName === "A" && el.href ? el.href.slice(0, 120) : undefined,
       field, secret: type === "password" || SECRET.test((el.getAttribute("autocomplete") || "").toLowerCase()),
       covered: !!top && !el.contains(top) && !top.contains(el),
+      state: [el.checked || el.getAttribute("aria-checked") === "true" ? "checked" : "", el.getAttribute("aria-expanded") === "true" ? "expanded" : "",
+        el.getAttribute("aria-selected") === "true" || el.getAttribute("aria-current") ? "selected" : "", el.getAttribute("aria-pressed") === "true" ? "pressed" : "",
+        el.tagName === "SELECT" && el.selectedIndex >= 0 ? "chosen: " + el.options[el.selectedIndex].text.trim() : ""].filter(Boolean).join(", ") || undefined,
+      options: el.tagName === "SELECT" ? [...el.options].slice(0, 40).map((o) => o.text.trim()) : undefined,
     } });
   }
   elements.sort((a, b) => (Math.abs(a.y - b.y) > 8 ? a.y - b.y : a.x - b.x));
   elements.splice(120);
   elements.forEach((o, i) => (o.el.setAttribute("data-dcu", i), (o.e.i = i)));
+  // Three "Add to cart" buttons say nothing about which is which; each one's card (the smallest ancestor holding only
+  // that one) does, by its first line, such as the product's name.
+  const count = new Map();
+  for (const o of elements) count.set(o.e.text, (count.get(o.e.text) || 0) + 1);
+  for (const o of elements) {
+    if (count.get(o.e.text) < 2) continue;
+    for (let p = o.el.parentElement, up = 0; p && up < 8; p = p.parentElement, up++) {
+      if (elements.filter((x) => x.e.text === o.e.text && p.contains(x.el)).length > 1) break;
+      const first = (p.innerText || "").split("\\n").map((l) => l.trim()).find((l) => l && l !== o.e.text);
+      if (first) { o.e.near = first.slice(0, 80); break; }
+    }
+  }
   // Visible text that isn't a control (prices, dates, errors): evidence, never a click target. Nothing typed is read.
   const labels = new Set(elements.map((o) => o.e.text.toLowerCase()));
   const text = [], blocks = new Set();
@@ -70,8 +106,25 @@ const PERCEIVE = `(() => {
     const t = block.innerText.replace(/\\s+/g, " ").trim().slice(0, 240);
     if (t.length > 1 && !labels.has(t.toLowerCase())) text.push(t);
   }
+  // A legend's swatch is a small colored box beside its words ("Available", "Selected", "Sold").
+  const NAMES = { green: [40, 160, 70], blue: [30, 80, 220], "light blue": [120, 180, 240], red: [210, 40, 40], orange: [240, 140, 30],
+    yellow: [240, 210, 40], purple: [130, 60, 180], pink: [230, 120, 180], grey: [170, 170, 170], "dark grey": [90, 90, 90], white: [250, 250, 250], black: [20, 20, 20] };
+  const named = (css) => { const m = css.match(/\\d+/g); if (!m || css.includes("rgba") && m[3] === "0") return undefined; const [r, g, b] = m.map(Number);
+    return Object.entries(NAMES).sort(([, p], [, q]) => (p[0]-r)**2+(p[1]-g)**2+(p[2]-b)**2 - ((q[0]-r)**2+(q[1]-g)**2+(q[2]-b)**2))[0][0]; };
+  const swatch = (el) => { for (const s of [el.previousElementSibling, el.firstElementChild, el.parentElement?.firstElementChild]) { if (!s || s === el) continue; const r = s.getBoundingClientRect();
+    if (r.width > 4 && r.width < 48 && r.height > 4 && r.height < 48) return named(getComputedStyle(s).backgroundColor) ?? named(getComputedStyle(s).borderColor); } };
+  const legend = {};
+  for (const el of document.querySelectorAll("body *")) {
+    const t = el.childElementCount <= 1 ? (el.textContent || "").trim().toLowerCase() : "";
+    const kind = /^(available|open)( seats?)?$/.test(t) ? "open" : /^(selected|your seats?)$/.test(t) ? "selected" : /^(taken|sold|unavailable|occupied|reserved)( seats?)?$/.test(t) ? "taken" : "";
+    if (kind && !legend[kind]) legend[kind] = swatch(el);
+  }
   const sc = document.scrollingElement || document.documentElement;
-  return { url: location.href, title: document.title, elements: elements.map((o) => o.e), text,
+  const pictures = [...document.querySelectorAll("canvas,svg,img,iframe")].map((el) => [el, el.getBoundingClientRect()])
+    .filter(([el, r]) => onScreen(r) && r.width >= 200 && r.height >= 150 && shown(el))
+    .map(([, r]) => ({ x: Math.max(0, r.left), y: Math.max(0, r.top), w: Math.min(r.right, vw) - Math.max(0, r.left), h: Math.min(r.bottom, vh) - Math.max(0, r.top) }))
+    .sort((a, b) => b.w * b.h - a.w * a.h);
+  return { url: location.href, title: document.title, elements: elements.map((o) => o.e), text, pictures, legend,
     canScroll: sc.scrollHeight > vh + 4, canGoBack: history.length > 1 };
 })()`;
 
@@ -90,16 +143,26 @@ export async function openPage(browser: string) {
     pending.delete(msg.id);
   };
   let id = 0;
+  // A page mid-navigation can leave a call unanswered.
   const send = (method: string, params: object = {}) =>
     new Promise<any>((resolve, reject) => {
-      pending.set(++id, (msg) => (msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result)));
-      ws.send(JSON.stringify({ id, method, params }));
+      const n = ++id;
+      const timer = setTimeout(() => (pending.delete(n), reject(new Error(`${method} timed out`))), 15_000);
+      pending.set(n, (msg) => (clearTimeout(timer), msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result)));
+      ws.send(JSON.stringify({ id: n, method, params }));
     });
-  const evaluate = async (expression: string) => (await send("Runtime.evaluate", { expression, returnByValue: true })).result.value;
+  const evaluate = async (expression: string) => {
+    const { result, exceptionDetails } = await send("Runtime.evaluate", { expression, returnByValue: true });
+    if (exceptionDetails) throw new Error(`in the page: ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
+    return result.value;
+  };
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const perceive = async (): Promise<Page> => {
     for (let i = 0; i < 20 && (await evaluate("document.readyState").catch(() => "loading")) === "loading"; i++) await sleep(250);
-    return evaluate(PERCEIVE);
+    // An app that renders after load shows next to nothing at first.
+    let page: Page = await evaluate(PERCEIVE);
+    for (let i = 0; i < 10 && page.elements.length + page.text.length < 3; i++) page = (await sleep(500), await evaluate(PERCEIVE));
+    return page;
   };
   const at = (i: number) => `document.querySelector('[data-dcu="${i}"]')`;
   const key = async (key: string, code: number) => {
@@ -121,6 +184,24 @@ export async function openPage(browser: string) {
       await send("Input.insertText", { text });
       return true;
     },
+    // A native <select>'s option, by its position, as a person picking it would.
+    choose: (i: number, option: number) =>
+      evaluate(`(() => { const el = ${at(i)}; if (!el?.options?.[${option}]) return false; el.selectedIndex = ${option};
+        el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`),
+    // The viewport as a PNG (base64), at CSS pixels, for questions about what's drawn.
+    // A PNG (base64) of part of the viewport (all of it by default), scaled to the 280 to 1568 pixels a side Jev takes.
+    async screenshot(area?: Rect) {
+      const { x, y, w, h } = area ?? { x: 0, y: 0, ...(await evaluate("({ w: innerWidth, h: innerHeight })")) };
+      const scale = Math.max(280 / Math.min(w, h), Math.min(1568 / Math.max(w, h), 2));
+      return (await send("Page.captureScreenshot", { format: "png", clip: { x, y, width: w, height: h, scale: Math.min(scale, 1568 / Math.max(w, h)) } })).data as string;
+    },
+    // The same area at 1:1, to tell whether a click changed what's drawn.
+    pixels: async (area: Rect) => (await send("Page.captureScreenshot", { format: "png", clip: { x: area.x, y: area.y, width: area.w, height: area.h, scale: 1 } })).data as string,
+    // A click at a point of the viewport, in CSS pixels.
+    async clickPoint(x: number, y: number) {
+      for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) await send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+    },
+    evaluate,
     enter: () => key("Enter", 13),
     escape: () => key("Escape", 27),
     scroll: (down: boolean) => evaluate(`scrollBy(0, ${down ? "" : "-"}innerHeight * 0.8)`),

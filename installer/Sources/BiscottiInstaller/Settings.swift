@@ -20,13 +20,15 @@ struct Settings: Equatable {
     var googleClientID = ""
     var googleClientSecret = ""
     var githubToken = ""
+    var typesafeKey = ""
     var plugins = Set(Settings.optionalPlugins.map(\.id))
 
-    /// The plugins biscotti.json can turn on; iMessage (channels/spectrum) is always on.
+    /// The plugins biscotti.json can turn on; iMessage (channels/spectrum) and vault filling (secure-fill) are always on.
     static let optionalPlugins = [
         (id: "exa", name: "Web search (Exa)"),
         (id: "google", name: "Gmail and Google Calendar"),
         (id: "github", name: "GitHub"),
+        (id: "discriminative-computer-use", name: "Fast browsing (TypeSafe Jev)"),
         (id: "artifacts", name: "Artifacts"),
         (id: "embedding", name: "Semantic memory"),
     ]
@@ -54,6 +56,7 @@ struct Settings: Equatable {
     func hasKeys(_ plugin: String) -> Bool {
         switch plugin {
         case "exa": !exaKey.isEmpty
+        case "discriminative-computer-use": !typesafeKey.isEmpty
         case "google": !googleClientID.isEmpty && !googleClientSecret.isEmpty
         default: true
         }
@@ -143,6 +146,7 @@ struct Settings: Equatable {
             case "GOOGLE_CLIENT_ID": googleClientID = value
             case "GOOGLE_CLIENT_SECRET": googleClientSecret = value
             case "GITHUB_TOKEN": githubToken = value
+            case "TYPESAFE_API_KEY": typesafeKey = value
             case "PLUGINS": plugins = Set(value.split(separator: ",").map(String.init))
             default: break
             }
@@ -156,6 +160,7 @@ struct Settings: Equatable {
             ("SPECTRUM_PROJECT_ID", photonID), ("SPECTRUM_PROJECT_SECRET", photonSecret),
             ("EXA_API_KEY", exaKey), ("TZ", TimeZone.current.identifier), ("TS_HOSTNAME", tailscaleName),
             ("GOOGLE_CLIENT_ID", googleClientID), ("GOOGLE_CLIENT_SECRET", googleClientSecret), ("GITHUB_TOKEN", githubToken),
+            ("TYPESAFE_API_KEY", typesafeKey),
         ].map { ($0.0, Settings.oneLine($0.1)) }.filter { !$0.1.isEmpty }.map { "\($0.0)=\($0.1)" }.joined(separator: "\n") + "\n"
     }
 
@@ -188,7 +193,7 @@ struct Settings: Equatable {
 
     /// biscotti.json: the plugins to load.
     func pluginsJSON() throws -> Data {
-        let enabled = ["channels/spectrum"] + Settings.optionalPlugins.map(\.id).filter(plugins.contains)
+        let enabled = ["channels/spectrum", "secure-fill"] + Settings.optionalPlugins.map(\.id).filter(plugins.contains)
         return try JSONSerialization.data(withJSONObject: ["plugins": enabled], options: [.prettyPrinted, .withoutEscapingSlashes])
     }
 

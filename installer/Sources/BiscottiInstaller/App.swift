@@ -404,6 +404,7 @@ struct InstallerView: View {
                 }
             }
         case "github": field("GitHub token (fine-grained)", $settings.githubToken, secure: true)
+        case "discriminative-computer-use": field("TypeSafe API key", $settings.typesafeKey, secure: true)
         default: EmptyView()
         }
     }

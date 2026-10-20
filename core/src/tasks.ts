@@ -60,23 +60,20 @@ export function taskVms(restore: (slot: number) => Promise<Vm>) {
     return ready ?? restore(await acquire());
   }
 
-  // A fresh VM for `use`, gone once it's done.
-  async function lease<T>(use: (slot: number) => Promise<T>): Promise<T> {
+  async function run(goal: string, onStart?: (slot: number) => void, opts: TaskOptions = {}): Promise<TaskResult> {
     const vm = await take();
     warmUp();
     try {
-      return await use(vm.slot);
+      onStart?.(vm.slot);
+      return await runPi(`10.200.${vm.slot}.2`, goal, opts);
     } finally {
       await vm.stop();
       release(vm.slot);
     }
   }
 
-  const run = (goal: string, onStart?: (slot: number) => void, opts: TaskOptions = {}) =>
-    lease((slot) => (onStart?.(slot), runPi(`10.200.${slot}.2`, goal, opts)));
-
   warmUp();
-  return { run, lease };
+  return { run };
 }
 
 // Firecracker in the slot's namespace, as the slot's own user (`uid`) with no capabilities, like Firecracker's jailer.
@@ -122,11 +119,11 @@ export async function restore(vmDir: string, firecracker: string, slot: number, 
 }
 
 
-// The goal (and a repo, as a git bundle) goes to pi in the VM; its last assistant text is the report, then a
-// screenshot and the repo's new commits follow.
-function runPi(host: string, goal: string, { repo, timeoutMs = TASK_TIMEOUT_MS }: TaskOptions) {
+// The goal (and a repo, as a git bundle) goes to pi in the VM, or to a plugin's own runner; its last assistant text is
+// the report, then a screenshot and the repo's new commits follow.
+function runPi(host: string, goal: string, { repo, runner, timeoutMs = TASK_TIMEOUT_MS }: TaskOptions) {
   return new Promise<TaskResult>((resolve, reject) => {
-    const socket = connect({ host, port: 4000 }, () => socket.end(JSON.stringify({ goal, repo: repo?.toString("base64") })));
+    const socket = connect({ host, port: 4000 }, () => socket.end(JSON.stringify({ goal, repo: repo?.toString("base64"), runner })));
     socket.setTimeout(Math.min(IDLE_MS, timeoutMs), () => socket.destroy(new Error("the task went quiet")));
     const limit = setTimeout(() => socket.destroy(new Error(`the task ran out of time (${timeoutMs / 60_000} minutes)`)), timeoutMs);
     let received = 0;
@@ -193,8 +190,6 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
         if (slot) gate.route(slot);
       }
     },
-    // A VM's Chromium, over DevTools, for plugins that drive it themselves.
-    vm: <T>(use: (browser: string) => Promise<T>) => vms.lease((slot) => use(`http://10.200.${slot}.2:9223`)),
     tool: taskTool(vms, report, watch),
   };
 }

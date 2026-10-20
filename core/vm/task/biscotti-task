@@ -3,7 +3,7 @@
 // starts on a task at once. One task per VM: the goal arrives on port 4000, pi's JSON events go back, then a
 // screenshot of the final screen.
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 
 const PROMPT = `You are a task agent in a disposable Debian VM with internet access. Chromium is open on the desktop (DISPLAY=:1; sudo works); the requester may be watching it live.
@@ -81,6 +81,33 @@ await new Promise((resolve) => {
   send({ id: "ready", type: "get_state" });
 });
 
+// A plugin's own task runner instead of pi: its files run with node, the goal on stdin, and its last stdout line is the
+// report.
+function runOwn(task, socket) {
+  const dir = "/tmp/runner";
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir);
+  for (const [name, source] of Object.entries(task.runner)) writeFileSync(`${dir}/${name.replace(/[^\w.-]/g, "")}`, source);
+  const child = spawn("node", [`${dir}/main.ts`], { stdio: ["pipe", "pipe", "inherit"] });
+  let out = "";
+  child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
+  child.stdin.end(task.goal);
+  child.on("close", () => {
+    const report = out.trim().split("\n").at(-1) || "The runner ended without a report.";
+    socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: report }] } })}\n`);
+    screenshot(socket);
+    socket.end();
+  });
+}
+
+function screenshot(socket) {
+  try {
+    execFileSync("scrot", ["-o", "/tmp/screen.png"], { env: { ...process.env, DISPLAY: ":1" } });
+    const png = execFileSync("base64", ["-w0", "/tmp/screen.png"], { encoding: "utf8" });
+    socket.write(`${JSON.stringify({ type: "screenshot", png })}\n`);
+  } catch {}
+}
+
 createServer({ allowHalfOpen: true }, (socket) => {
   let goal = "";
   socket.setEncoding("utf8").on("data", (d) => (goal += d));
@@ -89,6 +116,7 @@ createServer({ allowHalfOpen: true }, (socket) => {
     // A readiness probe connects and sends nothing.
     if (!goal.trim()) return socket.end();
     const task = JSON.parse(goal);
+    if (task.runner) return runOwn(task, socket);
     let base;
     try {
       if (task.repo) base = checkout(task.repo);
@@ -108,11 +136,7 @@ createServer({ allowHalfOpen: true }, (socket) => {
           socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't bundle the commits: ${err.message}` }] } })}\n`);
         }
       }
-      try {
-        execFileSync("scrot", ["-o", "/tmp/screen.png"], { env: { ...process.env, DISPLAY: ":1" } });
-        const png = execFileSync("base64", ["-w0", "/tmp/screen.png"], { encoding: "utf8" });
-        socket.write(`${JSON.stringify({ type: "screenshot", png })}\n`);
-      } catch {}
+      screenshot(socket);
       socket.end();
     };
     listeners.add(forward);

@@ -1,15 +1,9 @@
-// discriminative-computer-use on real sites, in a local Chrome: outcome, steps, time, and where the time goes.
+// discriminative-computer-use on real sites, run as a task VM runs it (tests/dcu-harness.ts): outcome and time.
 // node tests/bench/dcu.ts [task…]   (TYPESAFE_API_KEY, LLM_BASE_URL, LLM_API_KEY, TASK_MODEL; CHROME for the binary)
-import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { jev, writer } from "../../plugins/discriminative-computer-use/index.ts";
-import { browse } from "../../plugins/discriminative-computer-use/loop.ts";
+import { vault } from "../../core/src/schema.ts";
+import { harness } from "../dcu-harness.ts";
 
-const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-
-const TASKS: Record<string, { goal: string; start?: string; pass: (report: string) => boolean | Promise<boolean> }> = {
+const TASKS: Record<string, { goal: string; start?: string; saved?: Record<string, string>; pass: (report: string) => boolean | Promise<boolean> }> = {
   hn: {
     goal: "Report the exact title of the #1 story on Hacker News.",
     start: "https://news.ycombinator.com",
@@ -22,7 +16,7 @@ const TASKS: Record<string, { goal: string; start?: string; pass: (report: strin
   "hn-comments": {
     goal: "Open the comments of the #1 story on Hacker News and report who wrote the first comment.",
     start: "https://news.ycombinator.com",
-    pass: (r) => !/(couldn't|could not|unable|doesn't show)/i.test(r),
+    pass: () => true,
   },
   wikipedia: {
     goal: "Find the population of Iceland on Wikipedia.",
@@ -41,62 +35,54 @@ const TASKS: Record<string, { goal: string; start?: string; pass: (report: strin
   search: {
     goal: "Search DuckDuckGo for 'firecracker microvm', open the first result, and report its page title.",
     start: "https://duckduckgo.com",
-    pass: (r) => /firecracker/i.test(r) && !/(challenge|verification|captcha|not opened|couldn't|could not)/i.test(r),
+    pass: (r) => /firecracker/i.test(r),
+  },
+  dropdown: {
+    goal: "Choose Option 2 in the dropdown and report what's selected.",
+    start: "https://the-internet.herokuapp.com/dropdown",
+    pass: (r) => /option 2/i.test(r),
+  },
+  flights: {
+    goal: `Find nonstop flights from JFK to SFO on ${new Date(Date.now() + 21 * 86_400_000).toDateString()} on Google Flights, and report the cheapest few with airline, departure and arrival times, and price.`,
+    pass: (r) => /\$\s?\d/.test(r) && /\d{1,2}:\d{2}/.test(r),
+  },
+  showtimes: {
+    goal: "Find today's showtimes at the Angelika Film Center in New York and report three films with their times.",
+    start: "https://www.angelikafilmcenter.com/nyc",
+    pass: (r) => /\d{1,2}:\d{2}/.test(r),
+  },
+  seats: {
+    goal: "At the Angelika Film Center in New York, open seat selection for the next showing of any film today and describe which seats are open. Don't buy anything.",
+    start: "https://www.angelikafilmcenter.com/nyc",
+    pass: (r) => /seat/i.test(r),
   },
   sauce: {
-    goal: "On saucedemo.com, add the Sauce Labs Backpack to the cart. The login is standard_user / secret_sauce.",
+    goal: "Log in to saucedemo.com and add the Sauce Labs Backpack to the cart.",
     start: "https://www.saucedemo.com",
-    pass: (r) => /added/i.test(r) && !/(not|never)( been)? added/i.test(r),
+    saved: { username: "standard_user", password: "secret_sauce" },
+    pass: (r) => /added/i.test(r),
   },
-};
-
-const env = (name: string) => {
-  if (!process.env[name]) throw new Error(`${name} is not set`);
-  return process.env[name]!;
 };
 
 async function run(name: string, port: number) {
-  const proc = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${port}`, "--window-size=1280,900", `--user-data-dir=${mkdtempSync(join(tmpdir(), "dcu-"))}`, "about:blank"], { stdio: "ignore" });
-  const browser = `http://127.0.0.1:${port}`;
-  while (!(await fetch(`${browser}/json/version`).then((r) => r.ok, () => false))) await new Promise((r) => setTimeout(r, 100));
-  const decide = jev(env("TYPESAFE_API_KEY"));
-  const write = writer({ env });
-  const timing = { decide: 0, decisions: 0, write: 0, writes: 0 };
+  const vm = await harness(port);
+  const { saved } = TASKS[name];
+  if (saved) vm.db.insert(vault).values({ name: `${name} login`, fields: Object.keys(saved), value: saved }).run();
   const started = Date.now();
   try {
-    const task = TASKS[name];
-    const result = await browse(task.goal, browser, {
-      decide: async (state, questions) => {
-        const t = Date.now();
-        const answers = await decide(state, questions);
-        timing.decide += Date.now() - t;
-        timing.decisions++;
-        return answers;
-      },
-      write: async (instructions, packet) => {
-        const t = Date.now();
-        const out = await write(instructions, packet);
-        timing.write += Date.now() - t;
-        timing.writes++;
-        return out;
-      },
-    }, task.start);
-    const pass = await task.pass(result.report);
-    return { name, pass, seconds: (Date.now() - started) / 1000, ...timing, ...result };
+    const report = await vm.errand(TASKS[name].goal, TASKS[name].start);
+    return { name, pass: /Goal done\.\s*(\(|$)/.test(report.split("\n").at(-1)!) && (await TASKS[name].pass(report)), seconds: (Date.now() - started) / 1000, report };
   } finally {
-    proc.kill();
+    vm.close();
   }
 }
 
 const names = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(TASKS);
-const results = await Promise.all(names.map((name, i) => run(name, 9400 + i).catch((err: Error) => ({ name, pass: false, error: err.message }))));
+// One at a time: secure-fill finds the browser through a process-wide setting.
+const results = [];
+for (const [i, name] of names.entries()) results.push(await run(name, 9400 + 2 * i).catch((err: Error) => ({ name, pass: false, error: err.message })));
 for (const r of results) {
-  if ("error" in r) {
-    console.log(`\n== ${r.name}: ERROR ${r.error}`);
-    continue;
-  }
-  console.log(`\n== ${r.name}: ${r.pass ? "PASS" : "FAIL"} (${r.outcome}) ${r.seconds.toFixed(1)}s, ${r.steps.length} steps; jev ${r.decisions}× avg ${Math.round(r.decide / Math.max(r.decisions, 1))}ms, writer ${r.writes}× ${(r.write / 1000).toFixed(1)}s`);
-  for (const s of r.steps) console.log(`   - ${s.slice(0, 160)}`);
-  console.log(`   report: ${r.report.replace(/\n/g, " ").slice(0, 400)}`);
+  if ("error" in r) console.log(`\n== ${r.name}: ERROR ${r.error}`);
+  else console.log(`\n== ${r.name}: ${r.pass ? "PASS" : "FAIL"} ${r.seconds.toFixed(1)}s\n   ${r.report.slice(0, 400)}`);
 }
 console.log(`\n${results.filter((r) => r.pass).length}/${results.length} passed`);
