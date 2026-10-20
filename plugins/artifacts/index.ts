@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { input, localTools, str, text, type Plugin } from "@biscotti/core";
+import { escapeHtml, input, localTools, str, text, type Plugin } from "@biscotti/core";
 
 // Pages the agent texts as links. Public (Funnel) under unguessable names, so iMessage can fetch the preview tags.
 
@@ -11,8 +11,6 @@ const PREVIEW_IMAGE = "https://images.unsplash.com/photo-1685397166172-0308e96ee
 const NAME = /^\/([0-9a-f]{24}\.html|preview\.jpg)$/;
 
 const SELF_CONTAINED = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'";
-
-const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
 export default {
   prompt: `Pages: when an answer is better as a page (a table, comparison, itinerary, chart), make a self-contained,
@@ -44,9 +42,9 @@ into a card, so keep the rest of the reply to a line or two.`,
           const { title, summary, html } = args as { title: string; summary: string; html: string };
           const name = `${randomBytes(12).toString("hex")}.html`;
           const tags = [
-            `<title>${escape(title)}</title>`,
-            `<meta property="og:title" content="${escape(title)}">`,
-            `<meta property="og:description" content="${escape(summary)}">`,
+            `<title>${escapeHtml(title)}</title>`,
+            `<meta property="og:title" content="${escapeHtml(title)}">`,
+            `<meta property="og:description" content="${escapeHtml(summary)}">`,
             `<meta property="og:image" content="${baseUrl}/preview.jpg">`,
             `<meta property="og:type" content="website">`,
             `<meta name="viewport" content="width=device-width, initial-scale=1">`,
