@@ -565,6 +565,12 @@ struct InstallerView: View {
             if target == .cloud {
                 Label("You can now deactivate the installer's access key in IAM.", systemImage: "5.circle")
             }
+            HStack(spacing: 12) {
+                Label("Optional: check on it with a coding agent", systemImage: "stethoscope").foregroundStyle(.secondary)
+                Button(copied == "diagnose" ? "Copied" : "Copy prompt") { copy(Prompts.diagnose(target, host: settings.tailscaleName), as: "diagnose") }
+                    .buttonStyle(.link)
+                    .tint(.accentColor)
+            }
         }
         .font(.title3)
     }
