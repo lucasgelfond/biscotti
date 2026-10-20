@@ -27,8 +27,13 @@ RUN for r in "trycua/noVNC $NOVNC_COMMIT /opt/noVNC" "novnc/websockify $WEBSOCKI
       set -- $r && git init -q "$3" && git -C "$3" fetch -q --depth 1 "https://github.com/$1" "$2" && git -C "$3" checkout -q FETCH_HEAD; done
 
 RUN case "$TARGETARCH" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; esac && \
+    mkdir -p /tmp/cua-spacesd && \
     curl -fsSL "https://github.com/trycua/cua/releases/download/cua-spacesd-v${CUA_SPACESD_VERSION}/cua-spacesd-${a}-unknown-linux-gnu.tar.gz" \
-      | tar -xz -C /usr/local/bin cua-spacesd
+      | tar -xz -C /tmp/cua-spacesd cua-spacesd LICENSE THIRD_PARTY_NOTICES.md && \
+    install -m 0755 /tmp/cua-spacesd/cua-spacesd /usr/local/bin/cua-spacesd && \
+    install -d /usr/share/licenses/cua-spacesd && \
+    install -m 0644 /tmp/cua-spacesd/LICENSE /tmp/cua-spacesd/THIRD_PARTY_NOTICES.md /usr/share/licenses/cua-spacesd/ && \
+    rm -rf /tmp/cua-spacesd
 
 RUN case "$TARGETARCH" in \
       amd64) a=x64 sum=df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de ;; \
@@ -59,6 +64,8 @@ RUN mkdir -p /usr/share/backgrounds && \
       "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=85&w=1280&h=800&fit=crop" && \
     echo "aa403dc64a9378a59a8fc137e27d8246d55b5f7c363fbd93080e52e8daa9942e  /usr/share/backgrounds/biscotti.jpg" | sha256sum -c -
 COPY xfce4-desktop.xml /home/cua/.config/xfce4/xfconf/xfce-perchannel-xml/
+
+ADD --chmod=0644 https://raw.githubusercontent.com/trycua/cua/${CUA_COMMIT}/LICENSE.md /usr/share/licenses/cua-xfce/LICENSE.md
 
 ARG CUA_SRC=https://raw.githubusercontent.com/trycua/cua/${CUA_COMMIT}/libs/xfce/src
 ADD ${CUA_SRC}/scripts/start-vnc.sh ${CUA_SRC}/scripts/start-novnc.sh ${CUA_SRC}/scripts/start-spacesd.sh \

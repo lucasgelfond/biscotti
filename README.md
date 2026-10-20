@@ -8,6 +8,8 @@ I built a small setup wizard that should make it easy to deploy on Raspberry Pi,
 
 Acknowledgements: Shoutout to [Diego Rodriguez](https://www.diego.computer/) for thoughts about Instinct architecture / personal agents
 
+The VM desktop uses [Cua](https://github.com/trycua/cua)'s XFCE scripts and `cua-spacesd` for computer control. Their licenses and notices are preserved in the image under `/usr/share/licenses/cua-xfce/` and `/usr/share/licenses/cua-spacesd/`.
+
 ![biscotti](site/public/tweet.png)
 
 <table><tr>
