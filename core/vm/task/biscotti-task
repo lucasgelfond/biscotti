@@ -90,8 +90,7 @@ await new Promise((resolve) => {
   send({ id: "ready", type: "get_state" });
 });
 
-// A plugin's own task runner instead of pi: its files run with node, the goal on stdin, and its last stdout line is the
-// report.
+// A plugin's own task runner instead of pi: its files run with node, the goal on stdin, and what it prints is the report.
 function runOwn(task, socket) {
   const dir = "/tmp/runner";
   rmSync(dir, { recursive: true, force: true });
@@ -102,7 +101,7 @@ function runOwn(task, socket) {
   child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
   child.stdin.end(task.goal);
   child.on("close", () => {
-    const report = out.trim().split("\n").at(-1) || "The runner ended without a report.";
+    const report = out.trim() || "The runner ended without a report.";
     socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: report }] } })}\n`);
     screenshot(socket);
     socket.end();
