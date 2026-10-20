@@ -2,20 +2,21 @@ import { declined, localTools, mcpTools, secret, text, type Context, type Plugin
 import { codeTask } from "./code.ts";
 
 // GitHub's remote MCP server with the owner's fine-grained token, from .env or the vault ("GitHub", field "token").
-// Anything not marked read-only asks the owner first. Nothing merges: biscotti opens pull requests for the user to
-// review, so merge tools are left out.
+// Changes that only add (a comment, a branch, a pull request) go ahead; anything that could overwrite or delete asks
+// the owner first. Nothing merges: biscotti opens pull requests for the user to review, so merge tools are left out.
 
 const URL = "https://api.githubcopilot.com/mcp/";
 const TOOLSETS = "context,repos,issues,pull_requests,users";
 const MERGE = /merge/i;
+const ADDS = /^(add_|create_(branch|pull_request|repository)$|fork_repository$)/;
 
 const token = (ctx: Context) =>
   process.env.GITHUB_TOKEN || secret(ctx.db, "GitHub")?.token;
 
 export default {
-  prompt: `GitHub: repos, issues and pull requests through the GitHub tools. Changes ask the user themselves. If there
-are no GitHub tools, GitHub isn't connected: \`vault_request\` a secret named "GitHub" with the field "token", and tell
-the user to create a fine-grained token at https://github.com/settings/personal-access-tokens/new (the repos they
+  prompt: `GitHub: repos, issues and pull requests through the GitHub tools. Edits and deletions ask the user themselves. If
+there are no GitHub tools, GitHub isn't connected: \`vault_request\` a secret named "GitHub" with the field "token", and
+tell the user to create a fine-grained token at https://github.com/settings/personal-access-tokens/new (the repos they
 choose; Contents, Issues and Pull requests: read and write) and paste it into the form.
 
 Code changes: \`code_task\` has a coding agent make the change in a VM and opens a draft pull request. Text the user
@@ -27,7 +28,7 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
     const readOnly = new Set<string>();
     const tools = mcpTools(URL, { Authorization: `Bearer ${pat}`, "X-MCP-Toolsets": TOOLSETS }, async (client, name, args) => {
       if (MERGE.test(name)) return text("biscotti doesn't merge; send the user the pull request link.");
-      if (!readOnly.has(name) && !(await ctx.ask(`GitHub: ${name} with ${JSON.stringify(args).slice(0, 3000)}${JSON.stringify(args).length > 3000 ? " […longer than shown]" : ""}?`)))
+      if (!readOnly.has(name) && !ADDS.test(name) && !(await ctx.ask(`GitHub: ${name} with ${JSON.stringify(args).slice(0, 3000)}${JSON.stringify(args).length > 3000 ? " […longer than shown]" : ""}?`)))
         return declined;
       return client.callTool({ name, arguments: args }) as never;
     });

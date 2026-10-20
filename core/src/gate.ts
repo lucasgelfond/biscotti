@@ -1,4 +1,3 @@
-import { randomInt } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -9,11 +8,9 @@ import type { Caller, Tools } from "./plugin.ts";
 // The gate holds every key: the model at /llm, every plugin's tools at /mcp, and the owner's approvals. Saved secrets
 // never reach the model provider: any in a model call becomes a placeholder.
 
-// An answer is the whole message, so "ok wait, don't" or "yes but change it" answers nothing. A yes names the
-// question's code, so a "yes" meant for someone else, or for a question not yet seen, approves nothing.
-export const YES = /^(?:yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)[.!,]*\s*#?(\d{3})[.!]*$/i;
-const BARE_YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)[.!]*$/i;
-export const NO = /^(?:no|nope|n|don't|do not|stop|cancel|decline)[.!,]*\s*#?(\d{3})?[.!]*$/i;
+// An answer is the whole message, so "ok wait, don't" or "yes but change it" answers nothing.
+export const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)[.!]*$/i;
+export const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)[.!]*$/i;
 // Marks the gate's own questions; it and its lookalikes are stripped from the agent's texts, so the agent can't pose
 // as the gate.
 export const LOCK = "🔐";
@@ -67,15 +64,15 @@ export function createGate(opts: {
   const sets = { main: [] as Tools[], tasks: [] as Tools[] };
   const byTool = { main: new Map<string, Tools>(), tasks: new Map<string, Tools>() };
 
-  // Questions go out one at a time, in order, each with a code: "yes <code>" approves that one, "no" declines it.
-  const queue: { question: string; code: string; resolve: (yes: boolean) => void }[] = [];
+  // Questions go out one at a time, in order: a yes or a no answers the one asked.
+  const queue: { question: string; resolve: (yes: boolean) => void }[] = [];
   const next = () => {
     const current = queue[0];
     if (!current) return;
-    void opts.send(`${LOCK} ${current.question}\n\nReply "yes ${current.code}" to approve, or "no".`);
+    void opts.send(`${LOCK} ${current.question}\n\nReply yes or no.`);
     setTimeout(() => {
       if (queue[0] !== current) return;
-      void opts.send(`${LOCK} No answer in ${ANSWER_TIMEOUT_MS / 60_000} minutes, so that's a no (${current.code}).`);
+      void opts.send(`${LOCK} No answer in ${ANSWER_TIMEOUT_MS / 60_000} minutes, so that's a no.`);
       settle(false);
     }, ANSWER_TIMEOUT_MS);
   };
@@ -84,27 +81,17 @@ export function createGate(opts: {
     next();
   }
 
-  let lastCode = "";
   function ask(question: string) {
-    let code: string;
-    do code = String(randomInt(100, 1000));
-    while (code === lastCode || queue.some((q) => q.code === code));
-    lastCode = code;
     return new Promise<boolean>((resolve) => {
-      queue.push({ question, code, resolve });
+      queue.push({ question, resolve });
       if (queue.length === 1) next();
     });
   }
 
-  // True when the message was meant for the gate (an answer, or a yes it can't take), so it doesn't reach the agent.
+  // True when the message answered a question, so it doesn't reach the agent.
   function answer(message: string) {
     const said = message.trim();
-    const current = queue[0];
-    const code = (YES.exec(said) ?? NO.exec(said))?.[1];
-    const tell = (text: string) => (void opts.send(`${LOCK} ${text}`), true);
-    if (code && code !== current?.code) return tell(`Nothing is waiting on ${code}, so that answers nothing.`);
-    if (!current) return false;
-    if (BARE_YES.test(said)) return tell(`To approve, reply "yes ${current.code}".`);
+    if (!queue.length) return false;
     const yes = YES.test(said);
     if (!yes && !NO.test(said)) return false;
     void opts.send(yes ? "Approved." : "Declined.");
