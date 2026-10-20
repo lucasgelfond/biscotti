@@ -37,9 +37,11 @@ in
   };
 
   services.tailscale.enable = true;
+  # A DNS cache: Node looks a name up on every request, and over the Pi's Wi-Fi a lookup can take seconds.
+  services.resolved.enable = true;
   services.chrony.enable = true;
   virtualisation.docker.enable = true;
-  environment.systemPackages = [ firecracker pkgs.git pkgs.jq ];
+  environment.systemPackages = [ firecracker pkgs.git pkgs.jq pkgs.iw ];
   # Firecracker restoring a huge-page snapshot (the Mac) opens /dev/userfaultfd; it runs as a slot's user in group kvm.
   services.udev.extraRules = ''
     KERNEL=="userfaultfd", GROUP="kvm", MODE="0660"
