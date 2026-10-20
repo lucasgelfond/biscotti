@@ -5,6 +5,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { createInterface } from "node:readline";
 
 const PROMPT = `You are a task agent in a disposable Debian VM with internet access. Chromium is open on the desktop (DISPLAY=:1; sudo works); the requester may be watching it live.
 
@@ -91,14 +92,16 @@ await new Promise((resolve) => {
 });
 
 // A plugin's own task runner instead of pi: its files run with node, the goal on stdin, and what it prints is the report.
+// Its stderr goes back line by line as progress, which also tells the host it isn't stuck.
 function runOwn(task, socket) {
   const dir = "/tmp/runner";
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir);
   for (const [name, source] of Object.entries(task.runner)) writeFileSync(`${dir}/${name.replace(/[^\w.-]/g, "")}`, source);
-  const child = spawn("node", [`${dir}/main.ts`], { stdio: ["pipe", "pipe", "inherit"] });
+  const child = spawn("node", [`${dir}/main.ts`], { stdio: ["pipe", "pipe", "pipe"] });
   let out = "";
   child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
+  createInterface({ input: child.stderr }).on("line", (text) => socket.write(`${JSON.stringify({ type: "progress", text: text.slice(0, 500) })}\n`));
   child.stdin.end(task.goal);
   child.on("close", () => {
     const report = out.trim() || "The runner ended without a report.";
