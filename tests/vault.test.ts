@@ -7,7 +7,7 @@ import { expect, test } from "vitest";
 import { openDb } from "../core/src/memory.ts";
 import type { Plugin } from "../core/src/plugin.ts";
 import { vault as vaultTable } from "../core/src/schema.ts";
-import vault, { fill, newPassword, totp } from "../core/src/vault.ts";
+import secureFill, { fill, newPassword, totp } from "../plugins/secure-fill/index.ts";
 import { boot, newDataDir, toolCalls } from "./support.ts";
 
 const biscotti = boot([]);
@@ -164,7 +164,7 @@ test.skipIf(!existsSync(CHROME))("sets a new password into the page and the vaul
   db.insert(vaultTable).values({ name: "Delta login", fields: ["username", "password"], value: { username: "ada@example.com", password: "old-password-1" } }).run();
   const asked: string[] = [];
   const ctx = { db, dir, env: (n: string) => n, ask: async (q: string) => (asked.push(q), true), deliver: async () => {} };
-  const tools = await vault.tools!(ctx);
+  const tools = await secureFill.tools!(ctx);
 
   const result = await tools.tasks!.call("vault_new_password", { name: "Delta login", why: "the old one expired", confirm: true }, { slot: 1 });
   const typed = (await page.title()).split("|");
