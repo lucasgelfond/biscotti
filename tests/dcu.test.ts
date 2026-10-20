@@ -1,33 +1,58 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "vitest";
-import { jev, writer } from "../plugins/discriminative-computer-use/index.ts";
-import { browse } from "../plugins/discriminative-computer-use/loop.ts";
-import { newDataDir } from "./support.ts";
+import { vault } from "../core/src/schema.ts";
+import { CHROME, harness } from "./dcu-harness.ts";
 
-const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const PAGES: Record<string, string> = {
-  "/": `<h1>Mug Shop</h1><input type="password" aria-label="Password"><ul><li><a href="/red">Red Mug</a></li><li><a href="/blue">Blue Mug</a></li></ul>`,
-  "/red": `<h1>Red Mug</h1><p>Price: $9.00</p>`,
-  "/blue": `<h1>Blue Mug</h1><p>Price: $12.50</p><p>In stock</p>`,
-};
+const live = existsSync(CHROME) && !!process.env.TYPESAFE_API_KEY;
 
-test.skipIf(!existsSync(CHROME) || !process.env.TYPESAFE_API_KEY)("finds a price a click away, deciding each step with Jev", { timeout: 120_000 }, async () => {
-  const shop = createServer((req, res) => res.writeHead(200, { "Content-Type": "text/html" }).end(PAGES[req.url ?? ""] ?? "")).listen(0, "127.0.0.1");
-  await new Promise((r) => shop.once("listening", r));
-  const port = 9460;
-  const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${newDataDir()}`, "about:blank"], { stdio: "ignore" });
-  const browser = `http://127.0.0.1:${port}`;
-  await expect.poll(() => fetch(`${browser}/json/version`).then((r) => r.ok, () => false), { timeout: 15_000 }).toBe(true);
-  const env = (name: string) => process.env[name]!;
+// A shop with a login: the right username and password show the account page, anything else an error.
+const PASSWORD = "hunter2-biscotti";
+function shop() {
+  const logins: string[] = [];
+  const page = (body: string) => `<!doctype html><title>Mug Shop</title>${body}`;
+  const server = createServer(async (req, res) => {
+    const html = (body: string) => res.writeHead(200, { "Content-Type": "text/html" }).end(page(body));
+    if (req.url === "/blue") return html(`<h1>Blue Mug</h1><p>Price: $12.50</p>`);
+    if (req.url === "/login" && req.method === "POST") {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const form = new URLSearchParams(body);
+      logins.push(form.get("username") ?? "");
+      if (form.get("username") === "ada@example.com" && form.get("password") === PASSWORD) return html(`<h1>Your account</h1><p>Latest order #4471: shipped on October 18.</p>`);
+      return html(`<p>Wrong username or password.</p>`);
+    }
+    if (req.url === "/login")
+      return html(`<h1>Sign in</h1><form method="post" action="/login"><input name="username" aria-label="Email"><input name="password" type="password" aria-label="Password"><button>Sign in</button></form>`);
+    html(`<h1>Mug Shop</h1><a href="/login">Sign in</a><ul><li><a href="/red">Red Mug</a></li><li><a href="/blue">Blue Mug</a></li></ul>`);
+  }).listen(0, "127.0.0.1");
+  return { url: () => `http://127.0.0.1:${(server.address() as AddressInfo).port}`, logins, close: () => server.close() };
+}
 
-  const result = await browse("Find the price of the Blue Mug.", browser, { decide: jev(env("TYPESAFE_API_KEY")), write: writer({ env }) }, `http://127.0.0.1:${(shop.address() as AddressInfo).port}/`);
-  chrome.kill();
-  shop.close();
+test.skipIf(!live)("finds a price a click away, deciding each step with Jev", { timeout: 120_000 }, async () => {
+  const site = shop();
+  const vm = await harness(9460);
 
-  expect(result.outcome).toBe("done");
-  expect(result.steps.join("\n")).toContain('click <a> "Blue Mug"');
-  expect(result.report).toContain("12.50");
+  const report = await vm.errand("Find the price of the Blue Mug.", `${site.url()}/`);
+  vm.close();
+  site.close();
+
+  expect(report).toContain("12.50");
+  expect(report).toContain("(done,");
+});
+
+test.skipIf(!live)("logs in with a saved login, filled by the vault once the owner approves", { timeout: 180_000 }, async () => {
+  const site = shop();
+  const vm = await harness(9470);
+  vm.db.insert(vault).values({ name: "Mug Shop login", fields: ["username", "password"], value: { username: "ada@example.com", password: PASSWORD } }).run();
+
+  const report = await vm.errand("Sign in to the Mug Shop and report the status of my latest order.", `${site.url()}/login`);
+  vm.close();
+  site.close();
+
+  expect(vm.asked.join("\n")).toContain("Mug Shop login");
+  expect(site.logins).toContain("ada@example.com");
+  expect(report).toMatch(/shipped/i);
+  expect(report).not.toContain(PASSWORD);
 });

@@ -22,12 +22,13 @@ export interface Context {
   // A goal for a task VM, where this machine has them. With `repo` (a git bundle), the VM works on it in ~/repo and
   // its new commits come back as `bundle`; `model` names one of the gate's models.
   task?(goal: string, opts?: TaskOptions): Promise<TaskResult>;
-  // A fresh task VM, for as long as `use` runs: `browser` is its Chromium's DevTools address.
-  vm?<T>(use: (browser: string) => Promise<T>): Promise<T>;
 }
 
 export interface TaskOptions {
   repo?: Buffer;
+  // A plugin's own agent instead of pi: file name -> source, run in the VM as `node main.ts` with the goal on stdin
+  // (its last stdout line is the report). It reaches the gate at http://gate like pi does.
+  runner?: Record<string, string>;
   model?: string;
   timeoutMs?: number;
 }

@@ -9,6 +9,11 @@ export interface Element {
   field: boolean;
   secret: boolean;
   covered: boolean;
+  // Checked, expanded, selected…, and a native <select>'s options (and which is chosen).
+  state?: string;
+  options?: string[];
+  // For a label others share: the nearest one before it that appears once.
+  near?: string;
 }
 
 export interface Page {
@@ -30,11 +35,20 @@ const PERCEIVE = `(() => {
   const onScreen = (r) => r.width > 1 && r.height > 1 && r.top < vh && r.bottom > 0 && r.left < vw && r.right > 0;
   const shown = (el) => { const s = getComputedStyle(el); return s.visibility !== "hidden" && s.display !== "none" && s.opacity !== "0"; };
   const elements = [], seen = new Set();
-  for (const el of document.querySelectorAll("a,button,input,select,textarea,summary,[role],[onclick],[tabindex]")) {
+  const CONTROLS = "a,button,input,select,textarea,summary,[role],[onclick],[tabindex]";
+  // Plus what only a script makes clickable (a showtime drawn as a <div>): short on-screen text with a pointer cursor,
+  // inside no control.
+  const pointers = [...document.querySelectorAll("div,span,li,td,p,label,img,svg")].filter((el) => {
+    const r = el.getBoundingClientRect();
+    if (!onScreen(r) || r.width > 400 || el.closest(CONTROLS)) return false;
+    const t = (el.innerText || el.getAttribute("alt") || el.getAttribute("aria-label") || "").trim();
+    return t.length > 0 && t.length <= 60 && getComputedStyle(el).cursor === "pointer" && (!el.parentElement || getComputedStyle(el.parentElement).cursor !== "pointer");
+  });
+  for (const el of [...document.querySelectorAll(CONTROLS), ...pointers]) {
     const r = el.getBoundingClientRect();
     if (!onScreen(r) || el.disabled || el.getAttribute("aria-hidden") === "true" || !shown(el)) continue;
     const role = (el.getAttribute("role") || "").toLowerCase();
-    if (!/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(el.tagName) && !ROLES.test(role) && !el.onclick && !el.hasAttribute("tabindex")) continue;
+    if (!/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(el.tagName) && !ROLES.test(role) && !el.onclick && !el.hasAttribute("tabindex") && !pointers.includes(el)) continue;
     const type = el.tagName === "INPUT" ? (el.type || "text").toLowerCase() : "";
     const field = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && TEXT_TYPES.test(type));
     const typedInto = field || el.isContentEditable || role === "textbox" || role === "searchbox";
@@ -51,6 +65,10 @@ const PERCEIVE = `(() => {
       href: el.tagName === "A" && el.href ? el.href.slice(0, 120) : undefined,
       field, secret: type === "password" || SECRET.test((el.getAttribute("autocomplete") || "").toLowerCase()),
       covered: !!top && !el.contains(top) && !top.contains(el),
+      state: [el.checked || el.getAttribute("aria-checked") === "true" ? "checked" : "", el.getAttribute("aria-expanded") === "true" ? "expanded" : "",
+        el.getAttribute("aria-selected") === "true" || el.getAttribute("aria-current") ? "selected" : "", el.getAttribute("aria-pressed") === "true" ? "pressed" : "",
+        el.tagName === "SELECT" && el.selectedIndex >= 0 ? "chosen: " + el.options[el.selectedIndex].text.trim() : ""].filter(Boolean).join(", ") || undefined,
+      options: el.tagName === "SELECT" ? [...el.options].slice(0, 40).map((o) => o.text.trim()) : undefined,
     } });
   }
   elements.sort((a, b) => (Math.abs(a.y - b.y) > 8 ? a.y - b.y : a.x - b.x));
@@ -90,16 +108,22 @@ export async function openPage(browser: string) {
     pending.delete(msg.id);
   };
   let id = 0;
+  // A page mid-navigation can leave a call unanswered.
   const send = (method: string, params: object = {}) =>
     new Promise<any>((resolve, reject) => {
-      pending.set(++id, (msg) => (msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result)));
-      ws.send(JSON.stringify({ id, method, params }));
+      const n = ++id;
+      const timer = setTimeout(() => (pending.delete(n), reject(new Error(`${method} timed out`))), 15_000);
+      pending.set(n, (msg) => (clearTimeout(timer), msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result)));
+      ws.send(JSON.stringify({ id: n, method, params }));
     });
   const evaluate = async (expression: string) => (await send("Runtime.evaluate", { expression, returnByValue: true })).result.value;
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const perceive = async (): Promise<Page> => {
     for (let i = 0; i < 20 && (await evaluate("document.readyState").catch(() => "loading")) === "loading"; i++) await sleep(250);
-    return evaluate(PERCEIVE);
+    // An app that renders after load shows next to nothing at first.
+    let page: Page = await evaluate(PERCEIVE);
+    for (let i = 0; i < 10 && page.elements.length + page.text.length < 3; i++) page = (await sleep(500), await evaluate(PERCEIVE));
+    return page;
   };
   const at = (i: number) => `document.querySelector('[data-dcu="${i}"]')`;
   const key = async (key: string, code: number) => {
@@ -121,6 +145,10 @@ export async function openPage(browser: string) {
       await send("Input.insertText", { text });
       return true;
     },
+    // A native <select>'s option, by its position, as a person picking it would.
+    choose: (i: number, option: number) =>
+      evaluate(`(() => { const el = ${at(i)}; if (!el?.options?.[${option}]) return false; el.selectedIndex = ${option};
+        el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`),
     enter: () => key("Enter", 13),
     escape: () => key("Escape", 27),
     scroll: (down: boolean) => evaluate(`scrollBy(0, ${down ? "" : "-"}innerHeight * 0.8)`),
