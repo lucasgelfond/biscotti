@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { startFakeGoogle } from "./fakes/google.ts";
-import { approval, boot, toolCalls } from "./support.ts";
+import { boot, toolCalls } from "./support.ts";
 
 const FAKE_PORT = 8097;
 const CALLBACK_PORT = 4892;
@@ -57,8 +57,8 @@ test("asks before sending an email, and sends it on a yes", async () => {
   const { say, sent } = await connected();
 
   const replied = say("Send an email to sam@example.com thanking them for lunch today.");
-  await expect.poll(() => sent.join("\n"), { timeout: 60_000 }).toContain("to approve");
-  await say(approval(sent));
+  await expect.poll(() => sent.join("\n"), { timeout: 60_000 }).toContain("Reply yes or no");
+  await say("yes");
   await replied;
 
   expect(google.sent).toHaveLength(1);
@@ -70,7 +70,7 @@ test("asks before deleting an event, and keeps it on a no", async () => {
   const { say, sent } = await connected();
 
   const replied = say("Delete my dinner with Sam from my calendar.");
-  await expect.poll(() => sent.join("\n"), { timeout: 60_000 }).toContain("to approve");
+  await expect.poll(() => sent.join("\n"), { timeout: 60_000 }).toContain("Reply yes or no");
   await say("no");
   await replied;
 

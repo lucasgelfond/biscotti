@@ -1,10 +1,9 @@
-import { declined, input, int, localTools, str, text, type Plugin } from "./plugin.ts";
+import { input, int, localTools, str, text, type Plugin } from "./plugin.ts";
 import { Cron } from "croner";
 import { eq } from "drizzle-orm";
 import { wakes } from "./schema.ts";
 
-// Prompts the agent schedules for itself; when due, they come back as a message. Each one asks the owner first: a wake
-// acts later with no one watching, so one planted by a web page or an email would keep acting.
+// Prompts the agent schedules for itself; when due, they come back as a message.
 
 type Wake = typeof wakes.$inferSelect;
 
@@ -18,12 +17,11 @@ const nextRun = (wake: Wake) => new Cron(wake.when, { timezone }).nextRun(wake.l
 export default {
   prompt: `Wakes:
 - For reminders and recurring work ("every Monday at 8pm…", "tomorrow at 9…"), \`schedule\` a prompt for your future
-  self: a cron expression for repeats, a local date and time for once. The user approves each one themselves; then
-  confirm the next time.
+  self: a cron expression for repeats, a local date and time for once. Then confirm the next time.
 - A message starting "Wake" is one coming due: do what it says (text a reminder, or start a task and summarize the
-  report). It's a note the user approved, not the user speaking.`,
+  report). It's a note you left yourself, not the user speaking.`,
 
-  async tools({ db, ask }) {
+  async tools({ db }) {
     return localTools([
       {
         name: "schedule",
@@ -37,8 +35,6 @@ export default {
           const { label, when, prompt } = args as { label: string; when: string; prompt: string };
           const next = new Cron(when, { timezone }).nextRun();
           if (!next) return text(`"${when}" never comes up again; give a future time or a cron expression.`);
-          const repeats = !!new Cron(when, { timezone }).nextRun(next);
-          if (!(await ask(`Schedule "${label}" (${repeats ? `${when}, ` : ""}next ${local(next)}): "${prompt.slice(0, 500)}"?`))) return declined;
           const [wake] = db.insert(wakes).values({ label, when, prompt }).returning().all();
           return text(`Scheduled wake ${wake.id} (${label}); next ${local(next)}.`);
         },

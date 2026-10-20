@@ -3,8 +3,8 @@ import { createServer, type Server } from "node:http";
 import { declined, input, int, list, localTools, optional, str, text, type Context, type Plugin } from "@biscotti/core";
 import { sql } from "drizzle-orm";
 
-// Gmail and Google Calendar over Google's REST APIs, with the owner's own OAuth client. Sending and calendar changes
-// ask the owner first.
+// Gmail and Google Calendar over Google's REST APIs, with the owner's own OAuth client. Sending mail and deleting
+// events ask the owner first.
 
 const API = process.env.GOOGLE_API_URL ?? "https://www.googleapis.com";
 const TOKEN_URL = process.env.GOOGLE_TOKEN_URL ?? "https://oauth2.googleapis.com/token";
@@ -104,7 +104,7 @@ function googleApi(ctx: Context) {
 
 export default {
   prompt: `Gmail and Google Calendar: for anything about the user's mail, schedule, appointments, bills or plans, check
-their inbox (\`gmail_search\`) and calendar (\`calendar_events\`) first, in parallel. Sending and calendar changes ask the
+their inbox (\`gmail_search\`) and calendar (\`calendar_events\`) first, in parallel. Sending mail and deleting events ask the
 user themselves, so just call the tool. If Google isn't connected, \`google_connect\` gives a sign-in link to text them.`,
 
   async tools(ctx) {
@@ -183,11 +183,10 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       },
       {
         name: "calendar_create",
-        description: "Create an event on the user's primary calendar (asks the user first). Times are ISO 8601 with offset.",
+        description: "Create an event on the user's primary calendar. Times are ISO 8601 with offset.",
         input: input({ title: str(), start: str(), end: str(), location: optional(str()), attendees: optional(list(str())) }),
         async run({ title, start, end, location, attendees }: Args) {
           const guests = (attendees as string[] | undefined) ?? [];
-          if (!(await confirm(`Add "${title}" to your calendar, ${start} to ${end}${location ? ` at ${location}` : ""}${guests.length ? `, inviting ${guests.join(", ")}` : ""}?`))) return declined;
           const event = await call("POST", `/calendar/v3/calendars/primary/events${guests.length ? "?sendUpdates=all" : ""}`, {
             summary: title,
             location,
@@ -200,11 +199,10 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
       },
       {
         name: "calendar_update",
-        description: "Change an event's title, times or location by id (asks the user first).",
+        description: "Change an event's title, times or location by id.",
         input: input({ id: str(), title: optional(str()), start: optional(str()), end: optional(str()), location: optional(str()) }),
         async run({ id, title, start, end, location }: Args) {
           const changes = { ...(title ? { summary: title } : {}), ...(location ? { location } : {}), ...(start ? { start: { dateTime: start } } : {}), ...(end ? { end: { dateTime: end } } : {}) };
-          if (!(await confirm(`Change calendar event ${id}: ${JSON.stringify(changes)}?`))) return declined;
           await call("PATCH", `/calendar/v3/calendars/primary/events/${encodeURIComponent(String(id))}`, changes);
           return text("Updated.");
         },
