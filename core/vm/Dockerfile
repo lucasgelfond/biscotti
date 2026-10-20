@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Minimal multi-arch Cua desktop (XFCE + TigerVNC + noVNC + Chromium + cua-spacesd) plus the task agent (pi).
 # Startup scripts and configs come straight from Cua at a pinned commit; nothing is vendored.
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 ARG CUA_COMMIT=075add55cf938f4e351b74539efa18d4976696ae
 ARG CUA_SPACESD_VERSION=0.1.0
@@ -80,11 +80,13 @@ RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> 
     cp /tmp/cua/supervisor/* /etc/supervisor/conf.d/ && \
     install -m 0755 /tmp/cua/scripts/* /usr/local/bin/ && \
     install -d -o cua -g cua -m 0700 /run/cua && \
-    install -d -o cua -g cua $HOME/.vnc $HOME/.config/xfce4/xfconf/xfce-perchannel-xml $HOME/.config/autostart && \
+    install -d -o cua -g cua $HOME/.config/tigervnc $HOME/.config/xfce4/xfconf/xfce-perchannel-xml $HOME/.config/autostart && \
     install -o cua -g cua /tmp/cua/xfce-config/helpers.rc $HOME/.config/xfce4/ && \
     install -o cua -g cua /tmp/cua/xfce-config/xfce4-*.xml $HOME/.config/xfce4/xfconf/xfce-perchannel-xml/ && \
     for a in xfce4-tips-autostart xfce4-screensaver light-locker xfce4-power-manager; do \
       printf '[Desktop Entry]\nHidden=true\n' > $HOME/.config/autostart/$a.desktop; done && \
+    # TigerVNC 1.15 moved ~/.vnc here; the link keeps it from moving the folder (which fails on overlay filesystems).
+    ln -s .config/tigervnc $HOME/.vnc && \
     chown -R cua:cua $HOME && rm -rf /tmp/cua && \
     # Replace Cua's fixed startup waits with readiness polls.
     sed -i 's|^sleep 5$|until (exec 3<>/dev/tcp/127.0.0.1/5901) 2>/dev/null; do sleep 0.1; done|' /usr/local/bin/start-novnc.sh && \

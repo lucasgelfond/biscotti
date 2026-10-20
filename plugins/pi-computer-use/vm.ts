@@ -30,8 +30,7 @@ for await (const chunk of process.stdin) goal += chunk;
 const tgz = Buffer.from(await (await fetch(`https://registry.npmjs.org/@injaneity/pi-computer-use/-/pi-computer-use-${VERSION}.tgz`, { signal: AbortSignal.timeout(180_000) })).arrayBuffer());
 if (`sha512-${createHash("sha512").update(tgz).digest("base64")}` !== INTEGRITY) throw new Error("pi-computer-use's download doesn't match its pinned hash");
 mkdirSync(DIR, { recursive: true });
-writeFileSync("/tmp/pcu.tgz", tgz);
-execFileSync("tar", ["-xzf", "/tmp/pcu.tgz", "-C", DIR, "--strip-components=1"]);
+execFileSync("tar", ["-xz", "-C", DIR, "--strip-components=1"], { input: tgz });
 // Its imports (pi itself, typebox) resolve to the VM's pi install.
 execFileSync("ln", ["-sfn", MODULES, `${DIR}/node_modules`]);
 log(`installed ${VERSION}`);
