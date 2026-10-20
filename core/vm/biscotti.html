@@ -33,6 +33,7 @@
   const rfb = new RFB(document.getElementById("screen"), url, { credentials: { password } });
   rfb.viewOnly = true;
   rfb.scaleViewport = true;
+  rfb.background = "#f4f4f4";
   const say = (text, live = false) => ((status.textContent = text), status.classList.toggle("live", live));
   rfb.addEventListener("connect", () => say("watching the task", true));
   rfb.addEventListener("disconnect", (e) => say(e.detail.clean ? "the task ended" : "can't reach the desktop"));
