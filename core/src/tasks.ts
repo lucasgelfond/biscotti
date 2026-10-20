@@ -177,7 +177,16 @@ export function taskTool(vms: ReturnType<typeof taskVms>, onReport: (goal: strin
 // (with a coding task's model routed to its slot), and the task tool, whose reports go to `report`.
 export async function gateTasks(gate: ReturnType<typeof createGate>, socket: string, vmDir: string, report: (goal: string, result: TaskResult) => void) {
   for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot, peer: `10.200.${slot}.2` });
-  const vms = taskVms(vmService(socket));
+  const pool = taskVms(vmService(socket));
+  // What the task proposed for the main agent (the gate's delegated tools) comes with its report.
+  const vms = {
+    async run(goal: string, onStart?: (slot: number) => void, opts?: TaskOptions) {
+      let slot = 0;
+      const result = await pool.run(goal, (s) => ((slot = s), gate.proposed(s), onStart?.(s)), opts);
+      const proposed = gate.proposed(slot);
+      return proposed.length ? { ...result, report: `${result.report}\n\nThe task proposes, for you to decide:\n${proposed.map((p) => `- ${p}`).join("\n")}` } : result;
+    },
+  };
   // The live desktop's password goes in the link's fragment, which the browser never sends to the server.
   const host = process.env.TAILNET_HOST;
   const password = () => (existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : "");

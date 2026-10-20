@@ -74,6 +74,15 @@ function commits(base) {
   return readFileSync("/tmp/out.bundle").toString("base64");
 }
 
+// A command to pi, answered by its response.
+const rpc = (command) =>
+  new Promise((resolve) => {
+    const id = `rpc-${Math.random()}`;
+    const done = (_, record) => record.id === id && (listeners.delete(done), resolve(record));
+    listeners.add(done);
+    send({ ...command, id });
+  });
+
 // Ready once pi answers.
 await new Promise((resolve) => {
   const ready = (_, record) => record.id === "ready" && (listeners.delete(ready), resolve());
@@ -112,7 +121,7 @@ createServer({ allowHalfOpen: true }, (socket) => {
   let goal = "";
   socket.setEncoding("utf8").on("data", (d) => (goal += d));
   socket.on("error", () => {});
-  socket.on("end", () => {
+  socket.on("end", async () => {
     // A readiness probe connects and sends nothing.
     if (!goal.trim()) return socket.end();
     const task = JSON.parse(goal);
@@ -139,6 +148,8 @@ createServer({ allowHalfOpen: true }, (socket) => {
       screenshot(socket);
       socket.end();
     };
+    // The gate's tools may have changed since the snapshot was taken (reload.ts).
+    await rpc({ type: "prompt", message: "/biscotti-reload" });
     listeners.add(forward);
     send({ type: "prompt", message: base ? CODING + task.goal : task.goal });
   });

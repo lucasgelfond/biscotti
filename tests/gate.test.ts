@@ -100,6 +100,27 @@ test("after the gate restarts with a new plugin, the running agent uses its tool
   expect(after.sent).toContain("Declined.");
 });
 
+test("lets a task VM propose what only the main agent may do, and hands the proposal back for the report", async () => {
+  const gate = createGate({ llm: { url: "http://127.0.0.1:1", key: "unused" }, models: {}, send: async () => {} });
+  const search = localTools([{ name: "web_search", description: "Search.", input: { type: "object", properties: {} }, run: async () => text("ok") }]);
+  gate.add({ ...localTools([{ name: "send_email", description: "Send.", input: { type: "object", properties: {} }, run: async () => text("sent") }]) });
+  gate.add({ ...search, tasks: search });
+  const server = await gate.listen("127.0.0.1", 0, { slot: 2, peer: "127.0.0.1" });
+  const client = await mcp(`http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`);
+
+  const tools = (await client.listTools()).tools;
+  await client.callTool({ name: "propose", arguments: { tool: "send_email", args: { to: "sam@example.com" }, why: "to confirm the booking" } });
+  const proposed = gate.proposed(2);
+  const again = gate.proposed(2);
+  await client.close();
+  server.close();
+
+  expect(tools.map((t) => t.name)).toEqual(["web_search", "propose"]);
+  expect(tools[1].description).toContain("send_email");
+  expect(proposed).toEqual(['send_email {"to":"sam@example.com"}: to confirm the booking']);
+  expect(again).toEqual([]);
+});
+
 test("lists every plugin's tools at the gate's /mcp", async () => {
   const { gateUrl } = await boot([outbox]);
 
@@ -129,7 +150,7 @@ test("gives task VMs only the tools plugins allow them, and only when addressed 
   );
   server.close();
 
-  expect(names).toEqual(["web_search"]);
+  expect(names).toEqual(["web_search", "propose"]);
   expect(rebound).toBe(403);
 });
 
