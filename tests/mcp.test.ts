@@ -1,17 +1,17 @@
+import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { expect, test } from "vitest";
-import { openDb } from "../core/src/memory.ts";
 import { saveSecret } from "../core/src/plugin.ts";
 import mcp from "../plugins/mcp/index.ts";
-import { newDataDir } from "./support.ts";
+import { testContext } from "./support.ts";
 
 // A notes service's MCP server that takes one token: a read, two adds and an edit.
 const TOKEN = "notes-token-1";
-function notes() {
+async function notes() {
   const calls: string[] = [];
   const args: unknown[] = [];
   const http = createServer(async (req, res) => {
@@ -34,16 +34,15 @@ function notes() {
     await server.connect(transport);
     await transport.handleRequest(req, res);
   }).listen(0, "127.0.0.1");
+  await once(http, "listening");
   return { url: () => `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`, calls, args, close: () => http.close() };
 }
 
 test("lists a token server's tools under its name, runs reads and adds at once, and asks before an edit", async () => {
-  const service = notes();
-  await new Promise((r) => setTimeout(r, 50));
-  const dir = newDataDir();
-  const db = openDb(`${dir}/biscotti.db`, "k");
+  const service = await notes();
   const asked: string[] = [];
-  const ctx = { db, dir, env: (n: string) => n, ask: async (q: string) => (asked.push(q), false), deliver: async () => {}, send: async () => {} };
+  const ctx = testContext({ ask: async (q) => (asked.push(q), false) });
+  const { db } = ctx;
   const tools = await mcp.tools!(ctx);
   saveSecret(db, "MCP: notes", { token: TOKEN });
   db.$client.prepare("INSERT INTO mcp_servers (name, url) VALUES ('notes', ?)").run(service.url());
@@ -62,11 +61,9 @@ test("lists a token server's tools under its name, runs reads and adds at once, 
 });
 
 test("takes an argument that's a string or an object as the object in JSON", async () => {
-  const service = notes();
-  await new Promise((r) => setTimeout(r, 50));
-  const dir = newDataDir();
-  const db = openDb(`${dir}/biscotti.db`, "k");
-  const ctx = { db, dir, env: (n: string) => n, ask: async () => false, deliver: async () => {}, send: async () => {} };
+  const service = await notes();
+  const ctx = testContext({ ask: async () => false });
+  const { db } = ctx;
   const tools = await mcp.tools!(ctx);
   saveSecret(db, "MCP: notes", { token: TOKEN });
   db.$client.prepare("INSERT INTO mcp_servers (name, url) VALUES ('notes', ?)").run(service.url());

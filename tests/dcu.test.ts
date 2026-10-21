@@ -3,7 +3,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "vitest";
 import { vault } from "../core/src/schema.ts";
-import { CHROME, harness } from "./dcu-harness.ts";
+import { harness } from "./dcu-harness.ts";
+import { CHROME } from "./support.ts";
 
 const live = existsSync(CHROME) && !!process.env.TYPESAFE_API_KEY;
 
