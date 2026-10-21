@@ -1,3 +1,4 @@
+import type { ServerResponse } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -8,7 +9,6 @@ import { vault } from "./schema.ts";
 // The plugin API. A plugin is plugins/<name>/index.ts default-exporting a Plugin; biscotti.json picks them.
 
 export type { CallToolResult, Tool };
-export type { Db };
 
 export interface Context {
   db: Db;
@@ -103,6 +103,16 @@ export function localTools(defs: LocalTool[]): Tools {
   };
 }
 
+// Several sets as one: each call goes to the set that listed the tool.
+export function merge(...sets: Tools[]): Tools {
+  const owners = new Map<string, Tools>();
+  const list = async () => (await Promise.all(sets.map(async (s) => (await s.list()).map((t) => (owners.set(t.name, s), t))))).flat();
+  return {
+    list,
+    call: async (name, args, caller) => (owners.get(name) ?? (await list(), owners.get(name))!).call(name, args, caller),
+  };
+}
+
 // A session per call, so a paused call resumes in its own session.
 export function mcpTools(url: string, headers: Record<string, string>, call?: (client: Client, name: string, args: Record<string, unknown>) => Promise<CallToolResult>): Tools {
   async function withClient<T>(fn: (client: Client) => Promise<T>) {
@@ -148,7 +158,9 @@ input:focus{outline:2px solid #2400ff;outline-offset:-1px}
 button{font:inherit;padding:6px 14px;border:1px solid #000;background:#fff;color:#000;cursor:pointer}
 button:hover{background:#000;color:#fff}`;
 export const PAGE_ART = `<pre aria-hidden="true">${ART}</pre>`;
-export const htmlPage = (title: string, body: string) => `<!doctype html><meta charset="utf-8">
+export const sendPage = (res: ServerResponse, title: string, body: string, status = 200) =>
+  void res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" }).end(htmlPage(title, body));
+const htmlPage = (title: string, body: string) => `<!doctype html><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title>
 <style>
 ${PAGE_STYLE}
