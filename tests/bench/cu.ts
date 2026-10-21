@@ -1,9 +1,13 @@
 // Computer-use benchmark: real web tasks in task VMs, per model and guidance, with timings and tool counts.
 // On the Pi, with the live agent stopped:  node tests/bench/cu.ts <model> <guidance> [task…]
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { createGate } from "../../core/src/gate.ts";
+import { openDb } from "../../core/src/memory.ts";
+import type { Context, Plugin } from "../../core/src/plugin.ts";
 import { restore, SLOTS } from "../../core/src/tasks.ts";
 
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
@@ -18,6 +22,14 @@ const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | 
       const { title } = await (await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`)).json();
       return report.toLowerCase().includes(title.toLowerCase().slice(0, 25));
     },
+  },
+  search: {
+    goal: "Search DuckDuckGo for 'firecracker microvm', open the first result, and report its page title.",
+    pass: (r) => /firecracker/i.test(r) && !/(couldn't|could not|unable to)/i.test(r),
+  },
+  showtimes: {
+    goal: "Find today's showtimes at the Angelika Film Center in New York and report three films with their times.",
+    pass: (r) => (r.match(/\d{1,2}:\d{2}/g) ?? []).length >= 3,
   },
   sauce: {
     goal: "On https://www.saucedemo.com log in as standard_user with password secret_sauce, add the Sauce Labs Backpack to the cart, check out as Ada Lovelace, zip 10001, and finish the order. Report the confirmation message.",
@@ -109,9 +121,16 @@ async function run(task: string, slot: number, guidance: string) {
 
 const [model, guide = "none", ...only] = process.argv.slice(2);
 const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: model }, send: async () => {} });
+// Plugins whose task tools the VMs get, e.g. CU_PLUGINS=vision.
+const scratch = mkdtempSync(join(tmpdir(), "cu-"));
+const ctx: Context = { db: openDb(`${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => false, deliver: async () => {}, send: async () => {} };
+for (const name of (process.env.CU_PLUGINS ?? "").split(",").filter(Boolean)) {
+  const plugin: Plugin = (await import(`../../plugins/${name}/index.ts`)).default;
+  if (plugin.tools) gate.add(await plugin.tools(ctx));
+}
 const servers = await Promise.all(SLOTS.map((slot) => gate.listen(`10.200.${slot}.1`, 80, { slot })));
 const tasks = only.length ? only : Object.keys(TASKS);
-const dir = `${OUT}/${model.replace("/", "_")}-${guide}`;
+const dir = `${OUT}/${model.replace("/", "_")}-${guide}${process.env.CU_LABEL ? `-${process.env.CU_LABEL}` : ""}`;
 mkdirSync(dir, { recursive: true });
 
 const queue = [...tasks];
@@ -122,7 +141,7 @@ await Promise.all(
       const result = await run(task, slot, GUIDANCE[guide]);
       if (result.screenshot) writeFileSync(`${dir}/${task}.png`, result.screenshot);
       const { screenshot: _, ...line } = result;
-      const json = JSON.stringify({ model, guide, ...line });
+      const json = JSON.stringify({ model, guide, label: process.env.CU_LABEL, ...line });
       console.log(json);
       appendFileSync(`${OUT}/results.jsonl`, `${json}\n`);
       results.push(result);
