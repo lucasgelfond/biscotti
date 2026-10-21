@@ -90,7 +90,7 @@ struct InstallerView: View {
     @State private var download: Double?
     @State private var downloadError: String?
     @State private var disks = removableDisks()
-    @State private var disk: Disk?
+    @State private var disk = fakeDisk
     @State private var myPhones: [String] = []
     @State private var importing = false
     @State private var importTarget = Import.image
@@ -688,7 +688,7 @@ struct InstallerView: View {
     }
 
     private func write() {
-        guard let image, let disk else { return }
+        guard let image, let disk, fakeDisk == nil else { return }
         let settings = settings
         progress = 0
         busy = true

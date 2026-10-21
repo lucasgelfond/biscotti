@@ -51,8 +51,12 @@ struct InstallerError: LocalizedError {
     init(_ message: String) { errorDescription = message }
 }
 
+/// `-fakeDisk "Generic SD"` stands in for an inserted 64 GB card in screenshots; it's never written to.
+let fakeDisk = UserDefaults.standard.string(forKey: "fakeDisk").map { Disk(id: "disk9", name: $0, size: 64_000_000_000) }
+
 /// Removable, physical disks only (SD cards, including the built-in reader's, and USB drives), never the Mac's own.
 func removableDisks() -> [Disk] {
+    if let fakeDisk { return [fakeDisk] }
     guard let list = try? diskutil("list", "physical"),
           let ids = list["WholeDisks"] as? [String] else { return [] }
     return ids.compactMap { id in
