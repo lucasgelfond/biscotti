@@ -15,7 +15,7 @@ const TASK_TIMEOUT_MS = 30 * 60_000;
 const IDLE_MS = 10 * 60_000;
 // The events, the screenshot and a coding task's commits, base64.
 const MAX_OUTPUT = 100 * 1024 * 1024;
-export const SLOTS = Array.from({ length: Number(process.env.VM_SLOTS ?? 3) }, (_, i) => i + 1);
+export const SLOTS = Array.from({ length: Number(process.env.VM_SLOTS ?? 2) }, (_, i) => i + 1);
 
 export interface Vm {
   slot: number;
