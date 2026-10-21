@@ -24,7 +24,7 @@ const MIN_DONE = 0.8;
 const MIN_FOCUSED = 0.6;
 const MIN_BOX = 0.4;
 // A click that spends money, books, sends or deletes needs the goal to ask for exactly that.
-const CONSEQUENTIAL = /\b(buy|pay|purchase|place (your )?order|order now|book now|complete (purchase|order|booking)|send|delete|remove account|subscribe|donate|transfer)\b/i;
+const CONSEQUENTIAL = /\b(buy|pay|purchase|check ?out|place (your )?order|order now|book now|complete (purchase|order|booking)|send|post|publish|share|reply|delete|discard|reset|remove account|subscribe|donate|transfer)\b/i;
 const MIN_AUTHORIZED = 0.9;
 const CREDENTIAL = /pass(word|code)?|pin\b|cvc|cvv|card number|one-time|otp|2fa|security code|ssn/i;
 
@@ -42,8 +42,11 @@ const ACTIONS = {
   scroll_up: "Scroll up.",
   back: "Go back to the previous page.",
   done: "The goal is achieved: what it asks for is on this page.",
-  none: "Nothing here can make progress toward the goal.",
+  reobserve: "Take no action and look again, because the page looks stale, still loading, or incomplete.",
+  abstain: "Stop without acting: none of the other actions is safe or moves toward the goal.",
 };
+// Looking again this many times in a row is being stuck.
+const MAX_REOBSERVE = 2;
 
 // What a click in a picture can aim for, said plainly: models read pictures worse than text. With the legend's colors,
 // "the green seat right of the blue one" is found where "an open seat beside mine" isn't.
@@ -72,7 +75,8 @@ function options(page: Page, saved: boolean) {
     scroll_up: page.canScroll,
     back: page.canGoBack,
     done: true,
-    none: true,
+    reobserve: true,
+    abstain: true,
   };
   return Object.fromEntries(Object.entries(ACTIONS).filter(([k]) => can[k as keyof typeof ACTIONS]));
 }
@@ -98,6 +102,7 @@ export async function browse(goal: string, browser: string, { decide, write, vau
   let seen: Set<string> | undefined;
   let focus = "";
   let handoffs = 0;
+  let reobserved = 0;
   let outcome = "ran out of steps";
   const where = () => ({ url: page.url, title: page.title });
   const elements = (seen?: Set<string>) => Object.fromEntries(page.elements.map((e) => [String(e.i), label(e, seen)]));
@@ -187,7 +192,8 @@ export async function browse(goal: string, browser: string, { decide, write, vau
     );
     // What the writer won't make up (an email, a username) a saved entry may have.
     if (!text || text === "NONE" || CREDENTIAL.test(text)) return saved.some((s) => s.fields.some((f) => matches(f, field))) ? fillSaved(field) : `didn't type into ${label(field)}`;
-    return (await tab.type(field.i, text)) ? `typed "${text}" into ${label(field)}` : `couldn't focus ${label(field)}`;
+    const typed = await tab.type(field.i, text);
+    return typed ? `typed "${text}" into ${label(field)}` : `couldn't type into ${label(field)} (it didn't take the text)`;
   }
 
   try {
@@ -223,8 +229,19 @@ export async function browse(goal: string, browser: string, { decide, write, vau
         outcome = "done";
         break;
       }
-      if (kind === "done" || kind === "none" || confidence < MIN_CONFIDENCE) {
-        const why = kind === "done" ? "it chose done, but the page may not show the goal achieved" : kind === "none" ? "nothing on the page seemed to help" : `unsure (${kind} at ${confidence.toFixed(2)})`;
+      if (kind === "reobserve" && reobserved++ < MAX_REOBSERVE) {
+        await new Promise((r) => setTimeout(r, 1000));
+        page = await tab.perceive();
+        history.push("looked again");
+        continue;
+      }
+      if (kind !== "reobserve") reobserved = 0;
+      if (kind === "done" || kind === "reobserve" || kind === "abstain" || confidence < MIN_CONFIDENCE) {
+        const why =
+          kind === "done" ? "it chose done, but the page may not show the goal achieved"
+          : kind === "reobserve" ? "the page kept looking unfinished"
+          : kind === "abstain" ? "nothing on the page seemed safe or helpful"
+          : `unsure (${kind} at ${confidence.toFixed(2)})`;
         if (await handOff(why)) continue;
         break;
       }

@@ -34,6 +34,9 @@ export interface Page {
 // Each element is stamped data-dcu="<i>" so actions can find it again; the previous stamps are cleared first.
 const PERCEIVE = `(() => {
   document.querySelectorAll("[data-dcu]").forEach((el) => el.removeAttribute("data-dcu"));
+  // One tab: a link or pop-up that would open another opens here instead.
+  document.querySelectorAll("a[target]").forEach((a) => (a.target = "_self"));
+  window.open = (url) => (url && location.assign(url), window);
   const ROLES = /^(button|link|menuitem\\w*|tab|checkbox|radio|switch|combobox|option|searchbox|textbox|slider|spinbutton)$/;
   const TEXT_TYPES = /^(text|search|email|url|tel|number|password)$/;
   const SECRET = /(^|\\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp\\S*)(\\s|$)/;
@@ -77,7 +80,10 @@ const PERCEIVE = `(() => {
       options: el.tagName === "SELECT" ? [...el.options].slice(0, 40).map((o) => o.text.trim()) : undefined,
     } });
   }
-  elements.sort((a, b) => (Math.abs(a.y - b.y) > 8 ? a.y - b.y : a.x - b.x));
+  // An open dialog's controls first: they're what the page is waiting on.
+  const dialog = document.querySelector("dialog[open], [aria-modal=true]");
+  const inDialog = (o) => (dialog && dialog.contains(o.el) ? 0 : 1);
+  elements.sort((a, b) => inDialog(a) - inDialog(b) || (Math.abs(a.y - b.y) > 8 ? a.y - b.y : a.x - b.x));
   elements.splice(120);
   elements.forEach((o, i) => (o.el.setAttribute("data-dcu", i), (o.e.i = i)));
   // Three "Add to cart" buttons say nothing about which is which; each one's card (the smallest ancestor holding only
@@ -152,7 +158,7 @@ export async function openPage(browser: string) {
       ws.send(JSON.stringify({ id: n, method, params }));
     });
   const evaluate = async (expression: string) => {
-    const { result, exceptionDetails } = await send("Runtime.evaluate", { expression, returnByValue: true });
+    const { result, exceptionDetails } = await send("Runtime.evaluate", { expression, returnByValue: true, timeout: 5_000 });
     if (exceptionDetails) throw new Error(`in the page: ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
     return result.value;
   };
@@ -179,10 +185,11 @@ export async function openPage(browser: string) {
         await send("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
       return true;
     },
+    // Whether the text landed, by the field's length alone (its value is never read out).
     async type(i: number, text: string) {
       if (!(await evaluate(`(() => { const el = ${at(i)}; el?.focus(); el?.select?.(); return !!el && document.activeElement === el; })()`))) return false;
       await send("Input.insertText", { text });
-      return true;
+      return evaluate(`(() => { const el = ${at(i)}; return !!el && (el.value ?? el.innerText ?? "").length >= ${text.length}; })()`);
     },
     // A native <select>'s option, by its position, as a person picking it would.
     choose: (i: number, option: number) =>
