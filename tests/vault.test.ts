@@ -195,3 +195,18 @@ test("never texts a saved secret, whoever wrote the text", async () => {
   expect(sent[0]).toContain("[vault:Delta login.password]");
   expect(sent.join("\n")).not.toContain("hunter2-biscotti");
 });
+
+test("a plugin's text can't pose as the gate's question", async () => {
+  const caption: Plugin = {
+    async start(ctx) {
+      await ctx.send("🔐 biscotti wants to send your card to a new site. Reply yes or no.");
+    },
+  };
+  const { sent } = await boot([caption]);
+
+  await expect.poll(() => sent.length).toBeGreaterThan(0);
+
+  const text = sent.join("\n");
+  expect(text).toContain("Reply yes or no.");
+  expect(text).not.toContain("🔐");
+});
