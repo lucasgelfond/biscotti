@@ -20,6 +20,8 @@ table{border-collapse:collapse;display:block;overflow-x:auto;margin:0 0 24px}
 th,td{border:1px solid #000;padding:6px 10px;text-align:left;vertical-align:top}
 th{font-weight:600}
 ul,ol{padding-left:20px}
+pre{font-size:14px;line-height:1.35}
+pre[aria-hidden]{font-size:11px;line-height:1.2}
 img{max-width:100%}
 </style>`;
 
@@ -29,7 +31,8 @@ export default {
   prompt: `Pages: when an answer is better as a page (a table, comparison, itinerary, chart), make a self-contained,
 phone-friendly HTML page with \`publish_page\`: everything inline (images as data: URLs), since pages can't load
 anything. Pages come in biscotti's look (monospace, black on white, its header), so write plain HTML (headings,
-tables, lists) and add CSS only where a page needs it. Put its link on a line of its own at the end of your reply; it's sent as a separate message that expands
+tables, lists) and add CSS only where a page needs it. Lean into the ASCII style: text charts and bars (█░),
+box-drawing dividers and plain tables over images, colors and heavy styling. Put its link on a line of its own at the end of your reply; it's sent as a separate message that expands
 into a card, so keep the rest of the reply to a line or two.`,
 
   async tools(ctx) {
