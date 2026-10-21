@@ -93,7 +93,10 @@ const label = (e: Element, seen?: Set<string>) =>
   `<${e.tag}> "${e.text}"${e.near ? ` (near "${e.near}")` : ""}${e.href ? ` ${e.href}` : ""}${e.state ? ` (${e.state})` : ""}` +
   `${e.secret ? " (credential field)" : ""}${e.covered ? " (under an overlay)" : ""}${seen && !seen.has(key(e)) ? " (new)" : ""}`;
 
-export async function browse(goal: string, browser: string, { decide, write, vault, log = () => {} }: { decide: Decide; write: Write; vault?: Vault; log?: (line: string) => void }, start?: string) {
+// Where an element someone describes is in the visible page, by a model trained for clicking (the gate's locate).
+export type Locate = (target: string) => Promise<{ x: number; y: number } | undefined>;
+
+export async function browse(goal: string, browser: string, { decide, write, vault, locate, log = () => {} }: { decide: Decide; write: Write; vault?: Vault; locate?: Locate; log?: (line: string) => void }, start?: string) {
   const tab = await openPage(browser);
   const saved = (await vault?.list()) ?? [];
   const history: string[] = [];
@@ -137,7 +140,13 @@ export async function browse(goal: string, browser: string, { decide, write, vau
     const { target } = await decide({ goal, previous_actions: history.slice(-8), screen: "screen" }, { target: { type: "choice", instructions: "In `screen`, what should the next click in the picture be?", criteria: TARGETS } }, picture.assets);
     const what = focus || colored(TARGETS[(target as Choice).choice as keyof typeof TARGETS], page.legend);
     const rough = await box(picture, what);
-    if (rough.confidence < MIN_BOX) return `couldn't find ${what} in the picture`;
+    if (rough.confidence < MIN_BOX) {
+      const point = await locate?.(what);
+      if (!point) return `couldn't find ${what} in the picture`;
+      await tab.clickPoint(point.x, point.y);
+      focus = "";
+      return `clicked ${what} in the picture (located)`;
+    }
     const area = picture.area;
     const side = Math.min(Math.max(160, 3 * Math.max(rough.w, rough.h)), area.w, area.h);
     const zoom = { x: Math.min(Math.max(rough.x - side / 2, area.x), area.x + area.w - side), y: Math.min(Math.max(rough.y - side / 2, area.y), area.y + area.h - side), w: side, h: side };
@@ -242,6 +251,17 @@ export async function browse(goal: string, browser: string, { decide, write, vau
           : kind === "reobserve" ? "the page kept looking unfinished"
           : kind === "abstain" ? "nothing on the page seemed safe or helpful"
           : `unsure (${kind} at ${confidence.toFixed(2)})`;
+        // A focus the decision model can't match to an element is often plain on screen: click where it is.
+        const point = focus && kind !== "done" && !CONSEQUENTIAL.test(focus) ? await locate?.(focus) : undefined;
+        if (point) {
+          const before = JSON.stringify(page);
+          await tab.clickPoint(point.x, point.y);
+          page = await tab.settled(before);
+          history.push(`clicked "${focus}" (located)${JSON.stringify(page) !== before ? "" : " (nothing changed)"}`);
+          log(`${step + 1} located: ${history.at(-1)}`);
+          focus = "";
+          continue;
+        }
         if (await handOff(why)) continue;
         break;
       }

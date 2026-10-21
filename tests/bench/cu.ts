@@ -1,6 +1,7 @@
 // Computer-use benchmark: real web tasks in task VMs, per model and guidance, with timings and tool counts.
 // On the Pi, with the live agent stopped:  node tests/bench/cu.ts <model> <guidance> [task…]
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,37 @@ const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const OUT = process.env.OUT ?? "/tmp/cu";
 
-const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | Promise<boolean> }> = {
+// A coding task's repo: a function with a bug and a test that shows it.
+function buggyRepo() {
+  const dir = mkdtempSync(join(tmpdir(), "cu-repo-"));
+  const git = (...args: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=bench", "-c", "user.email=bench@example.com", ...args]);
+  git("init", "-q", "-b", "main");
+  writeFileSync(`${dir}/greet.js`, 'export const greet = (name) => "Hello " + name;\n');
+  writeFileSync(`${dir}/test.js`, 'import { greet } from "./greet.js";\nif (greet("Ada") !== "Hello, Ada!") throw new Error(`got ${greet("Ada")}`);\nconsole.log("ok");\n');
+  writeFileSync(`${dir}/package.json`, '{ "type": "module", "scripts": { "test": "node test.js" } }\n');
+  git("add", "-A");
+  git("commit", "-qm", "greet");
+  git("bundle", "create", "-q", `${dir}.bundle`, "main");
+  return { dir, bundle: readFileSync(`${dir}.bundle`) };
+}
+
+// Whether the task's commits, applied to the repo, make its test pass.
+function fixes(dir: string, bundle: Buffer) {
+  writeFileSync(`${dir}.out.bundle`, bundle);
+  try {
+    execFileSync("git", ["-C", dir, "pull", "-q", "--ff-only", `${dir}.out.bundle`, "HEAD"]);
+    return execFileSync("node", ["test.js"], { cwd: dir, encoding: "utf8" }).includes("ok");
+  } catch {
+    return false;
+  }
+}
+
+const TASKS: Record<string, { goal: string; repo?: boolean; pass: (report: string, bundle?: Buffer, repo?: string) => boolean | Promise<boolean> }> = {
+  code: {
+    goal: "greet() in greet.js should greet with a comma and an exclamation mark: greet('Ada') is 'Hello, Ada!'. Fix it, and check with npm test.",
+    repo: true,
+    pass: (_report, bundle, repo) => Boolean(bundle && repo && fixes(repo, bundle)),
+  },
   hn: {
     goal: "Open https://news.ycombinator.com and report the exact title of the #1 story.",
     async pass(report) {
@@ -70,7 +101,7 @@ const GUIDANCE: Record<string, string> = {
 - If something didn't change as expected, take a screenshot, figure out why, and try another way instead of repeating the same action.`,
 };
 
-type Record_ = { type: string; toolName?: string; isError?: boolean; durationMs?: number; message?: { role: string; content: { type: string; text?: string }[] } };
+type Record_ = { type: string; data?: string; toolName?: string; isError?: boolean; durationMs?: number; message?: { role: string; content: { type: string; text?: string }[] } };
 
 async function run(task: string, slot: number, guidance: string) {
   const started = Date.now();
@@ -82,16 +113,19 @@ async function run(task: string, slot: number, guidance: string) {
   let turns = 0;
   let report = "";
   let screenshot: Buffer | undefined;
+  let bundle: Buffer | undefined;
+  const repo = TASKS[task].repo ? buggyRepo() : undefined;
   try {
     const goal = guidance ? `${TASKS[task].goal}\n\n${guidance}` : TASKS[task].goal;
     await new Promise<void>((resolve, reject) => {
-      const socket = connect({ host: `10.200.${slot}.2`, port: 4000 }, () => socket.end(goal));
+      const socket = connect({ host: `10.200.${slot}.2`, port: 4000 }, () => socket.end(JSON.stringify({ goal, repo: repo?.bundle.toString("base64") })));
       socket.setTimeout(10 * 60_000, () => socket.destroy(new Error("timed out")));
       createInterface({ input: socket }).on("line", (line) => {
         const e = JSON.parse(line) as Record_ & { png?: string };
         if (process.env.CU_TRACE && e.type.startsWith("tool_execution_") && e.type !== "tool_execution_update")
           console.error(`${((Date.now() - started) / 1000).toFixed(1)}s ${task} ${e.type.slice(15)} ${e.toolName} ${e.isError ? "ERROR" : ""} ${e.type.endsWith("start") ? JSON.stringify((e as { args?: unknown }).args ?? "").slice(0, 160) : ""}`);
         if (e.type === "screenshot") screenshot = Buffer.from(e.png!, "base64");
+        if (e.type === "bundle") bundle = Buffer.from(e.data!, "base64");
         if (e.type === "turn_start") turns++;
         if (process.env.CU_TRACE && ["turn_start", "message_end", "agent_settled"].includes(e.type))
           console.error(`${((Date.now() - started) / 1000).toFixed(1)}s ${task} ${e.type} ${e.message?.role ?? ""}`);
@@ -115,7 +149,7 @@ async function run(task: string, slot: number, guidance: string) {
     await vm.stop();
   }
   const seconds = (Date.now() - started) / 1000;
-  const pass = await TASKS[task].pass(report);
+  const pass = await TASKS[task].pass(report, bundle, repo?.dir);
   return { task, pass, seconds, restoredMs: restored, turns, toolSeconds: toolMs / 1000, errors, tools, report: report.slice(0, 400), screenshot };
 }
 

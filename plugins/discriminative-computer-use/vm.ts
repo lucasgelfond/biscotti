@@ -49,5 +49,10 @@ let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const { goal, url } = JSON.parse(input) as { goal: string; url?: string };
 const decide = async (state: object, questions: object, assets?: object) => JSON.parse(await tool("jev_decide", { state, questions, ...(assets && { assets }) }));
-const { report, outcome, steps } = await browse(goal, BROWSER, { decide, write, vault, log: console.error }, url).catch((err: Error) => ({ report: `Browsing failed: ${err.message}`, outcome: "error", steps: [] }));
+// Without the vision plugin (or its key), there's no locate tool, and browse does without.
+const locate = async (target: string) => {
+  const point = /^(\d+), (\d+)/.exec(await tool("locate", { target }).catch(() => ""));
+  return point ? { x: Number(point[1]), y: Number(point[2]) } : undefined;
+};
+const { report, outcome, steps } = await browse(goal, BROWSER, { decide, write, vault, locate, log: console.error }, url).catch((err: Error) => ({ report: `Browsing failed: ${err.message}`, outcome: "error", steps: [] }));
 console.log(`${report} (${outcome}, ${steps.length} steps)`.replace(/\n/g, " "));
