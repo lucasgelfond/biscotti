@@ -61,13 +61,15 @@ const args = ["--mode", "json", "--no-session", "--model", env.PCU_MODEL ?? "bis
 const pi = spawn(PI, args, { env: { ...env, ...vars }, stdio: ["ignore", "pipe", "inherit"] });
 let report = "";
 createInterface({ input: pi.stdout }).on("line", (line) => {
-  let event: { type?: string; toolName?: string; isError?: boolean; message?: { role: string; content: { type: string; text?: string }[] } };
+  let event: { type?: string; toolName?: string; args?: unknown; isError?: boolean; message?: { role: string; content: { type: string; text?: string }[] } };
   try {
     event = JSON.parse(line);
   } catch {
     return;
   }
-  if (event.type === "tool_execution_end") log(`${event.toolName}${event.isError ? " (failed)" : ""}`);
+  // Each tool as it starts, too, so one that never returns shows in the task's progress.
+  if (event.type === "tool_execution_start") log(`${event.toolName} ${JSON.stringify(event.args ?? {}).slice(0, 200)}`);
+  if (event.type === "tool_execution_end") log(`${event.toolName} done${event.isError ? " (failed)" : ""}`);
   if (event.type === "message_end" && event.message?.role === "assistant") {
     const said = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
     if (said) report = said;
