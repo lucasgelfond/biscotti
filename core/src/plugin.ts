@@ -132,6 +132,7 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
 }
 
 // A vault entry's values, and saving one, for plugins that keep keys there or type them in.
+export { secrets } from "./vault.ts";
 export const secret = (db: Db, name: string) => db.select().from(vault).where(eq(vault.name, name)).get()?.value;
 export function saveSecret(db: Db, name: string, value: Record<string, string>) {
   const row = { name, fields: Object.keys(value), value };

@@ -11,18 +11,24 @@ const PROMPT = `You are a task agent in a disposable Debian VM with internet acc
 
 Tools:
 - Websites: the browser tools drive that Chromium. Work from browser_snapshot (the page's accessibility tree with element refs): click, type and select by ref. That is faster and more reliable than pixels. Actions don't return the page, so take a snapshot (or a screenshot) when you need to see it, e.g. after a group of actions.
-- Seeing: take a screenshot (the desktop tools, or browser_take_screenshot) whenever the layout matters: seat maps, charts, canvases, images, anything the snapshot doesn't explain, and to check a result. Look at it before deciding.
+- Code: browser_run_code_unsafe runs Playwright code against the page (\`async (page) => { … }\`, the VM is disposable). Prefer it for anything a script does better than clicks: filling a whole form, reading a table or every listing at once, waiting for a result, or a group of steps you're sure of. Return what you need to see.
+- Seeing: take a screenshot (browser_take_screenshot, or the desktop tools) whenever the layout matters: seat maps, charts, canvases, images, anything the snapshot doesn't explain, and to check a result. zoom shows a region of the page up close, for small text or to check exactly where something is.
+- Pixels: for things the snapshot has no ref for (canvases, seat maps, maps, custom widgets), locate (when listed) finds an element you describe and gives its x, y; click it with browser_mouse_click_xy. Screenshots, zoom, locate and browser_mouse_click_xy share the page's coordinates.
 - Other apps and the shell: the desktop tools (typing and key presses need delivery_mode foreground) and bash.
 - The biscotti tools: share_screenshot texts the requester what's on screen now, with a caption (use it for each thing they asked to see: listings, options, a seat map); web search; and the owner's vault. For logins and cards, vault_list, click the first input (by ref), then vault_fill: it types the saved values itself, so you never see them (each waits for the owner's approval). To reset a password or make an account, click the new-password input and call vault_new_password (confirm: true when there's a confirm box): it makes the password, types it and saves it. Never make up, type or report a password yourself.
 
 How to work:
-- Decide what done looks like (e.g. "the confirmation page shows an order number"), then work toward it in short groups of actions: fill a whole form, then check once.
-- After each group, check that it worked (a fresh snapshot or a screenshot). If it didn't, say in a sentence why, and try a different way rather than repeating the same action. Dropdowns and date pickers: try keyboard or select by ref.
+- Decide what done looks like (e.g. "the confirmation page shows an order number"), then work toward it.
+- Before each step, say in a line or two: did the last step do what you expected (check the page, not your intent)? What's next and why? Then act.
+- Batch: do several actions per turn when you're sure of them (several tool calls at once, or one code call), then check once with a snapshot or screenshot.
+- If a step didn't work, say why, and try a different way. After two failures of the same approach, change the approach (keyboard instead of clicking, code instead of refs, locate instead of the snapshot, another page). Never repeat the same failed action.
+- Dropdowns and date pickers: try keyboard, select by ref, or code.
 - Stay in one tab unless a site opens another. Close popups and cookie banners first.
-- Before paying, booking or sending anything the goal didn't clearly ask for, stop and report instead.
-- Seat maps, charts and other drawn things (canvas, SVG, images): once the map is up, take one screenshot (browser_take_screenshot) and describe it from that image: which sections are open, roughly how full, and the best seats left. Don't inspect the page's code to read it, and don't select seats unless the goal asks.
+- Before paying, booking or sending anything the goal didn't clearly ask for, stop and report instead. If you're unsure whether a submission went through, check (the page, a confirmation, the account) and never submit it again.
+- Seat maps, charts and other drawn things (canvas, SVG, images): once the map is up, take one screenshot and describe it from that image (zoom for detail): which sections are open, roughly how full, and the best seats left. Don't inspect the page's code to read it, and don't select seats unless the goal asks.
 - If the site doesn't list what the goal asks for (a film not playing there, a product not sold), say so in the report right away rather than searching around for it.
-- Be quick: the requester is waiting on a text. Aim to finish in about 3 minutes. If a site blocks you (a bot check, a login wall) or the same approach fails twice, stop and report what you found and what blocked you.
+- Be quick: the requester is waiting on a text. Aim to finish in about 3 minutes, and keep going past that while you're making progress. If a site blocks you (a bot check, a login wall), stop and report what you found and what blocked you.
+- Before you finish, check the result itself against the goal: the confirmation on screen, the value in the field, every item the goal named. Not your own last action.
 
 End with a short report of what you did and found, with the facts the requester needs (prices, times, confirmation numbers) and the URL of the page you ended on. Leave the relevant view on screen: the report and a screenshot of the final screen are all the requester sees.`;
 
@@ -111,6 +117,44 @@ function runOwn(task, socket) {
   });
 }
 
+const text = (message) => (message.content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n").trim();
+
+// What the report or the screen still lacks for the goal, by a separate call with only the goal, the report and a
+// screenshot (none of the task's history); undefined when it's done.
+async function check(goal, report) {
+  execFileSync("scrot", ["-o", "/tmp/check.png"], { env: { ...process.env, DISPLAY: ":1" } });
+  const png = readFileSync("/tmp/check.png").toString("base64");
+  const res = await fetch("http://gate/llm/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(60_000),
+    body: JSON.stringify({
+      model: "task",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `A task agent was given a goal and has reported. Check its work against the goal, using the screenshot of its final screen.
+
+Goal: ${goal}
+
+Report: ${report || "(none)"}
+
+Done means: the report answers everything the goal asks, with the facts it needs (prices, times, confirmation numbers), and the screen backs it up (a confirmation shows, the values are right). Stopping before a payment, booking or message the goal didn't clearly ask for is done if the report says so, and so is a clear report that the site doesn't offer what was asked or blocked the agent. Answer with JSON only: {"done": true} or {"done": false, "missing": "what's missing or wrong, in a sentence"}.`,
+            },
+            { type: "image_url", image_url: { url: `data:image/png;base64,${png}` } },
+          ],
+        },
+      ],
+    }),
+  });
+  const content = (await res.json()).choices?.[0]?.message?.content ?? "";
+  const verdict = JSON.parse(content.match(/\{[^{}]*"done"[^{}]*\}/)?.[0] ?? "{}");
+  return verdict.done === false && verdict.missing ? String(verdict.missing).slice(0, 500) : undefined;
+}
+
 function screenshot(socket) {
   try {
     execFileSync("scrot", ["-o", "/tmp/screen.png"], { env: { ...process.env, DISPLAY: ":1" } });
@@ -135,9 +179,18 @@ createServer({ allowHalfOpen: true }, (socket) => {
       socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't check out the repo: ${err.message}` }] } })}\n`);
       return socket.end();
     }
-    const forward = (line, record) => {
+    let report = "";
+    let checked = Boolean(base);
+    const forward = async (line, record) => {
       if (record.type !== "response") socket.write(`${line}\n`);
+      if (record.type === "message_end" && record.message?.role === "assistant") report = text(record.message) || report;
       if (record.type !== "agent_settled") return;
+      // Once, a fresh look at the final screen against the goal; if something's missing, the agent gets to fix it.
+      if (!checked) {
+        checked = true;
+        const missing = await check(task.goal, report).catch(() => undefined);
+        if (missing) return send({ type: "prompt", message: `A check of the final screen against the goal found: ${missing}\nFix that if you can, or say why you can't, then end with your full report again.` });
+      }
       listeners.delete(forward);
       if (base) {
         try {
