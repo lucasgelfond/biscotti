@@ -200,7 +200,7 @@ struct InstallerView: View {
         case .ssh: ssh
         case .review: review
         case .card: card
-        case .write: statusView
+        case .write: writePage
         case .mac: mac
         case .aws: aws
         case .launch: launch
@@ -537,6 +537,21 @@ struct InstallerView: View {
         }
     }
 
+    private var writePage: some View {
+        VStack(spacing: 16) {
+            if let disk { Text(disk.label).font(.headline) }
+            Text("This will be destructive, so ensure you have the correct device.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            Button("Erase and write") { confirming = true }
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+                .disabled(image == nil || disk == nil || busy)
+            statusView
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     @ViewBuilder private var statusView: some View {
         if let progress {
             ProgressView(value: progress) { Text(status) }
@@ -611,10 +626,7 @@ struct InstallerView: View {
             Spacer()
             switch step {
             case .welcome: Button("Get started") { index += 1 }.keyboardShortcut(.defaultAction)
-            case .write:
-                Button("Erase and write") { confirming = true }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(image == nil || disk == nil || busy)
+            case .write: EmptyView()
             case .mac:
                 Button("Install biscotti") {
                     guard let image else { return }
