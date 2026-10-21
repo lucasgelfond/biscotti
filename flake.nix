@@ -17,11 +17,13 @@
   outputs = { self, nixpkgs, nixos-raspberrypi, ... }@inputs:
   let
     version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
-    specialArgs = inputs // { inherit version; };
+    # Task VMs: how many run at once, and each one's memory.
+    specialArgs = inputs // { inherit version; vms = { slots = 3; memMiB = 1536; }; };
   in {
     nixosConfigurations = {
       pi5 = nixos-raspberrypi.lib.nixosSystem {
-        specialArgs = specialArgs // { target = "pi5"; };
+        # The Pi's 8 GB: two VMs, with room for a browser that opens many tabs.
+        specialArgs = specialArgs // { target = "pi5"; vms = { slots = 2; memMiB = 2560; }; };
         modules = [ ./nix/biscotti.nix ./nix/pi5.nix ];
       };
       vm = nixpkgs.lib.nixosSystem {

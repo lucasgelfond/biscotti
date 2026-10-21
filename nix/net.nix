@@ -2,9 +2,9 @@
 # the VM at 172.16.0.2 and its gateway 172.16.0.1), so VMs restored from one snapshot never clash. A veth pair links
 # each slot to the host (host 10.200.N.1, slot 10.200.N.2). VMs reach the internet and the gate (port 80 on their
 # link) only: never the LAN, the tailnet, other host ports, each other or another slot's gate.
-{ lib, pkgs, ... }:
+{ lib, pkgs, vms, ... }:
 let
-  slots = [ 1 2 3 ];
+  slots = lib.range 1 vms.slots;
   # Adds an iptables rule unless it's there (so restarts are idempotent); `ns` runs it inside a slot.
   rule = ns: table: chain: args:
     let ipt = "${lib.optionalString (ns != null) "ip netns exec ${ns} "}iptables -t ${table}";
