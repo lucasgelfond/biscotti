@@ -5,6 +5,8 @@
 { lib, pkgs, vms, ... }:
 let
   slots = lib.range 1 vms.slots;
+  # The LAN, Tailscale's CGNAT range and link-local: never reachable from a VM.
+  private = [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" ];
   # Adds an iptables rule unless it's there (so restarts are idempotent); `ns` runs it inside a slot.
   rule = ns: table: chain: args:
     let ipt = "${lib.optionalString (ns != null) "ip netns exec ${ns} "}iptables -t ${table}";
@@ -69,12 +71,10 @@ in
       # Forwarded traffic, inserted in reverse priority order.
       ${host "filter" "DOCKER-USER" "-i veth-fc+ -j ACCEPT"}
       ${host "filter" "DOCKER-USER" "-o veth-fc+ -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"}
-      ${lib.concatMapStrings (net: host "filter" "DOCKER-USER" "-i veth-fc+ -d ${net} -j DROP" + "\n")
-        [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" ]}
+      ${lib.concatMapStrings (net: host "filter" "DOCKER-USER" "-i veth-fc+ -d ${net} -j DROP" + "\n") private}
       # The same drops before routing, so they hold whatever order Docker and Tailscale put FORWARD's chains in
       # (Tailscale's accepts traffic out tailscale0): anything from a VM that isn't for the host itself or the internet.
-      ${lib.concatMapStrings (net: host "raw" "PREROUTING" "-i veth-fc+ -d ${net} -j DROP" + "\n")
-        [ "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "169.254.0.0/16" ]}
+      ${lib.concatMapStrings (net: host "raw" "PREROUTING" "-i veth-fc+ -d ${net} -j DROP" + "\n") private}
       ${host "raw" "PREROUTING" "-i veth-fc+ -m addrtype --dst-type LOCAL -j RETURN"}
       ip6tables -t raw -C PREROUTING -i veth-fc+ -j DROP 2>/dev/null || ip6tables -t raw -I PREROUTING -i veth-fc+ -j DROP
       # Traffic to the host itself: only the gate, each VM at its own slot's address (slot 2 can't act as slot 1).

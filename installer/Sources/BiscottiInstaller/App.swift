@@ -594,14 +594,10 @@ struct InstallerView: View {
     private func serviceButtons(_ id: String) -> some View {
         HStack(spacing: 16) {
             Link("Visit site", destination: URL(string: Prompts.sites[id]!)!)
-            copyPromptButton(id)
+            Button(copied == id ? "Copied" : "Copy setup prompt") { copy(Prompts.prompt(id, redirect: redirect), as: id) }
+                .buttonStyle(.link)
         }
         .tint(.accentColor)
-    }
-
-    private func copyPromptButton(_ id: String) -> some View {
-        Button(copied == id ? "Copied" : "Copy setup prompt") { copy(Prompts.prompt(id, redirect: redirect), as: id) }
-            .buttonStyle(.link)
     }
 
     /// Google's OAuth redirect URI, once this Mac's tailnet is known.
