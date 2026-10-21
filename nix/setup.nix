@@ -1,7 +1,7 @@
 # Brings biscotti up, or up to date, on every boot (a no-op once done): the installer's settings, generated secrets,
 # Tailscale, the services for the plugins biscotti.json names, and the task VM snapshot. Texts the owner when they
 # need to act, and leaves the agent a text for when biscotti is ready.
-{ pkgs, repo, firecracker, faultAll, version, ... }:
+{ pkgs, repo, firecracker, faultAll, version, vms, ... }:
 {
   systemd.tmpfiles.rules = [
     "d /var/lib/biscotti 0700 root root -"
@@ -79,7 +79,7 @@
       # (Funnel) under unguessable names, so iMessage can show link previews; nothing else is.
       plugins=$(jq -r '.plugins[]' "$STATE/biscotti.json")
       has() { grep -qx "$1" <<< "$plugins"; }
-      for n in 1 2 3; do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
+      for n in $(seq ${toString vms.slots}); do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
       # The vault's one-time forms, and Google's and other services' sign-in callbacks.
       tailscale serve --bg --https=9443 http://127.0.0.1:4791
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
@@ -88,13 +88,13 @@
 
       # Huge pages reserved (the Mac): task VMs run on them.
       huge=$([ "$(cat /proc/sys/vm/nr_hugepages)" -gt 0 ] && echo 2M || true)
-      # Rebuilt when the VM's source changes (an update to the task agent or the desktop).
-      vm_source=$(cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+      # Rebuilt when the VM's source (the task agent or the desktop) or its memory changes.
+      vm_source=$({ cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum; echo ${toString vms.memMiB}; } | sha256sum | cut -d' ' -f1)
       if [ ! -f "$STATE/vm/desktop.snap" ] || [ "$(cat "$STATE/vm/source" 2>/dev/null)" != "$vm_source" ]; then
         rm -f "$STATE/vm/desktop.snap"
         # The warm VMs hold the slots' network devices the build boots on; compose starts them again below.
         docker stop biscotti-vms-1 2>/dev/null || true
-        HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
+        VM_MEM_MIB=${toString vms.memMiB} HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
         echo "$vm_source" > "$STATE/vm/source"
       fi
       # The gate, the agent and the vms service, plus the services of the plugins that bring one. Nix-built binaries
@@ -103,9 +103,11 @@
         echo "include:"
         for p in $plugins; do [ -f "${repo}/plugins/$p/compose.yaml" ] && echo "  - ${repo}/plugins/$p/compose.yaml"; done
         echo "services:"
+        echo "  gate:"
+        echo "    environment: { VM_SLOTS: \"${toString vms.slots}\" }"
         echo "  vms:"
         echo "    volumes: [ /nix/store:/nix/store:ro ]"
-        [ -z "$huge" ] || echo "    environment: { UFFD_HANDLER: ${faultAll}/bin/fault-all }"
+        echo "    environment: { VM_SLOTS: \"${toString vms.slots}\"''${huge:+, UFFD_HANDLER: ${faultAll}/bin/fault-all} }"
         [ -z "$huge" ] || echo "    devices: [ /dev/userfaultfd ]"
       } > "$STATE/compose.plugins.yaml"
       # The agent texts it once it's listening (from here, a second Photon connection would take its messages away).
