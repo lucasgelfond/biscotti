@@ -10,6 +10,8 @@ import { createGate } from "../../core/src/gate.ts";
 import { openDb } from "../../core/src/memory.ts";
 import type { Context, Plugin } from "../../core/src/plugin.ts";
 import { restore, SLOTS } from "../../core/src/tasks.ts";
+import vault from "../../core/src/vault.ts";
+import { RUNNER } from "../../plugins/discriminative-computer-use/index.ts";
 
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
@@ -118,7 +120,9 @@ async function run(task: string, slot: number, guidance: string) {
   try {
     const goal = guidance ? `${TASKS[task].goal}\n\n${guidance}` : TASKS[task].goal;
     await new Promise<void>((resolve, reject) => {
-      const socket = connect({ host: `10.200.${slot}.2`, port: 4000 }, () => socket.end(JSON.stringify({ goal, repo: repo?.bundle.toString("base64") })));
+      // CU_JEV: the errand goes to Jev's runner instead of pi.
+      const sent = process.env.CU_JEV ? { goal: JSON.stringify({ goal }), runner: RUNNER } : { goal, repo: repo?.bundle.toString("base64") };
+      const socket = connect({ host: `10.200.${slot}.2`, port: 4000 }, () => socket.end(JSON.stringify(sent)));
       socket.setTimeout(10 * 60_000, () => socket.destroy(new Error("timed out")));
       createInterface({ input: socket }).on("line", (line) => {
         const e = JSON.parse(line) as Record_ & { png?: string };
@@ -155,15 +159,16 @@ async function run(task: string, slot: number, guidance: string) {
 
 const [model, guide = "none", ...only] = process.argv.slice(2);
 const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: model }, send: async () => {} });
-// Plugins whose task tools the VMs get, e.g. CU_PLUGINS=vision.
+// The vault (empty), and plugins whose task tools the VMs get, e.g. CU_PLUGINS=vision,discriminative-computer-use.
 const scratch = mkdtempSync(join(tmpdir(), "cu-"));
-const ctx: Context = { db: openDb(`${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => false, deliver: async () => {}, send: async () => {} };
+const ctx: Context = { db: openDb(`${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => false, deliver: async () => {}, send: async () => {}, task: async () => ({ report: "" }) };
+gate.add(await vault.tools!(ctx));
 for (const name of (process.env.CU_PLUGINS ?? "").split(",").filter(Boolean)) {
   const plugin: Plugin = (await import(`../../plugins/${name}/index.ts`)).default;
   if (plugin.tools) gate.add(await plugin.tools(ctx));
 }
 const servers = await Promise.all(SLOTS.map((slot) => gate.listen(`10.200.${slot}.1`, 80, { slot })));
-const tasks = only.length ? only : Object.keys(TASKS);
+const tasks = (only.length ? only : Object.keys(TASKS)).filter((t) => !(process.env.CU_JEV && TASKS[t].repo));
 const dir = `${OUT}/${model.replace("/", "_")}-${guide}${process.env.CU_LABEL ? `-${process.env.CU_LABEL}` : ""}`;
 mkdirSync(dir, { recursive: true });
 
