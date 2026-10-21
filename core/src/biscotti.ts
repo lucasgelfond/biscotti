@@ -33,7 +33,8 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     : undefined;
   const send = async (text: string, image?: Buffer) => {
     if (image) await channel.send({ image });
-    if (text) await channel.send(outbound(text));
+    // Plugins' texts (a task's screenshot caption) can't pose as the gate's questions either.
+    if (text) await channel.send(outbound(text.replace(LOCKS, "")));
   };
   const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, task: vms?.task };
 
