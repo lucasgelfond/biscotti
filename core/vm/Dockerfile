@@ -14,7 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     VNC_RESOLUTION=1280x800 VNC_COL_DEPTH=24
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      xfce4 xfce4-terminal dbus-x11 at-spi2-core libatk-adaptor x11-utils x11-xserver-utils \
+      xfce4 xfce4-terminal dbus-x11 x11-utils x11-xserver-utils \
       tigervnc-standalone-server tigervnc-tools \
       chromium chromium-sandbox fonts-dejavu \
       supervisor sudo isc-dhcp-client python3 git ca-certificates curl \
