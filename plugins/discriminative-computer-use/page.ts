@@ -188,7 +188,6 @@ export async function openPage(browser: string) {
     choose: (i: number, option: number) =>
       evaluate(`(() => { const el = ${at(i)}; if (!el?.options?.[${option}]) return false; el.selectedIndex = ${option};
         el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`),
-    // The viewport as a PNG (base64), at CSS pixels, for questions about what's drawn.
     // A PNG (base64) of part of the viewport (all of it by default), scaled to the 280 to 1568 pixels a side Jev takes.
     async screenshot(area?: Rect) {
       const { x, y, w, h } = area ?? { x: 0, y: 0, ...(await evaluate("({ w: innerWidth, h: innerHeight })")) };

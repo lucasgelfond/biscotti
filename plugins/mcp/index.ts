@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { declined, escapeHtml, htmlPage, input, localTools, secret, str, text, type Plugin, type Tool, type Tools } from "@biscotti/core";
+import { declined, escapeHtml, input, localTools, merge, secret, sendPage, str, text, type Plugin, type Tool, type Tools } from "@biscotti/core";
 import { auth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -101,7 +101,7 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>. Text th
         if (!row) return text(`No server for ${name}.`);
         const tool = name.slice(row.name.length + 1);
         args = parsed(name, args);
-        if (asks.get(name) !== false && !(await ctx.ask(`${row.name}: ${tool} with ${JSON.stringify(args).slice(0, 1500)}?`))) return declined;
+        if (asks.get(name) !== false && !(await ctx.ask(`${row.name}: ${tool} with ${JSON.stringify(args)}?`))) return declined;
         const client = await connect(row);
         try {
           return (await client.callTool({ name: tool, arguments: args })) as never;
@@ -117,7 +117,7 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>. Text th
       const url = new URL(req.url ?? "/", "http://localhost");
       const row = rows().find((r) => r.name === url.searchParams.get("state")?.split(".")[0]);
       if (!url.pathname.endsWith("/callback") || !row) return void res.writeHead(404).end();
-      const page = (body: string) => res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(htmlPage(row.name, `<h1>${escapeHtml(row.name)}</h1>${body}`));
+      const page = (body: string) => sendPage(res, row.name, `<h1>${escapeHtml(row.name)}</h1>${body}`);
       try {
         await auth(provider(row.name), { serverUrl: row.url, authorizationCode: url.searchParams.get("code") ?? "" });
         page("<p>Connected. You can close this.</p>");
@@ -149,9 +149,6 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>. Text th
         },
       },
     ]);
-    return {
-      list: async () => [...(await own.list()), ...(await servers.list())],
-      call: (name, args, caller) => (name === "mcp_connect" ? own.call(name, args, caller) : servers.call(name, args, caller)),
-    };
+    return merge(own, servers);
   },
 } satisfies Plugin;

@@ -1,4 +1,4 @@
-import { declined, input, localTools, mcpTools, secret, text, type Context, type Plugin, type Tool } from "@biscotti/core";
+import { declined, input, localTools, mcpTools, merge, secret, text, type Context, type Plugin } from "@biscotti/core";
 import { codeTask } from "./code.ts";
 
 // GitHub's remote MCP server with the owner's fine-grained token, from .env or the vault ("GitHub", field "token").
@@ -35,19 +35,15 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
     const readOnly = new Set<string>();
     const tools = mcpTools(URL, { Authorization: `Bearer ${pat}`, "X-MCP-Toolsets": TOOLSETS }, async (client, name, args) => {
       if (MERGE.test(name)) return text("biscotti doesn't merge; send the user the pull request link.");
-      if (!readOnly.has(name) && !ADDS.test(name) && !(await ctx.ask(`GitHub: ${name} with ${JSON.stringify(args).slice(0, 3000)}${JSON.stringify(args).length > 3000 ? " […longer than shown]" : ""}?`)))
-        return declined;
+      if (!readOnly.has(name) && !ADDS.test(name) && !(await ctx.ask(`GitHub: ${name} with ${JSON.stringify(args)}?`))) return declined;
       return client.callTool({ name, arguments: args }) as never;
     });
-    const code = localTools([codeTask(ctx, pat)]);
-    return {
-      async list() {
-        const list: Tool[] = (await tools.list()).filter((t) => !MERGE.test(t.name));
-        for (const t of list) if (t.annotations?.readOnlyHint) readOnly.add(t.name);
-        return [...list, ...(await code.list())];
-      },
-      call: (name, args, caller) => (name === "code_task" ? code.call(name, args, caller) : tools.call(name, args)),
-    };
+    async function list() {
+      const listed = (await tools.list()).filter((t) => !MERGE.test(t.name));
+      for (const t of listed) if (t.annotations?.readOnlyHint) readOnly.add(t.name);
+      return listed;
+    }
+    return merge({ ...tools, list }, localTools([codeTask(ctx, pat)]));
   },
 
   // Once a token is saved to the vault, restart (the service restarts us, and the agent reloads) to load GitHub's tools.

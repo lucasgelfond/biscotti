@@ -9,13 +9,14 @@ import { input, localTools, str, text, type Caller, type Tools } from "./plugin.
 // never reach the model provider: any in a model call becomes a placeholder.
 
 // An answer is the whole message, so "ok wait, don't" or "yes but change it" answers nothing.
-export const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)[.!]*$/i;
-export const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)[.!]*$/i;
+const YES = /^(yes|yep|yeah|y|ok|okay|approved?|do it|go ahead|send it)[.!]*$/i;
+const NO = /^(no|nope|n|don't|do not|stop|cancel|decline)[.!]*$/i;
 // Marks the gate's own questions; it and its lookalikes are stripped from the agent's texts, so the agent can't pose
 // as the gate.
-export const LOCK = "🔐";
+const LOCK = "🔐";
 export const LOCKS = /[🔐🔒🔓🔏]/gu;
 const ANSWER_TIMEOUT_MS = 10 * 60_000;
+const MAX_QUESTION = 3000;
 const TASK_HOSTS = /^(gate|127\.0\.0\.1|172\.16\.0\.1|10\.200\.\d+\.1)(:\d+)?$/;
 
 // Some providers (Gemini) reject loose JSON Schema that MCP tools use: type lists, and properties on untyped or
@@ -96,6 +97,7 @@ export function createGate(opts: {
 
   function ask(question: string) {
     return new Promise<boolean>((resolve) => {
+      if (question.length > MAX_QUESTION) question = `${question.slice(0, MAX_QUESTION)} […longer than shown]`;
       queue.push({ question, resolve });
       if (queue.length === 1) next();
     });

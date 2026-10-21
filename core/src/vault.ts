@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { escapeHtml, htmlPage, input, list, localTools, saveSecret, str, text, type LocalTool, type Plugin } from "./plugin.ts";
+import { readBody } from "./http.ts";
 import type { Db } from "./memory.ts";
+import { escapeHtml, input, list, localTools, saveSecret, sendPage, str, text, type LocalTool, type Plugin } from "./plugin.ts";
 import { vault } from "./schema.ts";
 
 // Logins, cards and licenses. No model ever sees a secret, and none is texted: the secure-fill plugin types them into
@@ -19,7 +20,7 @@ const MIN_SCRUBBED = 6;
 
 function form(name: string, fields: string[]) {
   const inputs = fields.map((f) => `<label>${escapeHtml(f)}<input name="f:${escapeHtml(f)}" autocomplete="off"></label>`).join("");
-  return htmlPage(name, `<h1>${escapeHtml(name)}</h1><form method="post">${inputs}<button>[ Save ]</button></form>`);
+  return `<h1>${escapeHtml(name)}</h1><form method="post">${inputs}<button>[ Save ]</button></form>`;
 }
 
 // Every saved secret value, for the gate to keep out of model calls.
@@ -39,7 +40,6 @@ it up on their own devices.`,
 
   async tools(ctx) {
     const { db } = ctx;
-    const save = (name: string, value: Record<string, string>) => saveSecret(db, name, value);
 
     // One-time forms, served only once one has been asked for.
     const forms = new Map<string, { name: string; fields: string[] }>();
@@ -47,14 +47,14 @@ it up on their own devices.`,
     const serve = () => (server ??= createServer(async (req, res) => {
       const token = req.url?.slice(1) ?? "";
       const pending = forms.get(token);
-      if (!pending) return void res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" }).end(htmlPage("Expired", "<p>This link has expired. Ask biscotti for a new one.</p>"));
-      if (req.method !== "POST") return void res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(form(pending.name, pending.fields));
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(chunk as Buffer);
-      const body = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+      if (!pending) return sendPage(res, "Expired", "<p>This link has expired. Ask biscotti for a new one.</p>", 404);
+      if (req.method !== "POST") return sendPage(res, pending.name, form(pending.name, pending.fields));
+      const raw = await readBody(req).catch(() => undefined);
+      if (raw === undefined) return sendPage(res, "Too long", "<p>That was too long to save.</p>", 413);
+      const body = new URLSearchParams(raw);
       forms.delete(token);
-      save(pending.name, Object.fromEntries(pending.fields.map((f) => [f, body.get(`f:${f}`) ?? ""])));
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(htmlPage("Saved", `<h1>${escapeHtml(pending.name)}</h1><p>Saved to the vault. You can close this.</p>`));
+      saveSecret(db, pending.name, Object.fromEntries(pending.fields.map((f) => [f, body.get(`f:${f}`) ?? ""])));
+      sendPage(res, "Saved", `<h1>${escapeHtml(pending.name)}</h1><p>Saved to the vault. You can close this.</p>`);
       void ctx.deliver(`"${pending.name}" was saved to the vault by the user.`);
     }).listen(Number(process.env.VAULT_PORT ?? PORT), "127.0.0.1"));
 
@@ -77,7 +77,7 @@ it up on their own devices.`,
         values: { type: "object", additionalProperties: str(), description: "e.g. { username, password }." },
       }),
       async run({ name, values }) {
-        save(name as string, values as Record<string, string>);
+        saveSecret(db, name as string, values as Record<string, string>);
         return text(`Saved "${name}".`);
       },
     };

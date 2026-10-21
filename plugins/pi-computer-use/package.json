@@ -1,8 +1,0 @@
-{
-  "name": "@biscotti/pi-computer-use",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@biscotti/core": "workspace:*"
-  }
-}

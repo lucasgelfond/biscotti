@@ -24,11 +24,14 @@ export function totp(setup: string, now = Date.now()) {
   return String((hash.readUInt32BE(hash[19] & 15) & 0x7fffffff) % 1e6).padStart(6, "0");
 }
 
-// The slot's VM's Chromium, over DevTools.
-const browser = (slot?: number) => process.env.TASK_BROWSER ?? `http://10.200.${slot}.2:9223`;
+// The slot's VM's Chromium, over DevTools (also the screenshots plugin's).
+export const browser = (slot?: number) => process.env.TASK_BROWSER ?? `http://10.200.${slot}.2:9223`;
 
-async function devtools(url: string) {
-  const ws = new WebSocket(url);
+type Target = { id: string; type: string; url: string; webSocketDebuggerUrl: string };
+export const targets = async (browser: string) => (await (await fetch(`${browser}/json/list`)).json()) as Target[];
+
+export async function devtools(browser: string, target: Target) {
+  const ws = new WebSocket(target.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, browser.replace(/^http/, "ws")));
   await new Promise((resolve, reject) => ((ws.onopen = resolve), (ws.onerror = reject)));
   const pending = new Map<number, (msg: { result?: any; error?: { message: string } }) => void>();
   ws.onmessage = (e) => {
@@ -42,26 +45,33 @@ async function devtools(url: string) {
       pending.set(++id, (msg) => (msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result)));
       ws.send(JSON.stringify({ id, method, params }));
     });
-  // Scripts run in a world of their own, where the page's scripts can't change what they see (a faked hasFocus).
+  return { send, close: () => ws.close() };
+}
+
+// A tab, with scripts run in a world of their own, where the page's scripts can't change what they see (a faked
+// hasFocus).
+async function tab(browser: string, target: Target, all: Target[]) {
+  const { send, close } = await devtools(browser, target);
   const { frameTree } = await send("Page.getFrameTree");
   const { executionContextId } = await send("Page.createIsolatedWorld", { frameId: frameTree.frame.id, worldName: "biscotti" });
-  const run = (expression: string, returnByValue = true) => send("Runtime.evaluate", { expression, contextId: executionContextId, returnByValue });
-  const evaluate = async (expression: string) => (await run(expression)).result.value;
+  const evaluate = async (expression: string, byValue = true) => {
+    const { result } = await send("Runtime.evaluate", { expression, contextId: executionContextId, returnByValue: byValue });
+    return byValue ? result.value : result;
+  };
   // Where typing would go: the tab's site, and the frame's when the focused field is in one.
-  async function where(targets: Target[]) {
+  async function where() {
     const { frameTree } = await send("Page.getFrameTree");
     const page = site(frameTree.frame.url);
-    const { result } = await run("document.activeElement", false);
-    const { node } = result.objectId ? await send("DOM.describeNode", { objectId: result.objectId }) : { node: undefined };
+    const { objectId } = await evaluate("document.activeElement", false);
+    const { node } = objectId ? await send("DOM.describeNode", { objectId }) : { node: undefined };
     if (node?.nodeName !== "IFRAME") return page;
-    const url = findFrame(frameTree, node.frameId)?.url ?? targets.find((t) => t.id === node.frameId)?.url;
+    const url = findFrame(frameTree, node.frameId)?.url ?? all.find((t) => t.id === node.frameId)?.url;
     if (!url) throw new Error("The focused field is in a frame whose site can't be told.");
     return site(url) === page ? page : `${page}, in a frame from ${site(url)}`;
   }
-  return { send, evaluate, where, close: () => ws.close() };
+  return { send, evaluate, where, close };
 }
 
-type Target = { id: string; type: string; url: string; webSocketDebuggerUrl: string };
 type Frame = { frame: { id: string; url: string }; childFrames?: Frame[] };
 const site = (url: string) => new URL(url).host || new URL(url).protocol;
 const findFrame = (tree: Frame, id: string): Frame["frame"] | undefined =>
@@ -91,19 +101,19 @@ const SELECT = (value: string) => `((value) => {
 // Types values into the focused page's focused input, Tab between each, over Chrome DevTools at `browser`. `approve`
 // is asked first with the site typing would go to (values are read after it, so a 2FA code is fresh); every value goes
 // there or none does. Returns what each went into, never the values.
-export async function fill(browser: string, values: () => string[], approve: (where: string) => Promise<boolean> = async () => true) {
-  const targets = (await (await fetch(`${browser}/json/list`)).json()) as Target[];
-  const sessions = await Promise.all(targets.filter((t) => t.type === "page").map((p) => devtools(p.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, browser.replace(/^http/, "ws")))));
+export async function fill(browser: string, values: () => string[], approve: (where: string) => Promise<boolean>) {
+  const all = await targets(browser);
+  const tabs = await Promise.all(all.filter((t) => t.type === "page").map((t) => tab(browser, t, all)));
   try {
-    const focused = await Promise.all(sessions.map((s) => s.evaluate("document.hasFocus()")));
-    const page = sessions[focused.indexOf(true)] ?? (sessions.length === 1 ? sessions[0] : undefined);
-    if (!page) throw new Error(sessions.length ? "No tab has focus: click the input first." : "No page is open.");
-    const approved = await page.where(targets);
+    const focused = await Promise.all(tabs.map((t) => t.evaluate("document.hasFocus()")));
+    const page = tabs[focused.indexOf(true)] ?? (tabs.length === 1 ? tabs[0] : undefined);
+    if (!page) throw new Error(tabs.length ? "No tab has focus: click the input first." : "No page is open.");
+    const approved = await page.where();
     if (!(await approve(approved))) return undefined;
     const into: string[] = [];
     for (const [i, value] of values().entries()) {
       if (i > 0) for (const type of ["keyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
-      const now = await page.where(targets);
+      const now = await page.where();
       if (now !== approved) throw new Error(`Stopped after ${into.length} field(s): typing would now go to ${now}, not ${approved} as approved. Fill fields on different sites in separate calls.`);
       const el = await page.evaluate(FOCUSED);
       if (!el?.editable) throw new Error(`Nothing to type into is focused${i ? ` after ${into.length} field(s)` : ""}: click the input first.`);
@@ -117,7 +127,7 @@ export async function fill(browser: string, values: () => string[], approve: (wh
     }
     return into;
   } finally {
-    for (const s of sessions) s.close();
+    for (const t of tabs) t.close();
   }
 }
 
@@ -128,6 +138,11 @@ set the password with \`vault_new_password\` (naming the entry): the vault makes
 
   async tools(ctx) {
     const { db } = ctx;
+    // Types `values` once the owner says yes to `question` about where they'd go; `done` says what was typed.
+    const typeIn = (slot: number | undefined, values: () => string[], question: (where: string) => string, done: (into: string[]) => string) =>
+      fill(browser(slot), values, (where) => ctx.ask(question(where)))
+        .then((into) => (into ? text(done(into)) : declined))
+        .catch((err: Error) => text(`Couldn't fill: ${err.message}`));
     const fillTool: LocalTool = {
       name: "vault_fill",
       description:
@@ -138,19 +153,14 @@ set the password with \`vault_new_password\` (naming the entry): the vault makes
         why: str("What it's for, shown to the owner when they're asked, e.g. 'checkout for 2 train tickets, $34'."),
       }),
       async run({ name, fields, why }, { slot }) {
-        const saved = secret(db, name as string);
-        if (!saved) return text(`No secret named "${name}".`);
-        const missing = (fields as string[]).filter((f) => !saved[f]);
-        if (missing.length) return text(`"${name}" has no ${missing.join(", ")}; it has ${Object.keys(saved).join(", ")}.`);
-        const approve = (where: string) => ctx.ask(`A task wants to type "${name}" (${(fields as string[]).join(", ")}) into ${where}, for ${String(why).slice(0, 200)}. Is ${where} the right site?`);
-        const values = () => (fields as string[]).map((f) => (f === "totp" ? totp(saved[f]) : saved[f]));
-        try {
-          const into = await fill(browser(slot), values, approve);
-          if (!into) return declined;
-          return text(`Typed ${(fields as string[]).join(", ")} into: ${into.join(", ")}. Check the page before submitting.`);
-        } catch (err) {
-          return text(`Couldn't fill: ${(err as Error).message}`);
-        }
+        const [entry, wanted] = [String(name), fields as string[]];
+        const saved = secret(db, entry);
+        if (!saved) return text(`No secret named "${entry}".`);
+        const missing = wanted.filter((f) => !saved[f]);
+        if (missing.length) return text(`"${entry}" has no ${missing.join(", ")}; it has ${Object.keys(saved).join(", ")}.`);
+        const values = () => wanted.map((f) => (f === "totp" ? totp(saved[f]) : saved[f]));
+        const question = (where: string) => `A task wants to type "${entry}" (${wanted.join(", ")}) into ${where}, for ${String(why).slice(0, 200)}. Is ${where} the right site?`;
+        return typeIn(slot, values, question, (into) => `Typed ${wanted.join(", ")} into: ${into.join(", ")}. Check the page before submitting.`);
       },
     };
     const newPasswordTool: LocalTool = {
@@ -164,19 +174,16 @@ set the password with \`vault_new_password\` (naming the entry): the vault makes
         why: str("Shown to the owner, e.g. 'resetting the Delta password, which expired'."),
       }),
       async run({ name, username, confirm, why }, { slot }) {
-        const saved = secret(db, name as string);
+        const entry = String(name);
+        const saved = secret(db, entry);
         const password = newPassword();
-        const approve = (where: string) =>
-          ctx.ask(`A task wants to set a new password for "${name}" on ${where}, for ${String(why).slice(0, 200)}. biscotti makes it, types it and saves it to the vault; it's never texted. Is ${where} the right site?`);
-        try {
-          const into = await fill(browser(slot), () => (confirm ? [password, password] : [password]), approve);
-          if (!into) return declined;
+        const question = (where: string) =>
+          `A task wants to set a new password for "${entry}" on ${where}, for ${String(why).slice(0, 200)}. biscotti makes it, types it and saves it to the vault; it's never texted. Is ${where} the right site?`;
+        return typeIn(slot, () => (confirm ? [password, password] : [password]), question, (into) => {
           const old = saved?.password;
-          saveSecret(db, name as string, { ...saved, ...(username ? { username: String(username) } : {}), ...(old ? { "previous password": old } : {}), password });
-          return text(`Typed a new password into ${into.join(", ")} and saved it to "${name}". Submit the form and check it took; if it didn't, the old one is the entry's "previous password".`);
-        } catch (err) {
-          return text(`Couldn't set it: ${(err as Error).message}`);
-        }
+          saveSecret(db, entry, { ...saved, ...(username ? { username: String(username) } : {}), ...(old ? { "previous password": old } : {}), password });
+          return `Typed a new password into ${into.join(", ")} and saved it to "${entry}". Submit the form and check it took; if it didn't, the old one is the entry's "previous password".`;
+        });
       },
     };
     // Only task VMs fill pages; the main agent starts a task for it.

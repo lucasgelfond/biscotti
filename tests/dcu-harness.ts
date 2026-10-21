@@ -7,22 +7,20 @@ import type { Context } from "../core/src/plugin.ts";
 import vault, { secrets } from "../core/src/vault.ts";
 import dcu from "../plugins/discriminative-computer-use/index.ts";
 import secureFill from "../plugins/secure-fill/index.ts";
-import { newDataDir } from "./support.ts";
+import { chrome, newDataDir } from "./support.ts";
 
 // discriminative-computer-use as a task VM runs it, on this machine: a headless Chrome for the VM's browser, a gate
 // listening as slot 1 with the vault, secure-fill and the plugin, and vm.ts as its own process. `approve` answers
 // each of the gate's questions.
 
-export const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const env = (name: string) => {
   if (!process.env[name]) throw new Error(`${name} is not set`);
   return process.env[name]!;
 };
 
 export async function harness(port: number, approve: (question: string) => boolean = () => true) {
-  const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${port}`, "--window-size=1280,900", `--user-data-dir=${newDataDir()}`, "about:blank"], { stdio: "ignore" });
-  const browser = `http://127.0.0.1:${port}`;
-  while (!(await fetch(`${browser}/json/version`).then((r) => r.ok, () => false))) await new Promise((r) => setTimeout(r, 100));
+  const page = await chrome(port, "about:blank", ["--window-size=1280,900"]);
+  const browser = page.url;
   process.env.TASK_BROWSER = browser;
 
   const dir = newDataDir();
@@ -58,7 +56,7 @@ export async function harness(port: number, approve: (question: string) => boole
     },
     close() {
       server.close();
-      chrome.kill();
+      page.close();
     },
   };
 }

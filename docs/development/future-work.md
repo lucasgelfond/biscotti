@@ -11,9 +11,6 @@ Things decided or scoped but not built yet, roughly in order.
   card fields stay the vault's to fill.
 - **Replaying what worked.** Save a site's successful steps and replay them, checking each control is still the same
   one, with the decision model as the fallback.
-- **pi-computer-use for the task agent** (github.com/injaneity/pi-computer-use): its Linux backend (AT-SPI plus
-  Chromium over DevTools) and its checked outcomes (worked / didn't / unknown, with postconditions) could replace the
-  task VM's Playwright and desktop tools. Needs a trial in the VM image (its Rust helper on arm64, an AT-SPI bus).
 
 ## Look and feel
 

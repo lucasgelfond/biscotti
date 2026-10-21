@@ -1,14 +1,12 @@
-import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
 import { expect, test } from "vitest";
-import { openDb } from "../core/src/memory.ts";
 import type { Plugin } from "../core/src/plugin.ts";
 import { vault as vaultTable } from "../core/src/schema.ts";
 import secureFill, { fill, newPassword, totp } from "../plugins/secure-fill/index.ts";
-import { boot, newDataDir, toolCalls } from "./support.ts";
+import { boot, CHROME, chrome, testContext, toolCalls } from "./support.ts";
 
 const biscotti = boot([]);
 
@@ -66,22 +64,20 @@ test.for([
   expect(result).toBe(code);
 });
 
-// A headless Chrome showing `html`, its DevTools at the returned URL. Each input's value is mirrored into the title.
-const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-async function chrome(html: string, port: number) {
+// A headless Chrome showing `html`, with each input's value mirrored into the title.
+async function form(html: string, port: number) {
   const mirror = `<script>onchange = oninput = () => document.title = [...document.querySelectorAll("input, select")].map((e) => e.value).join("|")</script>`;
-  const proc = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${newDataDir()}`, `data:text/html,${encodeURIComponent(html + mirror)}`], { stdio: "ignore" });
-  const url = `http://127.0.0.1:${port}`;
-  await expect.poll(() => fetch(`${url}/json/version`).then((r) => r.ok, () => false), { timeout: 15_000 }).toBe(true);
-  const title = async () => ((await (await fetch(`${url}/json/list`)).json()) as { type: string; title: string }[]).find((t) => t.type === "page")!.title;
-  return { url, title, close: () => proc.kill() };
+  const page = await chrome(port, `data:text/html,${encodeURIComponent(html + mirror)}`);
+  const title = async () => ((await (await fetch(`${page.url}/json/list`)).json()) as { type: string; title: string }[]).find((t) => t.type === "page")!.title;
+  return { ...page, title };
 }
+const approve = async () => true;
 
 test.skipIf(!existsSync(CHROME))("types a login and a card's expiry month into the page, and says where, not what", async () => {
-  const page = await chrome(`<input aria-label="Email" autofocus value="old@example.com"><input type="password" aria-label="Password">
+  const page = await form(`<input aria-label="Email" autofocus value="old@example.com"><input type="password" aria-label="Password">
 <select aria-label="Month"><option>01</option><option>07</option><option>12</option></select>`, 9341);
 
-  const into = await fill(page.url, () => ["ada@example.com", "hunter2-biscotti", "7"]);
+  const into = await fill(page.url, () => ["ada@example.com", "hunter2-biscotti", "7"], approve);
   const title = await page.title();
   page.close();
 
@@ -90,9 +86,9 @@ test.skipIf(!existsSync(CHROME))("types a login and a card's expiry month into t
 });
 
 test.skipIf(!existsSync(CHROME))("refuses to type when no input is focused", async () => {
-  const page = await chrome(`<input aria-label="Email">`, 9342);
+  const page = await form(`<input aria-label="Email">`, 9342);
 
-  const filled = fill(page.url, () => ["hunter2-biscotti"]);
+  const filled = fill(page.url, () => ["hunter2-biscotti"], approve);
 
   await expect(filled).rejects.toThrow("click the input first");
   page.close();
@@ -111,11 +107,9 @@ async function sites(pages: (frame: string) => Record<string, string>) {
 
 // A headless Chrome on `url`, given a moment for its frames to load and take focus.
 async function chromeAt(url: string, port: number) {
-  const proc = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${newDataDir()}`, url], { stdio: "ignore" });
-  const devtools = `http://127.0.0.1:${port}`;
-  await expect.poll(() => fetch(`${devtools}/json/version`).then((r) => r.ok, () => false), { timeout: 15_000 }).toBe(true);
+  const page = await chrome(port, url);
   await new Promise((r) => setTimeout(r, 1500));
-  return { url: devtools, close: () => proc.kill() };
+  return page;
 }
 
 test.skipIf(!existsSync(CHROME))("asks with the site typing would go to, naming a frame's own site, and types nothing on a no", async () => {
@@ -157,13 +151,12 @@ test.for([0, 1, 2, 3, 4])("makes a new password with both cases and a digit, in 
 });
 
 test.skipIf(!existsSync(CHROME))("sets a new password into the page and the vault, keeps the old one, and never shows it", async () => {
-  const page = await chrome(`<input type="password" aria-label="New password" autofocus><input type="password" aria-label="Confirm password">`, 9345);
+  const page = await form(`<input type="password" aria-label="New password" autofocus><input type="password" aria-label="Confirm password">`, 9345);
   process.env.TASK_BROWSER = page.url;
-  const dir = newDataDir();
-  const db = openDb(`${dir}/biscotti.db`, "test-key");
-  db.insert(vaultTable).values({ name: "Delta login", fields: ["username", "password"], value: { username: "ada@example.com", password: "old-password-1" } }).run();
   const asked: string[] = [];
-  const ctx = { db, dir, env: (n: string) => n, ask: async (q: string) => (asked.push(q), true), deliver: async () => {}, send: async () => {} };
+  const ctx = testContext({ ask: async (q) => (asked.push(q), true) });
+  const { db } = ctx;
+  db.insert(vaultTable).values({ name: "Delta login", fields: ["username", "password"], value: { username: "ada@example.com", password: "old-password-1" } }).run();
   const tools = await secureFill.tools!(ctx);
 
   const result = await tools.tasks!.call("vault_new_password", { name: "Delta login", why: "the old one expired", confirm: true }, { slot: 1 });

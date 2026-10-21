@@ -38,14 +38,20 @@ func saveCommand(_ file: String) -> String {
     return "\(guarded)mkdir -p /var/lib/biscotti && umask 077 && cat > \(path)"
 }
 
+/// Puts the settings on the machine, `shell` running a command there with the given stdin.
+func saveSettings(_ settings: Settings, shell: (String, Data) throws -> Void) throws {
+    try shell(saveCommand(".env"), Data(settings.env.utf8))
+    try shell(saveCommand("biscotti.json"), settings.pluginsJSON())
+}
+
 // MARK: Mac. Thin on purpose: this mirrors installer/local/lima.yaml and boots the published biscotti-mac image.
 
 enum Mac {
     /// Lima's nested virtualization (for Firecracker) needs an M3 or later.
-    static var isM3OrLater: Bool {
+    static let isM3OrLater: Bool = {
         let brand = String(decoding: (try? run("/usr/sbin/sysctl", ["-n", "machdep.cpu.brand_string"])) ?? Data(), as: UTF8.self)
         return Int(brand.replacingOccurrences(of: "Apple M", with: "").prefix { $0.isNumber }).map { $0 >= 3 } ?? false
-    }
+    }()
 
     static func tool(_ name: String) -> String? {
         ["/opt/homebrew/bin", "/usr/local/bin"].map { "\($0)/\(name)" }.first { FileManager.default.isExecutableFile(atPath: $0) }
@@ -86,11 +92,7 @@ enum Mac {
         try run(limactl, ["start", "--name=biscotti", "--tty=false", yaml.path])
 
         status("Adding your settings…")
-        let save = { (file: String, data: Data) in
-            try run(limactl, ["shell", "biscotti", "sudo", "sh", "-c", saveCommand(file)], input: data)
-        }
-        try save(".env", Data(settings.env.utf8))
-        try save("biscotti.json", settings.pluginsJSON())
+        try saveSettings(settings) { try run(limactl, ["shell", "biscotti", "sudo", "sh", "-c", $0], input: $1) }
     }
 }
 
@@ -124,13 +126,8 @@ enum Cloud {
     }
 
     static func sendSettings(_ settings: Settings, host: String, key: URL) throws {
-        let save = { (file: String, data: Data) in
-            try run("/usr/bin/ssh", [
-                "-i", key.path, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15", "root@\(host)",
-                saveCommand(file),
-            ], input: data)
+        try saveSettings(settings) {
+            try run("/usr/bin/ssh", ["-i", key.path, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15", "root@\(host)", $0], input: $1)
         }
-        try save(".env", Data(settings.env.utf8))
-        try save("biscotti.json", settings.pluginsJSON())
     }
 }

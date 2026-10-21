@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { declined, escapeHtml, htmlPage, input, int, list, localTools, optional, str, text, type Context, type Plugin } from "@biscotti/core";
+import { declined, escapeHtml, input, int, list, localTools, optional, sendPage, str, text, type Context, type Plugin } from "@biscotti/core";
 import { sql } from "drizzle-orm";
 
 // Gmail and Google Calendar over Google's REST APIs, with the owner's own OAuth client. Sending mail and deleting
@@ -77,10 +77,10 @@ function googleApi(ctx: Context) {
       const t = await token({ grant_type: "authorization_code", code: url.searchParams.get("code") ?? "", redirect_uri: redirectUri });
       if (!t.refresh_token) throw new Error("Google sent no refresh token");
       ctx.db.run(sql`INSERT OR REPLACE INTO google_auth VALUES (1, ${t.refresh_token})`);
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(htmlPage("Google", "<h1>Google</h1><p>Connected. You can close this.</p>"));
+      sendPage(res, "Google", "<h1>Google</h1><p>Connected. You can close this.</p>");
       void ctx.deliver("Google was connected by the user.");
     } catch (err) {
-      res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" }).end(htmlPage("Google", `<h1>Google</h1><p>That didn't work: ${escapeHtml(String(err))}</p><p>Ask biscotti for a new link.</p>`));
+      sendPage(res, "Google", `<h1>Google</h1><p>That didn't work: ${escapeHtml(String(err))}</p><p>Ask biscotti for a new link.</p>`, 500);
     }
   }).listen(PORT, "127.0.0.1"));
 
@@ -109,8 +109,6 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
 
   async tools(ctx) {
     const { call, signInLink, redirectUri } = googleApi(ctx);
-    const confirm = async (question: string) => (await ctx.ask(question)) || undefined;
-
     return localTools([
       {
         name: "google_connect",
@@ -158,7 +156,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
         description: "Send an email (asks the user first). To reply, pass reply_to with the message id being answered.",
         input: input({ to: str(), subject: str(), body: str(), reply_to: optional(str()) }),
         async run({ to, subject, body, reply_to }: Args) {
-          if (!(await confirm(`Send this email to ${to}?\nSubject: ${subject}\n\n${String(body).slice(0, 3000)}${String(body).length > 3000 ? "\n[…longer than shown]" : ""}`))) return declined;
+          if (!(await ctx.ask(`Send this email to ${to}?\nSubject: ${subject}\n\n${body}`))) return declined;
           const original = reply_to ? await call("GET", `/gmail/v1/users/me/messages/${encodeURIComponent(String(reply_to))}?format=metadata&metadataHeaders=Message-ID`) : undefined;
           const raw = rfc822(String(to), String(subject), String(body), original && header(original, "Message-ID"));
           const sent = await call("POST", "/gmail/v1/users/me/messages/send", { raw, ...(original ? { threadId: original.threadId } : {}) });
@@ -213,7 +211,7 @@ user themselves, so just call the tool. If Google isn't connected, \`google_conn
         input: input({ id: str() }),
         async run({ id }: Args) {
           const event = await call("GET", `/calendar/v3/calendars/primary/events/${encodeURIComponent(String(id))}`);
-          if (!(await confirm(`Delete "${event.summary}" (${event.start?.dateTime ?? event.start?.date}) from your calendar?`))) return declined;
+          if (!(await ctx.ask(`Delete "${event.summary}" (${event.start?.dateTime ?? event.start?.date}) from your calendar?`))) return declined;
           await call("DELETE", `/calendar/v3/calendars/primary/events/${encodeURIComponent(String(id))}`);
           return text("Deleted.");
         },

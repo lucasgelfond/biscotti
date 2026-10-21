@@ -1,15 +1,32 @@
+import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAgent } from "../core/src/agent.ts";
 import { start } from "../core/src/biscotti.ts";
-import type { Plugin } from "../core/src/plugin.ts";
+import { openDb } from "../core/src/memory.ts";
+import type { Context, Plugin } from "../core/src/plugin.ts";
 import { asTexts, tapbacks } from "../plugins/channels/spectrum/index.ts";
 
 // biscotti as main.ts starts it, with a stand-in phone that splits texts and takes tapbacks as iMessage does: `say`
 // texts it (resolving once it replied), `sent` is its texts.
 
 export const newDataDir = () => mkdtempSync(join(tmpdir(), "biscotti-"));
+
+// A plugin's context with no gate behind it: every question is a yes unless `ask` says otherwise.
+export function testContext(overrides: Partial<Context> = {}): Context {
+  const dir = newDataDir();
+  return { db: openDb(`${dir}/biscotti.db`, "test-key"), dir, env: (n) => n, ask: async () => true, deliver: async () => {}, send: async () => {}, ...overrides };
+}
+
+// A headless Chrome showing `url`, its DevTools at the returned `url` once it's up.
+export const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+export async function chrome(port: number, url: string, args: string[] = []) {
+  const proc = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${newDataDir()}`, ...args, url], { stdio: "ignore" });
+  const devtools = `http://127.0.0.1:${port}`;
+  while (!(await fetch(`${devtools}/json/version`).then((r) => r.ok, () => false))) await new Promise((r) => setTimeout(r, 100));
+  return { url: devtools, close: () => proc.kill() };
+}
 
 // With `restart` (an earlier boot), a new gate over its data and sockets, as after the service restarts: its agent
 // keeps running.

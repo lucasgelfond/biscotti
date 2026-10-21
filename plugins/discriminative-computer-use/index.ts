@@ -35,7 +35,7 @@ comparing options across pages, several sites, or when browse comes back unsure.
 
   async tools(ctx) {
     if (!ctx.task || !process.env.TYPESAFE_API_KEY) return localTools([]);
-    const decide = jev(ctx.env("TYPESAFE_API_KEY"));
+    const decide = jev(process.env.TYPESAFE_API_KEY);
     return {
       ...localTools([
         {

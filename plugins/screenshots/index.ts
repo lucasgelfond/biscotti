@@ -1,4 +1,5 @@
 import { input, localTools, str, text, type Plugin } from "@biscotti/core";
+import { browser, devtools, targets } from "../secure-fill/index.ts";
 
 // Task VMs show the owner what they see as they go: a screenshot of the VM's browser, texted straight into the thread
 // with a caption, as often as it helps (each listing, the seat map). The gate takes it, so the VM sends no image.
@@ -7,23 +8,14 @@ import { input, localTools, str, text, type Plugin } from "@biscotti/core";
 const MAX_PER_TASK = 12;
 const WINDOW_MS = 30 * 60_000;
 
-// The slot's VM's Chromium, over DevTools.
-const browser = (slot?: number) => process.env.TASK_BROWSER ?? `http://10.200.${slot}.2:9223`;
-
 async function capture(url: string) {
-  const targets = (await (await fetch(`${url}/json/list`)).json()) as { type: string; webSocketDebuggerUrl: string }[];
-  const page = targets.find((t) => t.type === "page");
+  const page = (await targets(url)).find((t) => t.type === "page");
   if (!page) throw new Error("no browser tab is open");
-  const ws = new WebSocket(page.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, url.replace(/^http/, "ws")));
-  await new Promise((resolve, reject) => ((ws.onopen = resolve), (ws.onerror = reject)));
+  const tab = await devtools(url, page);
   try {
-    const reply = new Promise<{ result?: { data: string }; error?: { message: string } }>((resolve) => (ws.onmessage = (e) => resolve(JSON.parse(String(e.data)))));
-    ws.send(JSON.stringify({ id: 1, method: "Page.captureScreenshot", params: { format: "png" } }));
-    const { result, error } = await reply;
-    if (!result) throw new Error(error?.message ?? "no screenshot");
-    return Buffer.from(result.data, "base64");
+    return Buffer.from((await tab.send("Page.captureScreenshot", { format: "png" })).data, "base64");
   } finally {
-    ws.close();
+    tab.close();
   }
 }
 

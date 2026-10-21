@@ -105,7 +105,6 @@ struct Settings: Equatable {
         return readKey(key.appendingPathExtension("pub")) ?? ""
     }
 
-    /// Fills keys from a biscotti `.env`-style file, e.g. one saved from an earlier install.
     /// Photon's dashboard copies both keys as .env lines; pasted into either field (where newlines may become spaces),
     /// they fill both.
     mutating func loadPhoton(_ text: String) {
@@ -115,6 +114,7 @@ struct Settings: Equatable {
         }
     }
 
+    /// Fills keys from a biscotti `.env`-style file, e.g. one saved from an earlier install.
     mutating func load(envFile: URL) {
         if let text = try? String(contentsOf: envFile, encoding: .utf8) { load(text) }
     }
