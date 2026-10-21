@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { escapeHtml, input, localTools, str, text, type Plugin } from "@biscotti/core";
+import { escapeHtml, input, localTools, PAGE_ART, PAGE_STYLE, str, text, type Plugin } from "@biscotti/core";
 
 // Pages the agent texts as links. Public (Funnel) under unguessable names, so iMessage can fetch the preview tags.
 
@@ -10,12 +10,26 @@ const PORT = 8082;
 const PREVIEW_IMAGE = "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=80&w=1200&h=630&fit=crop";
 const NAME = /^\/([0-9a-f]{24}\.html|preview\.jpg)$/;
 
+// biscotti's look under the page's own CSS: plain HTML (headings, tables, lists) comes out styled, and a page can
+// still restyle anything.
+const LOOK = `<style>
+${PAGE_STYLE}
+body{max-width:720px;margin:0 auto;padding:40px 16px 64px;box-sizing:border-box}
+h2,h3{font-size:15px;font-weight:600;margin:32px 0 12px}
+table{border-collapse:collapse;display:block;overflow-x:auto;margin:0 0 24px}
+th,td{border:1px solid #000;padding:6px 10px;text-align:left;vertical-align:top}
+th{font-weight:600}
+ul,ol{padding-left:20px}
+img{max-width:100%}
+</style>`;
+
 const SELF_CONTAINED = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'";
 
 export default {
   prompt: `Pages: when an answer is better as a page (a table, comparison, itinerary, chart), make a self-contained,
 phone-friendly HTML page with \`publish_page\`: everything inline (images as data: URLs), since pages can't load
-anything. Put its link on a line of its own at the end of your reply; it's sent as a separate message that expands
+anything. Pages come in biscotti's look (monospace, black on white, its header), so write plain HTML (headings,
+tables, lists) and add CSS only where a page needs it. Put its link on a line of its own at the end of your reply; it's sent as a separate message that expands
 into a card, so keep the rest of the reply to a line or two.`,
 
   async tools(ctx) {
@@ -48,9 +62,11 @@ into a card, so keep the rest of the reply to a line or two.`,
             `<meta property="og:image" content="${baseUrl}/preview.jpg">`,
             `<meta property="og:type" content="website">`,
             `<meta name="viewport" content="width=device-width, initial-scale=1">`,
+            LOOK,
           ].join("\n");
           const withTags = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (h) => `${h}\n${tags}`) : `<head>${tags}</head>${html}`;
-          writeFileSync(`${dir}/${name}`, withTags);
+          const page = /<body[^>]*>/i.test(withTags) ? withTags.replace(/<body[^>]*>/i, (b) => `${b}${PAGE_ART}`) : withTags.replace(/<\/head>/i, (h) => `${h}${PAGE_ART}`);
+          writeFileSync(`${dir}/${name}`, page);
           return text(`${baseUrl}/${name}`);
         },
       },
