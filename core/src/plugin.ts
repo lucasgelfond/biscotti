@@ -137,11 +137,8 @@ const ART = [
   "   /  o   .    o   (_)   .    o   .   \\",
   "  /__(_)____.____o____.____(_)____o____\\",
 ].join("\n");
-export const htmlPage = (title: string, body: string) => `<!doctype html><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title>
-<style>
-body{margin:0;background:#fff;color:#000;font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;letter-spacing:-.01em}
-main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
+// The site's look, for the pages biscotti serves: these forms, and plugins' pages (artifacts).
+export const PAGE_STYLE = `body{margin:0;background:#fff;color:#000;font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;letter-spacing:-.01em}
 pre{margin:0 0 24px;font-size:11px;line-height:1.2;overflow-x:auto}
 h1{font-size:15px;font-weight:600;margin:0 0 24px}
 a{color:#2400ff}
@@ -149,6 +146,12 @@ label{display:block;margin:0 0 16px}
 input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;font:inherit;border:1px solid #000;border-radius:0;background:#fff}
 input:focus{outline:2px solid #2400ff;outline-offset:-1px}
 button{font:inherit;padding:6px 14px;border:1px solid #000;background:#fff;color:#000;cursor:pointer}
-button:hover{background:#000;color:#fff}
+button:hover{background:#000;color:#fff}`;
+export const PAGE_ART = `<pre aria-hidden="true">${ART}</pre>`;
+export const htmlPage = (title: string, body: string) => `<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title>
+<style>
+${PAGE_STYLE}
+main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
 </style>
-<main><pre aria-hidden="true">${ART}</pre>${body}</main>`;
+<main>${PAGE_ART}${body}</main>`;

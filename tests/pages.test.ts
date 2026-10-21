@@ -1,9 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
+import { PAGE_ART } from "../core/src/plugin.ts";
 import { boot } from "./support.ts";
 
-test("publishes a page with link-preview tags, texts its link on its own, and serves it", async () => {
+test("publishes a page in biscotti's look with link-preview tags, texts its link on its own, and serves it", async () => {
   const biscotti = await boot(["artifacts"]);
 
   await biscotti.say("Make me a page with a table comparing biscotti, shortbread and madeleines: origin and texture.");
@@ -16,6 +17,8 @@ test("publishes a page with link-preview tags, texts its link on its own, and se
   expect(files).toHaveLength(1);
   expect(page.toLowerCase()).toContain("madeleine");
   expect(page).toContain('<meta property="og:title"');
+  expect(page).toContain(PAGE_ART);
+  expect(page).toContain("ui-monospace");
   expect(page).toContain('<meta property="og:image" content="https://biscotti.example.ts.net/preview.jpg">');
   expect(biscotti.sent).toContain(`https://biscotti.example.ts.net/${files[0]}`);
   expect(served.status).toBe(200);
