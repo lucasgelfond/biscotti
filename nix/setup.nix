@@ -75,8 +75,8 @@
       fi
       set_default TAILNET_HOST "$(tailscale status --json | jq -r '.Self.DNSName | rtrimstr(".")')"
 
-      # What the owner opens, on the tailnet: each VM slot's desktop, the vault's forms and pages. Artifacts are public
-      # (Funnel) under unguessable names, so iMessage can show link previews; nothing else is.
+      # What the owner opens, on the tailnet: each VM slot's desktop, the vault's forms and pages, the traces. Artifacts
+      # are public (Funnel) under unguessable names, so iMessage can show link previews; nothing else is.
       plugins=$(jq -r '.plugins[]' "$STATE/biscotti.json")
       has() { grep -qx "$1" <<< "$plugins"; }
       for n in $(seq ${toString vms.slots}); do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
@@ -85,6 +85,7 @@
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
       if has mcp; then tailscale serve --bg --https=9443 --set-path=/mcp-oauth http://127.0.0.1:4793; fi
       if has artifacts; then tailscale funnel --bg --https=443 http://127.0.0.1:8082; fi
+      if has phoenix; then tailscale serve --bg --https=6006 http://127.0.0.1:6006; fi
 
       # Huge pages reserved (the Mac): task VMs run on them.
       huge=$([ "$(cat /proc/sys/vm/nr_hugepages)" -gt 0 ] && echo 2M || true)

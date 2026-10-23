@@ -37,6 +37,8 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     if (text) await channel.send(outbound(text.replace(LOCKS, "")));
   };
   const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, task: vms?.task };
+  const observers = await Promise.all(plugins.flatMap((p) => (p.observe ? [p.observe(ctx)] : [])));
+  for (const observer of observers) gate.observe(observer);
 
   const channelPlugin = plugins.find((p) => p.channel);
   if (!channelPlugin) throw new Error("biscotti.json needs a channel plugin, e.g. channels/spectrum");
@@ -51,11 +53,14 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   const turn = await connectAgent(sockets, { db, prompt, gate: gate.handle });
 
   async function deliver(text: string, image?: Buffer) {
+    const done = observers.map((o) => o.turn?.(outbound(text).text));
     try {
       const reply = (await turn(text))?.replace(LOCKS, "").trim();
+      for (const end of done) end?.(reply && outbound(reply).text);
       if (reply) await channel.send(outbound(reply));
       if (image) await channel.send({ image });
     } catch (err) {
+      for (const end of done) end?.(undefined, err);
       console.error(err);
     }
   }
