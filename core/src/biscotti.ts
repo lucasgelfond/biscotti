@@ -47,7 +47,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   const recalls = await Promise.all(plugins.flatMap((p) => (p.recall ? [p.recall(ctx)] : [])));
 
   gate.add(memoryTools(db, recalls));
-  if (vms) gate.add(localTools([vms.tool]));
+  if (vms) gate.add(localTools(vms.tools));
   const prompt = [readFileSync(new URL("../SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
 
   const turn = await connectAgent(sockets, { db, prompt, gate: gate.handle });

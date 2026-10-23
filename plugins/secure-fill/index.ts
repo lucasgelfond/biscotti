@@ -24,6 +24,11 @@ export function totp(setup: string, now = Date.now()) {
   return String((hash.readUInt32BE(hash[19] & 15) & 0x7fffffff) % 1e6).padStart(6, "0");
 }
 
+// A yes for an entry covers the rest of that task's typing of it into the same site, for this long: a card's number,
+// expiry and code, even in separate fields or frames, are one yes. Another task, entry or site asks again.
+const APPROVAL_MS = 15 * 60_000;
+const FRAMED = ", in a frame from ";
+
 // The slot's VM's Chromium, over DevTools (also the screenshots plugin's).
 export const browser = (slot?: number) => process.env.TASK_BROWSER ?? `http://10.200.${slot}.2:9223`;
 
@@ -67,7 +72,7 @@ async function tab(browser: string, target: Target, all: Target[]) {
     if (node?.nodeName !== "IFRAME") return page;
     const url = findFrame(frameTree, node.frameId)?.url ?? all.find((t) => t.id === node.frameId)?.url;
     if (!url) throw new Error("The focused field is in a frame whose site can't be told.");
-    return site(url) === page ? page : `${page}, in a frame from ${site(url)}`;
+    return site(url) === page ? page : `${page}${FRAMED}${site(url)}`;
   }
   return { send, evaluate, where, close };
 }
@@ -139,20 +144,40 @@ set the password with \`vault_new_password\` (naming the entry): the vault makes
   async tools(ctx) {
     const { db } = ctx;
     // Types `values` once the owner says yes to `question` about where they'd go; `done` says what was typed.
-    const typeIn = (slot: number | undefined, values: () => string[], question: (where: string) => string, done: (into: string[]) => string) =>
-      fill(browser(slot), values, (where) => ctx.ask(question(where)))
+    const typeIn = (slot: number | undefined, values: () => string[], approve: (where: string) => Promise<boolean>, done: (into: string[]) => string) =>
+      fill(browser(slot), values, approve)
         .then((into) => (into ? text(done(into)) : declined))
         .catch((err: Error) => text(`Couldn't fill: ${err.message}`));
+
+    // Per task and entry: the sites the owner said yes to, until when. A yes for a frame on a page covers the page's
+    // own fields too; a yes for the page alone doesn't cover a frame from another site.
+    const approvals = new Map<string, { sites: Set<string>; until: number }>();
+    function approver(task: number | undefined, entry: string, question: (where: string) => string) {
+      const key = task && `${task}\n${entry}`;
+      return async (where: string) => {
+        for (const [k, a] of approvals) if (a.until <= Date.now()) approvals.delete(k);
+        const approval = key && approvals.get(key);
+        if (approval && approval.sites.has(where)) return true;
+        const covers = key ? ` A yes covers the rest of this task's typing of "${entry}" there, for ${APPROVAL_MS / 60_000} minutes.` : "";
+        if (!(await ctx.ask(question(where) + covers))) return false;
+        if (key) {
+          const granted = approval || { sites: new Set<string>(), until: Date.now() + APPROVAL_MS };
+          granted.sites.add(where).add(where.split(FRAMED)[0]);
+          approvals.set(key, granted);
+        }
+        return true;
+      };
+    }
     const fillTool: LocalTool = {
       name: "vault_fill",
       description:
-        "Type saved values into the page without seeing them. Click the first input (e.g. the username box), then call this; several fields are typed in order with Tab between, e.g. ['username', 'password'] or ['number', 'expiry', 'cvc']. The field 'totp' types the current 2FA code. Waits for the owner's approval.",
+        "Type saved values into the page without seeing them. Click the first input (e.g. the username box), then call this; several fields are typed in order with Tab between, e.g. ['username', 'password'] or ['number', 'expiry', 'cvc']. The field 'totp' types the current 2FA code. Waits for the owner's approval; their yes covers the rest of this task's fills of the entry on that site.",
       input: input({
         name: str("The entry's name, from vault_list."),
         fields: list(str()),
         why: str("What it's for, shown to the owner when they're asked, e.g. 'checkout for 2 train tickets, $34'."),
       }),
-      async run({ name, fields, why }, { slot }) {
+      async run({ name, fields, why }, { slot, task }) {
         const [entry, wanted] = [String(name), fields as string[]];
         const saved = secret(db, entry);
         if (!saved) return text(`No secret named "${entry}".`);
@@ -160,7 +185,7 @@ set the password with \`vault_new_password\` (naming the entry): the vault makes
         if (missing.length) return text(`"${entry}" has no ${missing.join(", ")}; it has ${Object.keys(saved).join(", ")}.`);
         const values = () => wanted.map((f) => (f === "totp" ? totp(saved[f]) : saved[f]));
         const question = (where: string) => `A task wants to type "${entry}" (${wanted.join(", ")}) into ${where}, for ${String(why).slice(0, 200)}. Is ${where} the right site?`;
-        return typeIn(slot, values, question, (into) => `Typed ${wanted.join(", ")} into: ${into.join(", ")}. Check the page before submitting.`);
+        return typeIn(slot, values, approver(task, entry, question), (into) => `Typed ${wanted.join(", ")} into: ${into.join(", ")}. Check the page before submitting.`);
       },
     };
     const newPasswordTool: LocalTool = {
@@ -179,7 +204,7 @@ set the password with \`vault_new_password\` (naming the entry): the vault makes
         const password = newPassword();
         const question = (where: string) =>
           `A task wants to set a new password for "${entry}" on ${where}, for ${String(why).slice(0, 200)}. biscotti makes it, types it and saves it to the vault; it's never texted. Is ${where} the right site?`;
-        return typeIn(slot, () => (confirm ? [password, password] : [password]), question, (into) => {
+        return typeIn(slot, () => (confirm ? [password, password] : [password]), (where) => ctx.ask(question(where)), (into) => {
           const old = saved?.password;
           saveSecret(db, entry, { ...saved, ...(username ? { username: String(username) } : {}), ...(old ? { "previous password": old } : {}), password });
           return `Typed a new password into ${into.join(", ")} and saved it to "${entry}". Submit the form and check it took; if it didn't, the old one is the entry's "previous password".`;
