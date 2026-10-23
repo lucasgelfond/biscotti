@@ -9,6 +9,8 @@
   "devDependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
     "vitest": "5.0.3",
-    "@biscotti/core": "workspace:*"
+    "@biscotti/core": "workspace:*",
+    "@opentelemetry/sdk-trace-base": "2.12.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.223.0"
   }
 }

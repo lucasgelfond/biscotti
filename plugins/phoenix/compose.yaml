@@ -1,0 +1,12 @@
+# Arize Phoenix: one process on SQLite, showing the gate's traces (index.ts) at :6006, which setup serves on the tailnet.
+services:
+  phoenix:
+    image: arizephoenix/phoenix:version-20.20.0-nonroot@sha256:2ac6874a4f743a626060adb6988b6dbd558530a0e06685334f63f8a779aaabb5
+    ports: ["127.0.0.1:6006:6006"]
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+    volumes: [phoenix:/mnt/data]
+    restart: unless-stopped
+
+volumes:
+  phoenix:

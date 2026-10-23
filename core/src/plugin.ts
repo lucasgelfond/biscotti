@@ -63,11 +63,20 @@ export interface Recall {
   search(query: string): Promise<number[]>;
 }
 
+// Watches what goes through the gate (e.g. to trace it): each turn of the main agent, each model call and each tool
+// call, with saved secrets already placeholders. Each returns what to call once it's done; neither may throw.
+export interface Observer {
+  turn?(message: string): (reply?: string, error?: unknown) => void;
+  llm?(call: { slot?: number; model: string; request: Record<string, unknown> }): (response: { status: number; body: string }) => void;
+  tool?(call: { name: string; args: Record<string, unknown>; slot?: number }): (result?: CallToolResult, error?: unknown) => void;
+}
+
 export interface Plugin {
   prompt?: string;
   channel?(ctx: Context): Promise<Channel>;
   tools?(ctx: Context): Promise<Tools>;
   recall?(ctx: Context): Promise<Recall>;
+  observe?(ctx: Context): Promise<Observer>;
   start?(ctx: Context): Promise<void>;
 }
 

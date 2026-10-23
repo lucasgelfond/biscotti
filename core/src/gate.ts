@@ -3,7 +3,7 @@ import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { readBody } from "./http.ts";
-import { input, localTools, str, text, type Caller, type Tools } from "./plugin.ts";
+import { input, localTools, str, text, type Caller, type Observer, type Tools } from "./plugin.ts";
 
 // The gate holds every key: the model at /llm, every plugin's tools at /mcp, and the owner's approvals. Saved secrets
 // never reach the model provider: any in a model call becomes a placeholder.
@@ -66,6 +66,7 @@ export function createGate(opts: {
   const sets = { main: [] as Tools[], tasks: [] as Tools[] };
   const byTool = { main: new Map<string, Tools>(), tasks: new Map<string, Tools>() };
   const proposals = new Map<number, string[]>();
+  const observers: Observer[] = [];
   const propose = localTools([
     {
       name: "propose",
@@ -130,7 +131,16 @@ export function createGate(opts: {
     if (!byTool[set].has(name)) await listTools(set);
     const plugin = byTool[set].get(name);
     if (!plugin) throw new Error(`no tool ${name}`);
-    return plugin.call(name, args, caller);
+    const done = observers.map((o) => o.tool?.({ name, args, slot: caller.slot }));
+    try {
+      const result = await plugin.call(name, args, caller);
+      const seen = done.some(Boolean) ? (scrub(result, opts.secrets?.() ?? []) as typeof result) : result;
+      for (const end of done) end?.(seen);
+      return result;
+    } catch (err) {
+      for (const end of done) end?.(undefined, err);
+      throw err;
+    }
   }
 
   // A task VM gets the task model, or the one its task was started with (a coding task), whatever model it names.
@@ -141,14 +151,20 @@ export function createGate(opts: {
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
     const model = opts.models[slot ? (slotModels.get(slot) ?? "task") : body.model];
     if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
+    const done = observers.map((o) => o.llm?.({ slot, model, request: body }));
     const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
       body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict) }),
     });
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
-    for await (const chunk of upstream.body ?? []) res.write(chunk);
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of upstream.body ?? []) {
+      res.write(chunk);
+      if (done.some(Boolean)) chunks.push(chunk);
+    }
     res.end();
+    for (const end of done) end?.({ status: upstream.status, body: Buffer.concat(chunks).toString("utf8") });
   }
 
   async function mcp(req: IncomingMessage, res: ServerResponse, set: keyof typeof sets, caller: Caller) {
@@ -183,6 +199,7 @@ export function createGate(opts: {
       sets.main.push(tools);
       if (tools.tasks) sets.tasks.push(tools.tasks);
     },
+    observe: (observer: Observer) => void observers.push(observer),
     // What a task VM in `slot` proposed for the main agent, cleared as it's read.
     proposed(slot: number) {
       const said = proposals.get(slot) ?? [];
