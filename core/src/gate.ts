@@ -127,11 +127,18 @@ export function createGate(opts: {
     return lists.flatMap(({ tools }) => tools);
   }
 
+  // Each slot's tool calls in progress, oldest first: a task in one (e.g. waiting on the owner's yes) isn't quiet.
+  const calls = new Map<number, { tool: string; since: number }[]>();
+
   async function callTool(set: keyof typeof sets, name: string, args: Record<string, unknown>, caller: Caller) {
     if (!byTool[set].has(name)) await listTools(set);
     const plugin = byTool[set].get(name);
     if (!plugin) throw new Error(`no tool ${name}`);
     const done = observers.map((o) => o.tool?.({ name, args, slot: caller.slot }));
+    const call = { tool: name, since: Date.now() };
+    if (caller.slot && !calls.has(caller.slot)) calls.set(caller.slot, []);
+    const inSlot = caller.slot ? calls.get(caller.slot)! : [];
+    inSlot.push(call);
     try {
       const result = await plugin.call(name, args, caller);
       const seen = done.some(Boolean) ? (scrub(result, opts.secrets?.() ?? []) as typeof result) : result;
@@ -140,11 +147,15 @@ export function createGate(opts: {
     } catch (err) {
       for (const end of done) end?.(undefined, err);
       throw err;
+    } finally {
+      inSlot.splice(inSlot.indexOf(call), 1);
     }
   }
 
   // A task VM gets the task model, or the one its task was started with (a coding task), whatever model it names.
   const slotModels = new Map<number, string>();
+  // The task each slot is running, for its tool calls' `Caller`.
+  const slotTasks = new Map<number, number>();
 
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
@@ -183,7 +194,7 @@ export function createGate(opts: {
     const set = slot ? "tasks" : "main";
     if (peer && req.socket.remoteAddress?.replace(/^::ffff:/, "") !== peer) return void res.writeHead(403).end();
     if (set === "tasks" && !TASK_HOSTS.test(req.headers.host ?? "")) return void res.writeHead(403).end();
-    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot })).catch((err) => {
+    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot, task: slot && slotTasks.get(slot) })).catch((err) => {
       console.error(err);
       if (!res.headersSent) res.writeHead(502).end(String(err));
     });
@@ -193,6 +204,9 @@ export function createGate(opts: {
     ask,
     answer,
     route: (slot: number, model?: string) => (model ? slotModels.set(slot, model) : slotModels.delete(slot)),
+    assign: (slot: number, task?: number) => (task ? slotTasks.set(slot, task) : slotTasks.delete(slot)),
+    // The slot's oldest tool call in progress, if any.
+    busy: (slot: number) => calls.get(slot)?.[0],
     // The main agent's requests (the model, its tools), for a listener of the caller's choosing.
     handle: handler(),
     add(tools: Tools) {
