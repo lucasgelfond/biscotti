@@ -46,9 +46,11 @@ export interface Channel {
   send(message: { text: string } | { image: Buffer }): Promise<void>;
 }
 
-// Who's calling a tool: the main agent, or the task VM in `slot`.
+// Who's calling a tool: the main agent, or the task VM in `slot`, running task number `task` (one per run, so what a
+// plugin keeps for a task, like an approval, ends with it).
 export interface Caller {
   slot?: number;
+  task?: number;
 }
 
 export interface Tools {
