@@ -6,7 +6,7 @@ The general design is a main Pi agent that dispatches tasks to little VMs. Acces
 
 I built a small setup wizard that should make it easy to deploy on Raspberry Pi, Mac (with nested virutalization because it needs KVM access), or on AWS. Open for PRs + feedback! 
 
-Acknowledgements: Shoutout to [Diego Rodriguez](https://www.diego.computer/) for thoughts about Instinct architecture / personal agents
+Acknowledgements: Shoutout to [Diego Rodriguez](https://www.diego.computer/) for thoughts about Instinct architecture / personal agents. I made heavy use of LLM-based coding (particularly Claude Opus 5.5) for much of the logic here. 
 
 The VM desktop uses [Cua](https://github.com/trycua/cua)'s XFCE scripts and `cua-spacesd` for computer control. Their licenses and notices are preserved in the image under `/usr/share/licenses/cua-xfce/` and `/usr/share/licenses/cua-spacesd/`.
 
