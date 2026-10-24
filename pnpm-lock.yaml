@@ -147,6 +147,12 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  plugins/vision:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+
   site:
     devDependencies:
       '@sveltejs/vite-plugin-svelte':

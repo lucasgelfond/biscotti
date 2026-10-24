@@ -1,16 +1,53 @@
 // Computer-use benchmark: real web tasks in task VMs, per model and guidance, with timings and tool counts.
 // On the Pi, with the live agent stopped:  node tests/bench/cu.ts <model> <guidance> [task…]
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { createGate } from "../../core/src/gate.ts";
+import { openDb } from "../../core/src/memory.ts";
+import type { Context, Plugin } from "../../core/src/plugin.ts";
 import { restore, SLOTS } from "../../core/src/tasks.ts";
+import vault from "../../core/src/vault.ts";
+import { RUNNER } from "../../plugins/discriminative-computer-use/index.ts";
 
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const OUT = process.env.OUT ?? "/tmp/cu";
 
-const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | Promise<boolean> }> = {
+// A coding task's repo: a function with a bug and a test that shows it.
+function buggyRepo() {
+  const dir = mkdtempSync(join(tmpdir(), "cu-repo-"));
+  const git = (...args: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=bench", "-c", "user.email=bench@example.com", ...args]);
+  git("init", "-q", "-b", "main");
+  writeFileSync(`${dir}/greet.js`, 'export const greet = (name) => "Hello " + name;\n');
+  writeFileSync(`${dir}/test.js`, 'import { greet } from "./greet.js";\nif (greet("Ada") !== "Hello, Ada!") throw new Error(`got ${greet("Ada")}`);\nconsole.log("ok");\n');
+  writeFileSync(`${dir}/package.json`, '{ "type": "module", "scripts": { "test": "node test.js" } }\n');
+  git("add", "-A");
+  git("commit", "-qm", "greet");
+  git("bundle", "create", "-q", `${dir}.bundle`, "main");
+  return { dir, bundle: readFileSync(`${dir}.bundle`) };
+}
+
+// Whether the task's commits, applied to the repo, make its test pass.
+function fixes(dir: string, bundle: Buffer) {
+  writeFileSync(`${dir}.out.bundle`, bundle);
+  try {
+    execFileSync("git", ["-C", dir, "pull", "-q", "--ff-only", `${dir}.out.bundle`, "HEAD"]);
+    return execFileSync("node", ["test.js"], { cwd: dir, encoding: "utf8" }).includes("ok");
+  } catch {
+    return false;
+  }
+}
+
+const TASKS: Record<string, { goal: string; repo?: boolean; pass: (report: string, bundle?: Buffer, repo?: string) => boolean | Promise<boolean> }> = {
+  code: {
+    goal: "greet() in greet.js should greet with a comma and an exclamation mark: greet('Ada') is 'Hello, Ada!'. Fix it, and check with npm test.",
+    repo: true,
+    pass: (_report, bundle, repo) => Boolean(bundle && repo && fixes(repo, bundle)),
+  },
   hn: {
     goal: "Open https://news.ycombinator.com and report the exact title of the #1 story.",
     async pass(report) {
@@ -18,6 +55,14 @@ const TASKS: Record<string, { goal: string; pass: (report: string) => boolean | 
       const { title } = await (await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`)).json();
       return report.toLowerCase().includes(title.toLowerCase().slice(0, 25));
     },
+  },
+  search: {
+    goal: "Search DuckDuckGo for 'firecracker microvm', open the first result, and report its page title.",
+    pass: (r) => /firecracker/i.test(r) && !/(couldn't|could not|unable to)/i.test(r),
+  },
+  showtimes: {
+    goal: "Find today's showtimes at the Angelika Film Center in New York and report three films with their times.",
+    pass: (r) => (r.match(/\d{1,2}:\d{2}/g) ?? []).length >= 3,
   },
   sauce: {
     goal: "On https://www.saucedemo.com log in as standard_user with password secret_sauce, add the Sauce Labs Backpack to the cart, check out as Ada Lovelace, zip 10001, and finish the order. Report the confirmation message.",
@@ -58,7 +103,7 @@ const GUIDANCE: Record<string, string> = {
 - If something didn't change as expected, take a screenshot, figure out why, and try another way instead of repeating the same action.`,
 };
 
-type Record_ = { type: string; toolName?: string; isError?: boolean; durationMs?: number; message?: { role: string; content: { type: string; text?: string }[] } };
+type Record_ = { type: string; data?: string; toolName?: string; isError?: boolean; durationMs?: number; message?: { role: string; content: { type: string; text?: string }[] } };
 
 async function run(task: string, slot: number, guidance: string) {
   const started = Date.now();
@@ -70,16 +115,21 @@ async function run(task: string, slot: number, guidance: string) {
   let turns = 0;
   let report = "";
   let screenshot: Buffer | undefined;
+  let bundle: Buffer | undefined;
+  const repo = TASKS[task].repo ? buggyRepo() : undefined;
   try {
     const goal = guidance ? `${TASKS[task].goal}\n\n${guidance}` : TASKS[task].goal;
     await new Promise<void>((resolve, reject) => {
-      const socket = connect({ host: `10.200.${slot}.2`, port: 4000 }, () => socket.end(goal));
+      // CU_JEV: the errand goes to Jev's runner instead of pi.
+      const sent = process.env.CU_JEV ? { goal: JSON.stringify({ goal }), runner: RUNNER } : { goal, repo: repo?.bundle.toString("base64") };
+      const socket = connect({ host: `10.200.${slot}.2`, port: 4000 }, () => socket.end(JSON.stringify(sent)));
       socket.setTimeout(10 * 60_000, () => socket.destroy(new Error("timed out")));
       createInterface({ input: socket }).on("line", (line) => {
         const e = JSON.parse(line) as Record_ & { png?: string };
         if (process.env.CU_TRACE && e.type.startsWith("tool_execution_") && e.type !== "tool_execution_update")
           console.error(`${((Date.now() - started) / 1000).toFixed(1)}s ${task} ${e.type.slice(15)} ${e.toolName} ${e.isError ? "ERROR" : ""} ${e.type.endsWith("start") ? JSON.stringify((e as { args?: unknown }).args ?? "").slice(0, 160) : ""}`);
         if (e.type === "screenshot") screenshot = Buffer.from(e.png!, "base64");
+        if (e.type === "bundle") bundle = Buffer.from(e.data!, "base64");
         if (e.type === "turn_start") turns++;
         if (process.env.CU_TRACE && ["turn_start", "message_end", "agent_settled"].includes(e.type))
           console.error(`${((Date.now() - started) / 1000).toFixed(1)}s ${task} ${e.type} ${e.message?.role ?? ""}`);
@@ -103,15 +153,23 @@ async function run(task: string, slot: number, guidance: string) {
     await vm.stop();
   }
   const seconds = (Date.now() - started) / 1000;
-  const pass = await TASKS[task].pass(report);
+  const pass = await TASKS[task].pass(report, bundle, repo?.dir);
   return { task, pass, seconds, restoredMs: restored, turns, toolSeconds: toolMs / 1000, errors, tools, report: report.slice(0, 400), screenshot };
 }
 
 const [model, guide = "none", ...only] = process.argv.slice(2);
 const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: model }, send: async () => {} });
+// The vault (empty), and plugins whose task tools the VMs get, e.g. CU_PLUGINS=vision,discriminative-computer-use.
+const scratch = mkdtempSync(join(tmpdir(), "cu-"));
+const ctx: Context = { db: openDb(`${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => false, deliver: async () => {}, send: async () => {}, task: async () => ({ report: "" }) };
+gate.add(await vault.tools!(ctx));
+for (const name of (process.env.CU_PLUGINS ?? "").split(",").filter(Boolean)) {
+  const plugin: Plugin = (await import(`../../plugins/${name}/index.ts`)).default;
+  if (plugin.tools) gate.add(await plugin.tools(ctx));
+}
 const servers = await Promise.all(SLOTS.map((slot) => gate.listen(`10.200.${slot}.1`, 80, { slot })));
-const tasks = only.length ? only : Object.keys(TASKS);
-const dir = `${OUT}/${model.replace("/", "_")}-${guide}`;
+const tasks = (only.length ? only : Object.keys(TASKS)).filter((t) => !(process.env.CU_JEV && TASKS[t].repo));
+const dir = `${OUT}/${model.replace("/", "_")}-${guide}${process.env.CU_LABEL ? `-${process.env.CU_LABEL}` : ""}`;
 mkdirSync(dir, { recursive: true });
 
 const queue = [...tasks];
@@ -122,7 +180,7 @@ await Promise.all(
       const result = await run(task, slot, GUIDANCE[guide]);
       if (result.screenshot) writeFileSync(`${dir}/${task}.png`, result.screenshot);
       const { screenshot: _, ...line } = result;
-      const json = JSON.stringify({ model, guide, ...line });
+      const json = JSON.stringify({ model, guide, label: process.env.CU_LABEL, ...line });
       console.log(json);
       appendFileSync(`${OUT}/results.jsonl`, `${json}\n`);
       results.push(result);

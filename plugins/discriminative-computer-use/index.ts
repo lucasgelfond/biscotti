@@ -10,7 +10,7 @@ const MODEL = process.env.TYPESAFE_MODEL ?? "jev-latest";
 const IMAGE_MODEL = process.env.TYPESAFE_IMAGE_MODEL ?? "jev-preview";
 
 // What the VM runs, sent with each errand.
-const RUNNER = Object.fromEntries(
+export const RUNNER = Object.fromEntries(
   [["main.ts", "vm.ts"], ["loop.ts", "loop.ts"], ["page.ts", "page.ts"]].map(([as, file]) => [as, readFileSync(new URL(file, import.meta.url), "utf8")]),
 );
 

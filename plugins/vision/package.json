@@ -1,0 +1,8 @@
+{
+  "name": "@biscotti/vision",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*"
+  }
+}
