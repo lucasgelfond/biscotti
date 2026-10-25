@@ -1,5 +1,5 @@
 # The biscotti host, shared by every target (Pi 5, VM, AWS).
-{ pkgs, self, version, ... }:
+{ pkgs, self, version, nixpkgs-tailscale, ... }:
 let
   # On ARM, Firecracker with the GICv2 snapshot-restore fixes (lucasgelfond/firecracker@biscotti-gicv2, upstream
   # #6300 and #6301), which the Pi 5's interrupt controller needs. Stock on x86.
@@ -37,6 +37,8 @@ in
   };
 
   services.tailscale.enable = true;
+  # 1.104.2 (TS-2026-013), until 26.05 has it (flake.nix).
+  services.tailscale.package = nixpkgs-tailscale.legacyPackages.${pkgs.stdenv.hostPlatform.system}.tailscale;
   # A DNS cache: Node looks a name up on every request, and over the Pi's Wi-Fi a lookup can take seconds.
   services.resolved.enable = true;
   services.chrony.enable = true;
