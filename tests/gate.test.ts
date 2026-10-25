@@ -121,6 +121,30 @@ test("lets a task VM propose what only the main agent may do, and hands the prop
   expect(again).toEqual([]);
 });
 
+test("holds the owner's mid-task messages for their slot's VM, each once, scrubbed, and none for the next task", async () => {
+  const gate = createGate({ llm: { url: "http://127.0.0.1:1", key: "unused" }, models: {}, send: async () => {}, secrets: () => [{ label: "Visa.number", value: "4111111111111111" }] });
+  const one = await gate.listen("127.0.0.1", 0, { slot: 1, peer: "127.0.0.1" });
+  const two = await gate.listen("127.0.0.1", 0, { slot: 2, peer: "127.0.0.1" });
+  const messages = (server: typeof one) => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/messages`).then((r) => r.json());
+
+  gate.assign(1, 7);
+  gate.tell(1, "make it 4 people at 8pm");
+  gate.tell(1, "and use the card 4111111111111111");
+  const first = await messages(one);
+  const again = await messages(one);
+  const elsewhere = await messages(two);
+  gate.tell(1, "never mind");
+  gate.assign(1);
+  const afterEnd = await messages(one);
+  one.close();
+  two.close();
+
+  expect(first).toEqual(["make it 4 people at 8pm", "and use the card [vault:Visa.number]"]);
+  expect(again).toEqual([]);
+  expect(elsewhere).toEqual([]);
+  expect(afterEnd).toEqual([]);
+});
+
 test("lists every plugin's tools at the gate's /mcp", async () => {
   const { gateUrl } = await boot([outbox]);
 

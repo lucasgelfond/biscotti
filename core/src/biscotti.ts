@@ -22,7 +22,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   // No text biscotti sends carries a saved secret, whoever wrote it: each becomes a placeholder.
   const outbound = (s: string) => ({ text: scrub(s, secrets(db)) as string });
   const gate = createGate({
-    llm: { url: env("LLM_BASE_URL"), key: env("LLM_API_KEY") },
+    llm: { url: env("LLM_BASE_URL"), key: env("LLM_API_KEY"), region: process.env.LLM_REGION || undefined },
     models: { main: env("MODEL"), task: env("TASK_MODEL"), code: process.env.CODE_MODEL || env("TASK_MODEL") },
     send: (s) => channel.send(outbound(s)),
     secrets: () => secrets(db),
