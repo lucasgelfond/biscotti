@@ -78,6 +78,7 @@ async function run(task: string, slot: number, guidance: string) {
   gate.assign(slot, ++runs);
   try {
     t = await TASKS[task]!();
+    gate.assign(slot, runs, t.goal);
     await within(t.setup?.(browser), "setup");
     polling = setInterval(() => {
       void t!.followups?.().then((due) => {

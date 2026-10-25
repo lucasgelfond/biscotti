@@ -157,8 +157,9 @@ export function createGate(opts: {
   const told = new Map<number, string[]>();
   // A task VM gets the task model, or the one its task was started with (a coding task), whatever model it names.
   const slotModels = new Map<number, string>();
-  // The task each slot is running, for its tool calls' `Caller`.
+  // The task each slot is running, and what it was asked, for its tool calls' `Caller`.
   const slotTasks = new Map<number, number>();
+  const slotAsked = new Map<number, string>();
 
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
@@ -203,7 +204,7 @@ export function createGate(opts: {
       told.delete(slot);
       return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(said));
     }
-    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot, task: slot && slotTasks.get(slot) })).catch((err) => {
+    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot, task: slot && slotTasks.get(slot), asked: slot ? slotAsked.get(slot) : undefined })).catch((err) => {
       console.error(err);
       if (!res.headersSent) res.writeHead(502).end(String(err));
     });
@@ -214,13 +215,18 @@ export function createGate(opts: {
     answer,
     route: (slot: number, model?: string) => (model ? slotModels.set(slot, model) : slotModels.delete(slot)),
     // A new task in the slot (or none) starts with nothing told.
-    assign(slot: number, task?: number) {
+    assign(slot: number, task?: number, goal?: string) {
       told.delete(slot);
       if (task) slotTasks.set(slot, task);
       else slotTasks.delete(slot);
+      if (task && goal) slotAsked.set(slot, goal);
+      else slotAsked.delete(slot);
     },
     // Passes the owner's message to the slot's running task, with saved secrets scrubbed as everywhere else.
-    tell: (slot: number, message: string) => void told.set(slot, [...(told.get(slot) ?? []), scrub(message, opts.secrets?.() ?? []) as string]),
+    tell(slot: number, message: string) {
+      told.set(slot, [...(told.get(slot) ?? []), scrub(message, opts.secrets?.() ?? []) as string]);
+      if (slotAsked.has(slot)) slotAsked.set(slot, `${slotAsked.get(slot)}\n${message}`);
+    },
     // The slot's oldest tool call in progress, if any.
     busy: (slot: number) => calls.get(slot)?.[0],
     // The main agent's requests (the model, its tools), for a listener of the caller's choosing.

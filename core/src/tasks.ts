@@ -305,7 +305,7 @@ export function gatePool(pool: Pool, gate: ReturnType<typeof createGate>): Pool 
           goal,
           (s, id) => {
             [slot, task] = [s, id];
-            gate.assign(s, id);
+            gate.assign(s, id, goal);
             gate.proposed(s);
             for (const message of waiting.get(id) ?? []) gate.tell(s, message);
             waiting.delete(id);
