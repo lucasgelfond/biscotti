@@ -191,19 +191,23 @@ set the password with \`vault_new_password\` (naming the entry): the vault makes
     const newPasswordTool: LocalTool = {
       name: "vault_new_password",
       description:
-        "Set a new password (a reset, or a new account) without seeing it: the vault makes a strong one, types it into the focused input and saves it to the entry, keeping the old one as 'previous password'. Click the new-password input first; with confirm, it's typed again in the next field (Tab) too. Never make up or type a password yourself. Waits for the owner's approval.",
+        "Set a new password (a reset, or a new account) without seeing it: the vault makes a strong one, types it into the focused input and saves it to the entry, keeping the old one as 'previous password'. Click the new-password input first; with confirm, it's typed again in the next field (Tab) too. When the owner's request spells out the password they want, pass it as password and that one is used. Never make up or type a password yourself. Waits for the owner's approval.",
       input: input({
         name: str("The vault entry, from vault_list, or a new one, e.g. 'Delta login'."),
         username: optional(str("For a new account: the username or email it's for.")),
         confirm: optional(bool("Type it in the next field too, for a 'confirm password' box.")),
+        password: optional(str("Only the password the owner's own request spells out, exactly; leave it out otherwise.")),
         why: str("Shown to the owner, e.g. 'resetting the Delta password, which expired'."),
       }),
-      async run({ name, username, confirm, why }, { slot }) {
+      async run({ name, username, confirm, password: chosen, why }, { slot, asked }) {
         const entry = String(name);
         const saved = secret(db, entry);
-        const password = newPassword();
+        // A password the owner chose must be in what they asked: one from a page or an email would be known to whoever wrote it.
+        if (chosen !== undefined && !(String(chosen) && asked?.includes(String(chosen))))
+          return text("That password isn't in the owner's request, so it can't be used. Leave password out and the vault makes one.");
+        const password = chosen === undefined ? newPassword() : String(chosen);
         const question = (where: string) =>
-          `A task wants to set a new password for "${entry}" on ${where}, for ${String(why).slice(0, 200)}. biscotti makes it, types it and saves it to the vault; it's never texted. Is ${where} the right site?`;
+          `A task wants to set a new password for "${entry}" on ${where}, for ${String(why).slice(0, 200)}. ${chosen === undefined ? "biscotti makes it" : "It's the one you asked for; biscotti"} types it and saves it to the vault; it's never texted. Is ${where} the right site?`;
         return typeIn(slot, () => (confirm ? [password, password] : [password]), (where) => ctx.ask(question(where)), (into) => {
           const old = saved?.password;
           saveSecret(db, entry, { ...saved, ...(username ? { username: String(username) } : {}), ...(old ? { "previous password": old } : {}), password });

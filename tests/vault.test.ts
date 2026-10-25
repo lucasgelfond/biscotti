@@ -174,6 +174,31 @@ test.skipIf(!existsSync(CHROME))("sets a new password into the page and the vaul
   expect(said).not.toContain(saved.password);
 });
 
+test.skipIf(!existsSync(CHROME))("sets the password the owner's request spells out, and refuses one it doesn't", async () => {
+  const page = await form(`<input type="password" aria-label="New password" autofocus><input type="password" aria-label="Confirm password">`, 9346);
+  process.env.TASK_BROWSER = page.url;
+  const ctx = testContext({ ask: async () => true });
+  const { db } = ctx;
+  db.insert(vaultTable).values({ name: "Cloudpail", fields: ["email"], value: { email: "sam@example.com" } }).run();
+  const tools = await secureFill.tools!(ctx);
+  const asked = "I'm locked out of Cloudpail. Reset my password to tin-roof-rain-82.";
+  const said = async (password: string) =>
+    JSON.stringify(await tools.tasks!.call("vault_new_password", { name: "Cloudpail", why: "reset", confirm: true, password }, { slot: 1, asked }));
+
+  const injected = await said("from-an-email-99");
+  const before = db.select().from(vaultTable).all()[0].value;
+  await said("tin-roof-rain-82");
+  const typed = (await page.title()).split("|");
+  page.close();
+  delete process.env.TASK_BROWSER;
+  const saved = db.select().from(vaultTable).all()[0].value;
+
+  expect(injected).toContain("isn't in the owner's request");
+  expect(before.password).toBeUndefined();
+  expect(typed).toEqual(["tin-roof-rain-82", "tin-roof-rain-82"]);
+  expect(saved).toEqual({ email: "sam@example.com", password: "tin-roof-rain-82" });
+});
+
 test("never texts a saved secret, whoever wrote the text", async () => {
   const leaky: Plugin = {
     async start(ctx) {

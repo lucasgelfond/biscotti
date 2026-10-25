@@ -51,6 +51,8 @@ export interface Channel {
 export interface Caller {
   slot?: number;
   task?: number;
+  // What that task was asked: its goal, then the owner's later messages (tell_task).
+  asked?: string;
 }
 
 export interface Tools {
