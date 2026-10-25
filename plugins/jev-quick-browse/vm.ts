@@ -44,10 +44,22 @@ const vault: Vault = {
   fill: (name, fields, why) => tool("vault_fill", { name, fields, why }),
 };
 
-// The errand, as the plugin sent it: { goal, url? }.
+// The errand, as the plugin sent it: { goal, url?, values? } (values: text to type, by what it's for).
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-const { goal, url } = JSON.parse(input) as { goal: string; url?: string };
-const decide = async (state: object, questions: object, assets?: object) => JSON.parse(await tool("jev_decide", { state, questions, ...(assets && { assets }) }));
-const { report, outcome, steps } = await browse(goal, BROWSER, { decide, write, vault, log: console.error }, url).catch((err: Error) => ({ report: `Browsing failed: ${err.message}`, outcome: "error", steps: [] }));
-console.log(`${report} (${outcome}, ${steps.length} steps)`.replace(/\n/g, " "));
+const { goal, url, values } = JSON.parse(input) as { goal: string; url?: string; values?: Record<string, string> };
+// An answer is JSON; anything else is the error (a request too long for Jev, say), for the loop to act on.
+const decide = async (state: object, questions: object, assets?: object) => {
+  const said = await tool("jev_decide", { state, questions, ...(assets && { assets }) });
+  if (!said.trimStart().startsWith("{")) throw new Error(said.slice(0, 300));
+  return JSON.parse(said);
+};
+const { report, outcome, steps, requirements } = await browse(goal, BROWSER, { decide, write, vault, values, log: console.error }, url).catch((err: Error) => ({
+  report: `Browsing failed: ${err.message}`,
+  outcome: "error",
+  steps: [],
+  requirements: [] as { requirement: string; met: boolean }[],
+}));
+const unmet = requirements.filter((r) => !r.met).map((r) => r.requirement);
+const met = `${requirements.length - unmet.length}/${requirements.length} requirements met${unmet.length ? `; not met: ${unmet.join("; ")}` : ""}`;
+console.log(`${report} (${outcome}, ${steps.length} steps, ${met})`.replace(/\n/g, " "));

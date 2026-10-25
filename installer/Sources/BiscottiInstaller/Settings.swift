@@ -28,7 +28,7 @@ struct Settings: Equatable {
         (id: "exa", name: "Web search (Exa)"),
         (id: "google", name: "Gmail and Google Calendar"),
         (id: "github", name: "GitHub"),
-        (id: "discriminative-computer-use", name: "Fast browsing (TypeSafe Jev)"),
+        (id: "jev-quick-browse", name: "Fast browsing (TypeSafe Jev)"),
         (id: "mcp", name: "Other services (Notion, Linear… over MCP)"),
         (id: "artifacts", name: "Artifacts"),
         (id: "embedding", name: "Semantic memory"),
@@ -57,7 +57,7 @@ struct Settings: Equatable {
     func hasKeys(_ plugin: String) -> Bool {
         switch plugin {
         case "exa": !exaKey.isEmpty
-        case "discriminative-computer-use": !typesafeKey.isEmpty
+        case "jev-quick-browse": !typesafeKey.isEmpty
         case "google": !googleClientID.isEmpty && !googleClientSecret.isEmpty
         default: true
         }

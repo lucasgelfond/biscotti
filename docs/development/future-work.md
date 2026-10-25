@@ -4,7 +4,7 @@ Things decided or scoped but not built yet, roughly in order.
 
 ## Computer use
 
-- **Seat pairs on drawn seat maps.** `discriminative-computer-use` reads a seat map's legend colors from the page and
+- **Seat pairs on drawn seat maps.** `jev-quick-browse` reads a seat map's legend colors from the page and
   clicks one open seat on a canvas reliably; picking the seat beside it isn't reliable yet. Try boxing a block of open
   seats and clicking within it, or a vision model's coordinates checked against the order summary.
 - **Payment forms in iframes** (Stripe and similar): attach to child frames over DevTools so their fields are seen;
