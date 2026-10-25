@@ -14,7 +14,7 @@ import { restore, SLOTS } from "../../core/src/tasks.ts";
 import vault from "../../core/src/vault.ts";
 import { RUNNER } from "../../plugins/jev-quick-browse/index.ts";
 import { observer, otlp, tracerFor } from "../../plugins/phoenix/index.ts";
-import { everydayBenchTasks, type Task } from "./everydaybench.ts";
+import { everydayBenchLogins, everydayBenchTasks, type Task } from "./everydaybench.ts";
 import { read, report } from "./report.ts";
 import type { Observer } from "../../core/src/plugin.ts";
 
@@ -228,13 +228,28 @@ function write() {
 <div id="r"></div><script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script><script>r.innerHTML = marked.parse(${JSON.stringify(md).replace(/</g, "\\u003c")})</script>`,
   );
 }
+// The next task whose logins no running task has (the vault is shared), or none left; waits while all clash.
+const LOGINS = await everydayBenchLogins();
+const inUse = new Set<string>();
+async function next() {
+  while (queue.length) {
+    const i = queue.findIndex((t) => !(LOGINS[t] ?? []).some((l) => inUse.has(l)));
+    if (i >= 0) {
+      const [task] = queue.splice(i, 1);
+      for (const l of LOGINS[task!] ?? []) inUse.add(l);
+      return task;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 await Promise.all(
   SLOTS.map(async (slot) => {
-    for (let task = queue.shift(); task; task = queue.shift()) {
+    for (let task = await next(); task; task = await next()) {
       running.set(slot, { task, started: Date.now() });
       page();
       const result = await run(task, slot, GUIDANCE[guide]);
       running.delete(slot);
+      for (const l of LOGINS[task] ?? []) inUse.delete(l);
       const name = `${task.replaceAll("/", "__")}${process.env.CU_RUN ? `-r${process.env.CU_RUN}` : ""}`;
       if (result.screenshot) writeFileSync(`${dir}/${name}.png`, result.screenshot);
       writeFileSync(`${dir}/${name}.jsonl`, `${result.lines.join("\n")}\n`);

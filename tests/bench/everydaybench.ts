@@ -48,6 +48,14 @@ function saveKnown(db: Db, known: Record<string, string>) {
   for (const [site, fields] of Object.entries(bySite)) saveSecret(db, site[0]!.toUpperCase() + site.slice(1), fields);
 }
 
+// The vault entries a task's logins go in ("lumiscope_email" -> Lumiscope), by task id. The bench's tasks share one
+// vault, so two tasks with the same entry can't run at once: one's setup (or password reset) would overwrite the other's.
+export async function everydayBenchLogins(): Promise<Record<string, string[]>> {
+  const list = await control<{ id: string }[]>("/tasks");
+  const known = await Promise.all(list.map(({ id }) => control<{ known: Record<string, string> }>(`/tasks/${id}`)));
+  return Object.fromEntries(list.map(({ id }, i) => [id, [...new Set(Object.keys(known[i]!.known).map((k) => k.split("_")[0]!))]]));
+}
+
 // Every EverydayBench task, by id; a run of one starts a fresh world for it.
 export async function everydayBenchTasks(db: Db): Promise<Record<string, () => Promise<Task>>> {
   const list = await control<{ id: string }[]>("/tasks");
