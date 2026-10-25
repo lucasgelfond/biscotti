@@ -29,6 +29,7 @@ How to work:
 - If the site doesn't list what the goal asks for (a film not playing there, a product not sold), say so in the report right away rather than searching around for it.
 - Be quick: the requester is waiting on a text. Aim to finish in about 3 minutes, and keep going past that while you're making progress. If a site blocks you (a bot check, a login wall), stop and report what you found and what blocked you.
 - Before you finish, check the result itself against the goal: the confirmation on screen, the value in the field, every item the goal named. Not your own last action.
+- The requester may message you mid-task ("[The requester, mid-task] …"). Their latest message wins over the goal where they differ. First check what you've already done (a booking made, an order placed, a form sent): don't do it twice, and undo or change it if they ask. Then carry on toward what they want now, and say in your report what you did about each message.
 
 End with a short report of what you did and found, with the facts the requester needs (prices, times, confirmation numbers) and the URL of the page you ended on. Leave the relevant view on screen: the report and a screenshot of the final screen are all the requester sees.`;
 
@@ -259,6 +260,14 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
   if (Array.isArray(sites) && sites.length) await gateTool("save_lessons", { sites: sites.slice(0, 3) });
 }
 
+// What the requester said since the task started (the main agent's tell_task, held by the gate for this slot's VM), each
+// message once; none from a gate too old to hold them.
+async function told() {
+  const res = await fetch("http://gate/messages", { signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
+  const said = res?.ok ? await res.json().catch(() => []) : [];
+  return Array.isArray(said) ? said.map((m) => `[The requester, mid-task] ${m}`) : [];
+}
+
 function screenshot(socket) {
   try {
     execFileSync("scrot", ["-o", "/tmp/screen.png"], { env: { ...process.env, DISPLAY: ":1" } });
@@ -291,21 +300,51 @@ createServer({ allowHalfOpen: true }, (socket) => {
     const nudged = { done: 0, stuck: 0 };
     // Lessons from earlier tasks on the goal's sites; undefined without the lessons plugin, and then no reflecting.
     const lessons = base ? undefined : await gateTool("lessons_for", { goal: task.goal }).catch(() => undefined);
+    // The requester's messages reach pi as they come: while it works they steer its next step; while it's idle they
+    // start it again. Paused while a finished run is being checked and wrapped up (below).
+    let listening = true;
+    const said = [];
+    const deliver = (messages) =>
+      messages.forEach((message) => {
+        said.push(message);
+        send({ type: "prompt", message, streamingBehavior: "steer" });
+      });
+    // The goal as it stands: the requester's later messages change it, so checks of the work read them too.
+    const goalNow = () => (said.length ? `${task.goal}\n\nLater messages from the requester (the latest wins where they differ):\n${said.join("\n")}` : task.goal);
+    const pending = [];
+    const poll = setInterval(async () => {
+      if (!listening) return;
+      const messages = await told();
+      if (listening) deliver(messages);
+      else pending.push(...messages);
+    }, 3000);
+    socket.on("close", () => clearInterval(poll));
     const forward = async (line, record) => {
       if (record.type !== "response") socket.write(`${line}\n`);
       if (record.type === "message_end" && record.message?.role === "assistant") report = text(record.message) || report;
       steps.add(record);
       if (task.oversee && record.type === "turn_end" && ++turns % OVERSEE_EVERY === 0)
-        void oversee(task.goal, steps, nudged).then((nudge) => nudge && send({ type: "steer", message: nudge }), () => {});
+        void oversee(goalNow(), steps, nudged).then((nudge) => nudge && send({ type: "steer", message: nudge }), () => {});
       if (record.type !== "agent_settled") return;
+      // A message that came while the run was wrapping up starts it again, before anything is checked.
+      listening = false;
+      const late = [...pending.splice(0), ...(await told())];
+      if (late.length) {
+        listening = true;
+        return deliver(late);
+      }
       // Once, a fresh look at the final screen against the goal; if something's missing, the agent gets to fix it.
       if (!checked) {
         checked = true;
-        missing = await check(task.goal, report).catch(() => undefined);
-        if (missing) return send({ type: "prompt", message: `A check of the final screen against the goal found: ${missing}\nFix that if you can, or say why you can't, then end with your full report again, on the page that shows the result (e.g. the confirmation).` });
+        missing = await check(goalNow(), report).catch(() => undefined);
+        if (missing) {
+          listening = true;
+          return send({ type: "prompt", message: `A check of the final screen against the goal found: ${missing}\nFix that if you can, or say why you can't, then end with your full report again, on the page that shows the result (e.g. the confirmation).` });
+        }
       }
+      clearInterval(poll);
       listeners.delete(forward);
-      if (lessons !== undefined) await reflect(task.goal, String(steps), report, missing, lessons).catch(() => {});
+      if (lessons !== undefined) await reflect(goalNow(), String(steps), report, missing, lessons).catch(() => {});
       if (base) {
         try {
           const data = commits(base);

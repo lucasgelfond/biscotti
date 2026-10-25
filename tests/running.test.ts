@@ -10,7 +10,7 @@ import { localTools, text, type Caller } from "../core/src/plugin.ts";
 // before tasks.ts loads.
 process.env.TASK_IDLE_MS = "400";
 process.env.VM_SLOTS = "2";
-const { taskVms, taskTools } = await import("../core/src/tasks.ts");
+const { taskVms, taskTools, gatePool } = await import("../core/src/tasks.ts");
 
 // A task agent: "silent" says nothing, "wait <ms>" says nothing for that long and then reports, anything else is
 // reported at once.
@@ -81,6 +81,34 @@ test("starting a task names the ones still running, and the main agent can list 
   await until(() => reports.length === 2);
   expect(reports).toContain("The task failed: the task was stopped");
   expect(await said("running_tasks")).toBe("No tasks are running.");
+});
+
+test("tell_task passes the owner's message to that running task's VM, holds it for a queued one, and says when there's none", async () => {
+  const gate = createGate({ llm: { url: "http://127.0.0.1:9", key: "k" }, models: {}, send: async () => {} });
+  const servers = await Promise.all([1, 2].map((slot) => gate.listen("127.0.0.1", 0, { slot })));
+  const messages = (slot: number) => fetch(`http://127.0.0.1:${(servers[slot - 1]!.address() as AddressInfo).port}/messages`).then((r) => r.json());
+  const vms = gatePool(await pool(() => true), gate);
+  const reports: string[] = [];
+  const tools = localTools(taskTools(vms, (_goal, { report }) => reports.push(report)));
+  const said = async (name: string, args: Record<string, unknown> = {}) => ((await tools.call(name, args)).content[0] as { text: string }).text;
+
+  for (const goal of ["silent", "silent", "silent"]) await said("task", { goal });
+  await until(() => vms.running().filter((t) => t.slot).length === 2);
+  const second = vms.running().find((t) => t.id === 2)!.slot!;
+
+  expect(await said("tell_task", { id: 2, message: "make it 4 people at 8" })).toBe("Told #2. Its report will say what it did.");
+  expect(await messages(second)).toEqual(["make it 4 people at 8"]);
+  expect(await messages(second === 1 ? 2 : 1)).toEqual([]);
+  expect(await said("tell_task", { id: 3, message: "Friday instead" })).toBe("#3 is still waiting for a VM; it gets the message when it starts.");
+  expect(await said("tell_task", { id: 9, message: "never mind" })).toContain("No task #9 is running.");
+  // Task 1 stops; task 3 gets its slot and, with it, the message it was told while queued.
+  vms.stop(1);
+  await until(() => vms.running().find((t) => t.id === 3)?.slot !== undefined);
+  expect(await messages(vms.running().find((t) => t.id === 3)!.slot!)).toEqual(["Friday instead"]);
+  vms.stop(2);
+  vms.stop(3);
+  await until(() => reports.length === 3);
+  for (const s of servers) s.close();
 });
 
 test("the gate stamps a task VM's tool calls with its task, and knows the slot is mid-call", async () => {

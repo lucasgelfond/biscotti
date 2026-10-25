@@ -55,7 +55,8 @@ export function scrub(node: unknown, secrets: { label: string; value: string }[]
 
 export function createGate(opts: {
   // Any OpenAI-compatible API (AI Gateway, OpenRouter, OpenAI, a local server, …).
-  llm: { url: string; key: string };
+  // region: where the provider runs inference (Vercel AI Gateway's inferenceRegion, e.g. "us"); unset routes anywhere.
+  llm: { url: string; key: string; region?: string };
   // Model names callers may use (main, task, code) -> the provider's model ids.
   models: Record<string, string>;
   send: (text: string) => Promise<void>;
@@ -152,6 +153,8 @@ export function createGate(opts: {
     }
   }
 
+  // The owner's messages for a slot's running task (tell_task), until its VM asks for them.
+  const told = new Map<number, string[]>();
   // A task VM gets the task model, or the one its task was started with (a coding task), whatever model it names.
   const slotModels = new Map<number, string>();
   // The task each slot is running, for its tool calls' `Caller`.
@@ -166,7 +169,7 @@ export function createGate(opts: {
     const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
-      body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict) }),
+      body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict), ...(opts.llm.region && { providerOptions: { gateway: { inferenceRegion: { scope: "zone", geoRegion: opts.llm.region } } } }) }),
     });
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
     const chunks: Uint8Array[] = [];
@@ -194,6 +197,12 @@ export function createGate(opts: {
     const set = slot ? "tasks" : "main";
     if (peer && req.socket.remoteAddress?.replace(/^::ffff:/, "") !== peer) return void res.writeHead(403).end();
     if (set === "tasks" && !TASK_HOSTS.test(req.headers.host ?? "")) return void res.writeHead(403).end();
+    // A task VM asks for what the owner said since its task started, each message once.
+    if (slot && req.method === "GET" && req.url === "/messages") {
+      const said = told.get(slot) ?? [];
+      told.delete(slot);
+      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(said));
+    }
     (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot, task: slot && slotTasks.get(slot) })).catch((err) => {
       console.error(err);
       if (!res.headersSent) res.writeHead(502).end(String(err));
@@ -204,7 +213,14 @@ export function createGate(opts: {
     ask,
     answer,
     route: (slot: number, model?: string) => (model ? slotModels.set(slot, model) : slotModels.delete(slot)),
-    assign: (slot: number, task?: number) => (task ? slotTasks.set(slot, task) : slotTasks.delete(slot)),
+    // A new task in the slot (or none) starts with nothing told.
+    assign(slot: number, task?: number) {
+      told.delete(slot);
+      if (task) slotTasks.set(slot, task);
+      else slotTasks.delete(slot);
+    },
+    // Passes the owner's message to the slot's running task, with saved secrets scrubbed as everywhere else.
+    tell: (slot: number, message: string) => void told.set(slot, [...(told.get(slot) ?? []), scrub(message, opts.secrets?.() ?? []) as string]),
     // The slot's oldest tool call in progress, if any.
     busy: (slot: number) => calls.get(slot)?.[0],
     // The main agent's requests (the model, its tools), for a listener of the caller's choosing.
