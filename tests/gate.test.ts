@@ -75,6 +75,24 @@ test("replaces saved secrets in model calls before they leave for the provider",
   expect(sentUpstream).toBe("My password is [vault:Delta login.password] and my card is [vault:Visa.number].");
 });
 
+test("every model call carries the extra fields (the API's own options)", async () => {
+  const received: Record<string, unknown>[] = [];
+  const upstream = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c);
+    received.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const gate = createGate({ llm: { url: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, key: "k", extra: { providerOptions: { gateway: { only: ["deepinfra"] } } } }, models: { task: "m" }, send: async () => {} });
+  const server = await gate.listen("127.0.0.1", 0);
+  await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/llm/chat/completions`, { method: "POST", body: JSON.stringify({ model: "task", messages: [] }) });
+  server.close();
+  upstream.close();
+
+  expect(received[0]!.providerOptions).toEqual({ gateway: { only: ["deepinfra"] } });
+});
+
 test("asks the owner before a tool that needs a yes, and goes ahead on their yes", async () => {
   const biscotti = await boot([outbox]);
 

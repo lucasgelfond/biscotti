@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-type Result = {
+export type Result = {
   label?: string;
   model: string;
   guide?: string;
@@ -17,6 +17,7 @@ type Result = {
   promptTokens?: number;
   cachedTokens?: number;
   completionTokens?: number;
+  cost?: number;
   tools: Record<string, number>;
   report: string;
 };
@@ -34,7 +35,10 @@ const PRICES: Record<string, [number, number, number]> = {
   "holo4-35b-a3b": [0.3, 0.03, 2],
   "holo4-27b": [0.4, 0.04, 3],
 };
-const cost = (r: Result) => {
+// What a run cost: what the provider billed, where it said (that includes regional and peak-hour prices), else the list
+// prices above.
+export const cost = (r: Result) => {
+  if (r.cost !== undefined) return r.cost;
   const [input, cached, output] = PRICES[r.model] ?? [0, 0, 0];
   const hits = r.cachedTokens ?? 0;
   return (((r.promptTokens ?? 0) - hits) * input + hits * cached + (r.completionTokens ?? 0) * output) / 1e6;
