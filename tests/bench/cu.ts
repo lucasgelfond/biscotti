@@ -91,7 +91,7 @@ async function run(task: string, slot: number, guidance: string) {
     const goal = guidance ? `${t.goal}\n\n${guidance}` : t.goal;
     await new Promise<void>((resolve, reject) => {
       // CU_JEV: the errand goes to Jev's runner instead of pi.
-      const sent = process.env.CU_JEV ? { goal: JSON.stringify({ goal }), runner: RUNNER } : { goal, context: Number(process.env.CU_CONTEXT) || undefined, lean: Number(process.env.CU_LEAN) || undefined, oversee: Boolean(process.env.CU_OVERSEE) };
+      const sent = process.env.CU_JEV ? { goal: JSON.stringify({ goal }), runner: RUNNER } : { goal, context: Number(process.env.CU_CONTEXT) || undefined, lean: Number(process.env.CU_LEAN ?? 1) || undefined, oversee: Boolean(process.env.CU_OVERSEE) };
       const socket = connect({ host: `10.200.${slot}.2`, port: 4000 }, () => socket.end(JSON.stringify(sent)));
       socket.setTimeout(10 * 60_000, () => socket.destroy(new Error(`timed out; the VM's last event came at ${lastEvent}s`)));
       // A connection that died without a word errors out instead of waiting for the timeout.
@@ -134,11 +134,15 @@ async function run(task: string, slot: number, guidance: string) {
   // Jev's runner ends a run it didn't finish with this.
   const pass = !/goal not done/i.test(report) && Boolean(t && (await t.pass(report).catch(() => false)));
   const graded = t?.graded === undefined ? undefined : JSON.stringify(t.graded, null, 2);
-  return { task, pass, progress: t?.graded?.progress, ...(followups.length && { followups }), lastEvent, seconds, restoredMs: restored, turns, toolSeconds: toolMs / 1000, errors, tools, ...usage.get(slot), report, screenshot, lines, graded };
+  // Which parts of the grade (state, assertions, answer) and which checks passed, for slicing results later.
+  const checks = t?.graded && { parts: t.graded.parts, checks: (t.graded.assertions as { fn: string; pass: boolean }[]).map(({ fn, pass }) => ({ fn, pass })) };
+  return { task, pass, progress: t?.graded?.progress, ...checks, ...(followups.length && { followups }), startedAt: new Date(started).toISOString(), slots: SLOTS.length, lastEvent, seconds, restoredMs: restored, turns, toolSeconds: toolMs / 1000, errors, tools, ...usage.get(slot), report, screenshot, lines, graded };
 }
 
 const [model, guide = "none", ...only] = process.argv.slice(2);
-// CU_LLM_URL and CU_LLM_KEY: another provider for the task model (e.g. H Company's, for Holo).
+// CU_LLM_URL and CU_LLM_KEY: another provider for the task model (e.g. H Company's, for Holo). CU_LLM_EXTRA: the fields
+// every model call carries, as JSON, in place of LLM_EXTRA, e.g. to pin one of Vercel's providers:
+// {"providerOptions":{"gateway":{"caching":"auto","only":["deepinfra"]}}}.
 // CU_RPM: at most that many model calls a minute (a provider's rate limit, e.g. Holo's 10 on H Company's free tier),
 // through a local relay that spaces them out and tries again on a 429. Times then say little; tokens and passes still do.
 async function relay(target: string, rpm: number) {
@@ -161,9 +165,10 @@ async function relay(target: string, rpm: number) {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 const upstream = process.env.CU_LLM_URL || process.env.LLM_BASE_URL!;
-const gate = createGate({ llm: { url: process.env.CU_RPM ? await relay(upstream, Number(process.env.CU_RPM)) : upstream, key: process.env.CU_LLM_KEY || process.env.LLM_API_KEY!, region: process.env.CU_LLM_URL ? undefined : process.env.LLM_REGION || undefined }, models: { task: model }, send: async () => {} });
+const gate = createGate({ llm: { url: process.env.CU_RPM ? await relay(upstream, Number(process.env.CU_RPM)) : upstream, key: process.env.CU_LLM_KEY || process.env.LLM_API_KEY!, extra: JSON.parse(process.env.CU_LLM_EXTRA ?? ((!process.env.CU_LLM_URL && process.env.LLM_EXTRA) || "{}")) }, models: { task: model }, send: async () => {} });
 // Each run's model calls and tokens (a streamed reply reports its usage in its last chunk).
-const usage = new Map<number, { llmCalls: number; promptTokens: number; completionTokens: number; cachedTokens: number; toolCount?: number; toolChars?: number; systemChars?: number }>();
+// cost: what the provider billed, in dollars, where it says (Vercel's gateway does on every call; H Company's API doesn't).
+const usage = new Map<number, { llmCalls: number; promptTokens: number; completionTokens: number; cachedTokens: number; cost?: number; toolCount?: number; toolChars?: number; systemChars?: number }>();
 gate.observe({
   llm: ({ slot, request }) => ({ body }) => {
     const u = slot === undefined ? undefined : usage.get(slot);
@@ -177,6 +182,8 @@ gate.observe({
     u.promptTokens += Number([...body.matchAll(/"prompt_tokens":\s*(\d+)/g)].at(-1)?.[1] ?? 0);
     u.completionTokens += Number([...body.matchAll(/"completion_tokens":\s*(\d+)/g)].at(-1)?.[1] ?? 0);
     u.cachedTokens += Number([...body.matchAll(/"cached_tokens":\s*(\d+)/g)].at(-1)?.[1] ?? 0);
+    const billed = [...body.matchAll(/"cost":\s*([\d.eE+-]+)/g)].at(-1)?.[1];
+    if (billed) u.cost = (u.cost ?? 0) + Number(billed);
   },
 });
 // CU_PHOENIX: the gate's model and tool calls to Phoenix, a project per label, a fresh task trace per run.
@@ -190,12 +197,14 @@ const phoenix = process.env.CU_PHOENIX ? (() => {
   });
   return { start: (slot: number) => current.set(slot, observer(tracer)), flush: () => provider.forceFlush() };
 })() : undefined;
-// The vault (empty; CU_DB keeps the database across runs, e.g. for lessons), and plugins whose task tools the VMs get, e.g. CU_PLUGINS=secure-fill,vision,jev-quick-browse.
+// The vault (empty; CU_DB keeps the database across runs, e.g. for lessons), and plugins whose task tools the VMs get:
+// by default biscotti's own (vault fills, zoom and lessons), e.g. CU_PLUGINS=secure-fill,vision,lessons,jev-quick-browse for
+// quick_browse too. Tasks run lean (CU_LEAN=0 for the full context).
 const scratch = mkdtempSync(join(tmpdir(), "cu-"));
 // The owner says yes to whatever a task asks (a vault fill on a site): what is graded is what the task does with it.
 const ctx: Context = { db: openDb(process.env.CU_DB ?? `${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => true, deliver: async () => {}, send: async () => {}, task: async () => ({ report: "" }) };
 gate.add(await vault.tools!(ctx));
-for (const name of (process.env.CU_PLUGINS ?? "").split(",").filter(Boolean)) {
+for (const name of (process.env.CU_PLUGINS ?? "secure-fill,vision,lessons").split(",").filter(Boolean)) {
   const plugin: Plugin = (await import(`../../plugins/${name}/index.ts`)).default;
   if (plugin.tools) gate.add(await plugin.tools(ctx));
 }

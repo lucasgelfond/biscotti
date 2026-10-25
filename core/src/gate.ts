@@ -55,8 +55,8 @@ export function scrub(node: unknown, secrets: { label: string; value: string }[]
 
 export function createGate(opts: {
   // Any OpenAI-compatible API (AI Gateway, OpenRouter, OpenAI, a local server, …).
-  // region: where the provider runs inference (Vercel AI Gateway's inferenceRegion, e.g. "us"); unset routes anywhere.
-  llm: { url: string; key: string; region?: string };
+  // extra: fields every model call carries, for the API's own options (LLM_EXTRA, e.g. a gateway's caching or region).
+  llm: { url: string; key: string; extra?: Record<string, unknown> };
   // Model names callers may use (main, task, code) -> the provider's model ids.
   models: Record<string, string>;
   send: (text: string) => Promise<void>;
@@ -170,7 +170,7 @@ export function createGate(opts: {
     const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
-      body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict), ...(opts.llm.region && { providerOptions: { gateway: { inferenceRegion: { scope: "zone", geoRegion: opts.llm.region } } } }) }),
+      body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict), ...opts.llm.extra }),
     });
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
     const chunks: Uint8Array[] = [];
