@@ -10,6 +10,8 @@ import { BasicTracerProvider, BatchSpanProcessor, type SpanExporter } from "@ope
 
 // A task VM's calls are one trace until its slot has been quiet this long.
 const TASK_IDLE_MS = 2 * 60_000;
+// A message part kept in full up to this long (a page snapshot, a long tool result): its start and end otherwise.
+const PART_CHARS = 4_000;
 
 type Message = { role: string; content?: unknown; tool_calls?: ToolCall[]; tool_call_id?: string };
 type ToolCall = { id?: string; function?: { name?: string; arguments?: string } };
@@ -17,6 +19,9 @@ type ToolCall = { id?: string; function?: { name?: string; arguments?: string } 
 const json = (v: unknown) => JSON.stringify(v);
 const contentText = (content: unknown): string =>
   typeof content === "string" ? content : Array.isArray(content) ? content.map((p) => (p.type === "text" ? p.text : `[${p.type}]`)).join("\n") : "";
+const clip = (s: string) => (s.length > PART_CHARS ? `${s.slice(0, PART_CHARS - 500)}\n… (${s.length - PART_CHARS} characters left out) …\n${s.slice(-500)}` : s);
+// A message as a trace keeps it: text only, long parts clipped.
+const kept = (m: Message): Message => ({ ...m, content: clip(contentText(m.content)) });
 
 function messageAttributes(prefix: string, messages: Message[]): Attributes {
   const out: Attributes = {};
@@ -83,6 +88,10 @@ export function observer(tracer: Tracer): Observer {
   // The main agent's calls belong to its oldest open turn (a message mid-reply opens one that steers it); a task VM's
   // to its slot's task.
   const turns: Span[] = [];
+  // Each conversation's messages so far (the main agent's, or a slot's), so a model call's span keeps only what's new
+  // since its last call: a conversation grows by a few messages a call, and keeping all of it every time (with every
+  // tool's schema) made a trace store grow by gigabytes a day.
+  const conversations = new Map<string, { start: string; length: number }>();
   const tasks = new Map<number, { span: Span; pending: number; last: number; timer?: NodeJS.Timeout; goal?: boolean }>();
 
   function parentOf(slot?: number) {
@@ -131,6 +140,13 @@ export function observer(tracer: Tracer): Observer {
         task.span.setAttribute("input.value", contentText(messages.find((m) => m.role === "user")?.content));
         task.goal = true;
       }
+      // What's new since this conversation's last call; all of it on its first call, or once it was compacted.
+      const key = String(slot ?? "main");
+      const start = contentText(messages[0]?.content).slice(0, 200);
+      const before = conversations.get(key);
+      const earlier = before && before.start === start && messages.length >= before.length ? before.length : 0;
+      conversations.set(key, { start, length: messages.length });
+      const fresh = messages.slice(earlier).map(kept);
       const span = tracer.startSpan(
         `llm ${model}`,
         {
@@ -138,10 +154,11 @@ export function observer(tracer: Tracer): Observer {
             "openinference.span.kind": "LLM",
             "llm.model_name": model,
             "llm.invocation_parameters": json(params),
-            "input.value": json(messages),
+            "input.value": json(fresh),
             "input.mime_type": "application/json",
-            ...messageAttributes("llm.input_messages", messages),
-            ...Object.fromEntries(tools.map((t, i) => [`llm.tools.${i}.tool.json_schema`, json(t)])),
+            ...messageAttributes("llm.input_messages", fresh),
+            "biscotti.earlier_messages": earlier,
+            "biscotti.tools": tools.map((t) => (t.function as { name?: string } | undefined)?.name ?? "").join(", "),
             "gen_ai.operation.name": "chat",
             "gen_ai.request.model": model,
             ...(slot !== undefined && { "biscotti.slot": slot }),
@@ -156,8 +173,8 @@ export function observer(tracer: Tracer): Observer {
           const { message, usage } = completion(body);
           text = contentText(message.content);
           span.setAttributes({
-            "output.value": text || json(message.tool_calls ?? []),
-            ...messageAttributes("llm.output_messages", [message]),
+            "output.value": clip(text || json(message.tool_calls ?? [])),
+            ...messageAttributes("llm.output_messages", [kept(message)]),
             ...(usage && {
               "llm.token_count.prompt": usage.prompt_tokens,
               "llm.token_count.completion": usage.completion_tokens,
@@ -183,8 +200,8 @@ export function observer(tracer: Tracer): Observer {
           attributes: {
             "openinference.span.kind": "TOOL",
             "tool.name": name,
-            "tool.parameters": json(args),
-            "input.value": json(args),
+            "tool.parameters": clip(json(args)),
+            "input.value": clip(json(args)),
             "input.mime_type": "application/json",
             "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": name,
@@ -194,7 +211,7 @@ export function observer(tracer: Tracer): Observer {
         parentOf(slot),
       );
       return (result?: CallToolResult, error?: unknown) => {
-        if (result) span.setAttribute("output.value", result.content.map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join("\n"));
+        if (result) span.setAttribute("output.value", clip(contentText(result.content)));
         if (result?.isError) span.setStatus({ code: SpanStatusCode.ERROR });
         if (error) fail(span, error);
         span.end();
@@ -204,20 +221,25 @@ export function observer(tracer: Tracer): Observer {
   };
 }
 
-export function tracerFor(exporter: SpanExporter) {
+// `project` is the Phoenix project the traces land in.
+export function tracerFor(exporter: SpanExporter, project = "biscotti") {
   const provider = new BasicTracerProvider({
-    resource: resourceFromAttributes({ "service.name": "biscotti", "openinference.project.name": "biscotti" }),
-    // A model call carries the whole conversation, one attribute per message part.
+    resource: resourceFromAttributes({ "service.name": "biscotti", "openinference.project.name": project }),
+    // A model call carries what's new in its conversation, one attribute per message part (all of it at the start).
     spanLimits: { attributeCountLimit: 100_000 },
     spanProcessors: [new BatchSpanProcessor(exporter)],
   });
   return { tracer: provider.getTracer("biscotti"), provider };
 }
 
+// To OTEL_EXPORTER_OTLP_(TRACES_)ENDPOINT, or the Phoenix beside the gate.
+export function otlp() {
+  const env = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  return new OTLPTraceExporter(env ? {} : { url: "http://127.0.0.1:6006/v1/traces" });
+}
+
 export default {
   async observe() {
-    const env = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-    const exporter = new OTLPTraceExporter(env ? {} : { url: "http://127.0.0.1:6006/v1/traces" });
-    return observer(tracerFor(exporter).tracer);
+    return observer(tracerFor(otlp()).tracer);
   },
 } satisfies Plugin;

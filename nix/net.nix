@@ -30,6 +30,10 @@ let
       ip -n ${ns} addr replace 172.16.0.1/24 dev fc-task
       ip -n ${ns} link set fc-task up
       ip netns exec ${ns} sysctl -qw net.ipv4.ip_forward=1
+      # The host sends a task's goal and closes its side, so the task's stream back is a half-closed connection, which
+      # connection tracking forgets after a minute without a packet by default: the VM's NATed replies then go nowhere
+      # (a slow model call or page lost the rest of a task). Keep it for as long as a task can run.
+      ip netns exec ${ns} sysctl -qw net.netfilter.nf_conntrack_tcp_timeout_close_wait=7200 net.netfilter.nf_conntrack_tcp_timeout_fin_wait=7200
       # The VM's traffic leaves as the slot's address; the VM's gateway reaches the gate; the host reaches the VM's
       # task listener (4000), cua-spacesd (3211), noVNC (6901) and Chromium
       # DevTools (9223, for the vault to type into pages) at the slot's address.

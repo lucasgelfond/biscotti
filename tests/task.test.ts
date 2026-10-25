@@ -1,4 +1,7 @@
-import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import { createGate } from "../core/src/gate.ts";
 import { restore, SLOTS, taskVms } from "../core/src/tasks.ts";
@@ -55,4 +58,30 @@ test.skipIf(!onThePi)("keeps a VM restored ahead of time, so a short task finish
 
   expect(report.toLowerCase()).toContain("ready");
   expect(seconds).toBeLessThan(3);
+});
+
+// A repo with a function that has a bug and a test that shows it, as a git bundle.
+function buggyRepo() {
+  const dir = mkdtempSync(join(tmpdir(), "task-repo-"));
+  const git = (...args: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=test", "-c", "user.email=test@example.com", ...args]);
+  git("init", "-q", "-b", "main");
+  writeFileSync(`${dir}/greet.js`, 'export const greet = (name) => "Hello " + name;\n');
+  writeFileSync(`${dir}/test.js`, 'import { greet } from "./greet.js";\nif (greet("Ada") !== "Hello, Ada!") throw new Error(`got ${greet("Ada")}`);\nconsole.log("ok");\n');
+  writeFileSync(`${dir}/package.json`, '{ "type": "module", "scripts": { "test": "node test.js" } }\n');
+  git("add", "-A");
+  git("commit", "-qm", "greet");
+  git("bundle", "create", "-q", `${dir}.bundle`, "HEAD", "main");
+  return { dir, bundle: readFileSync(`${dir}.bundle`) };
+}
+
+test.skipIf(!onThePi)("fixes a bug in a repo it's given and returns the commits", { timeout: 600_000 }, async () => {
+  const repo = buggyRepo();
+  const goal = "greet() in greet.js should greet with a comma and an exclamation mark: greet('Ada') is 'Hello, Ada!'. Fix it, and check with npm test.";
+
+  const { bundle } = await vms!.run(goal, undefined, { repo: repo.bundle });
+
+  expect(bundle).toBeDefined();
+  writeFileSync(`${repo.dir}.out.bundle`, bundle!);
+  execFileSync("git", ["-C", repo.dir, "pull", "-q", "--ff-only", `${repo.dir}.out.bundle`, "HEAD"]);
+  expect(execFileSync("node", ["test.js"], { cwd: repo.dir, encoding: "utf8" })).toContain("ok");
 });

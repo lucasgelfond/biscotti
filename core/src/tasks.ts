@@ -154,10 +154,11 @@ export async function restore(vmDir: string, firecracker: string, slot: number, 
 
 
 // The goal (and a repo, as a git bundle) goes to pi in the VM, or to a plugin's own runner; its last assistant text is
-// the report, then a screenshot and the repo's new commits follow.
+// the report, then a screenshot and the repo's new commits follow. Pi runs lean (core/vm/task/lean.ts): the bench's
+// best setup with lessons, at a sixth of the tokens per call.
 function runPi(host: string, port: number, goal: string, { repo, runner, timeoutMs = TASK_TIMEOUT_MS }: TaskOptions, busy: () => boolean, stopped: AbortSignal) {
   return new Promise<TaskResult>((resolve, reject) => {
-    const socket = connect({ host, port }, () => socket.end(JSON.stringify({ goal, repo: repo?.toString("base64"), runner })));
+    const socket = connect({ host, port }, () => socket.end(JSON.stringify({ goal, repo: repo?.toString("base64"), runner, lean: 1 })));
     const idleMs = Math.min(IDLE_MS, timeoutMs);
     let heard = Date.now();
     const idle = setInterval(() => {
