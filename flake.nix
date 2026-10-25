@@ -12,6 +12,9 @@
     # Pinned to a commit at least a week old; nixpkgs follows it for binary-cache hits.
     nixos-raspberrypi.url = "github:nvmd/nixos-raspberrypi/fa1e8ce6fa2acc637e0ef58f0f9847fb8502c8d1";
     nixpkgs.follows = "nixos-raspberrypi/nixpkgs";
+    # Tailscale only, from nixos-unstable: 26.05 still has 1.98.10, and TS-2026-013 is fixed in 1.104.2. A security fix,
+    # so younger than a week (the channel's commit of 2026-10-23); drop it once 26.05 has 1.104.2.
+    nixpkgs-tailscale.url = "github:NixOS/nixpkgs/3ec636362e1816bc2f0888fa0fa2c69f1bc9e504";
   };
 
   outputs = { self, nixpkgs, nixos-raspberrypi, ... }@inputs:
