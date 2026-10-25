@@ -57,7 +57,7 @@ COPY task/package.json task/package-lock.json /opt/pi/
 RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /opt/pi/node_modules/.bin/playwright-mcp /usr/local/bin/
 COPY task/biscotti-task task/biscotti-start /usr/local/bin/
 COPY task/models.json task/mcp.json /home/cua/.pi/agent/
-COPY task/reload.ts /home/cua/.pi/agent/extensions/
+COPY task/reload.ts task/lean.ts /home/cua/.pi/agent/extensions/
 COPY biscotti.html /opt/noVNC/
 
 # Wallpaper: "biscotti" by Geertje Caliguire on Unsplash (Unsplash License), fetched at a pinned size and checksum.

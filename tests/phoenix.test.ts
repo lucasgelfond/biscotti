@@ -95,3 +95,24 @@ test.skipIf(!process.env.PHOENIX_URL)("Phoenix takes the spans, under the biscot
   };
   await expect.poll(named, { timeout: 10_000 }).toBe("llm big-model");
 });
+
+test("keeps only what's new in a conversation since its last model call, and tools by name", async () => {
+  const { task, spans } = await tracedGate();
+  const call = (messages: { role: string; content: string }[]) =>
+    fetch(`${task}/llm/chat/completions`, {
+      method: "POST",
+      body: JSON.stringify({ model: "task", stream: true, messages, tools: [{ type: "function", function: { name: "browser_click", parameters: { type: "object" } } }] }),
+    }).then((r) => r.text());
+  const first = [{ role: "system", content: "You are a task agent." }, { role: "user", content: "Find showtimes" }];
+  await call(first);
+  await call([...first, { role: "assistant", content: "Opening the site." }, { role: "tool", content: `page ${"x".repeat(10_000)}` }]);
+
+  const [a, b] = (await spans()).filter((s) => s.name === "llm small-model");
+  expect(a.attributes["llm.input_messages.1.message.content"]).toBe("Find showtimes");
+  expect(b.attributes["biscotti.earlier_messages"]).toBe(2);
+  expect(b.attributes["llm.input_messages.0.message.content"]).toBe("Opening the site.");
+  expect(String(b.attributes["llm.input_messages.1.message.content"]).length).toBeLessThan(4_200);
+  expect(b.attributes["llm.input_messages.2.message.content"]).toBeUndefined();
+  expect(b.attributes["biscotti.tools"]).toBe("browser_click");
+  expect(Object.keys(b.attributes).some((k) => k.startsWith("llm.tools."))).toBe(false);
+});

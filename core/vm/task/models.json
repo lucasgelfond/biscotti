@@ -15,6 +15,17 @@
           ],
           "contextWindow": 200000,
           "maxTokens": 32768
+        },
+        {
+          "id": "task-small",
+          "name": "Task model with a small context (chosen by the host)",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 65536,
+          "maxTokens": 8192
         }
       ]
     }
