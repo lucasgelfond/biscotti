@@ -336,14 +336,17 @@ struct InstallerView: View {
             Text("Because iMessage has no native API, biscotti texts you through Photon. You'll need to set up a Photon Spectrum project and get the keys.")
             serviceButtons("photon")
             Form {
-                field("Paste from Photon", $photonPaste, prompt: "both keys, as Photon copies them")
+                // Multiline: a one-line field keeps only the first of Photon's two lines.
+                field("Paste both lines from Photon's .env box", $photonPaste, multiline: true, prompt: "SPECTRUM_PROJECT_ID=…\nSPECTRUM_PROJECT_SECRET=…")
                     .onChange(of: photonPaste) {
                         guard $1.contains("SPECTRUM_PROJECT_") else { return }
                         settings.loadPhoton($1)
                         photonPaste = ""
                     }
-                field("Photon project ID", $settings.photonID)
-                field("Photon project secret", $settings.photonSecret, secure: true)
+                Section("Or enter them one at a time") {
+                    field("Photon project ID", $settings.photonID)
+                    field("Photon project secret", $settings.photonSecret, secure: true)
+                }
             }
             .settingsForm()
             .onChange(of: settings.photonID) { if $1.contains("SPECTRUM_PROJECT_") { settings.loadPhoton($1) } }
@@ -776,7 +779,7 @@ func field(_ label: String, _ text: Binding<String>, secure: Bool = false, multi
         Text(label).font(.callout).foregroundStyle(.secondary)
         Group {
             if secure {
-                SecureField("", text: text, prompt: Text(prompt))
+                SecretField(text: text, prompt: prompt)
             } else if multiline {
                 TextField("", text: text, prompt: Text(prompt), axis: .vertical).lineLimit(3...6).font(.body.monospaced())
             } else {
@@ -786,6 +789,22 @@ func field(_ label: String, _ text: Binding<String>, secure: Bool = false, multi
         .textFieldStyle(.plain)
         .labelsHidden()
         .overlay(alignment: .leading) { if label == caretField { caret(after: text.wrappedValue, secure: secure) } }
+    }
+}
+
+/// A secret that can be shown, to check what was typed or pasted.
+private struct SecretField: View {
+    @Binding var text: String
+    let prompt: String
+    @State private var shown = false
+
+    var body: some View {
+        HStack {
+            if shown { TextField("", text: $text, prompt: Text(prompt)) } else { SecureField("", text: $text, prompt: Text(prompt)) }
+            Button { shown.toggle() } label: { Image(systemName: shown ? "eye.slash" : "eye") }
+                .buttonStyle(.borderless)
+                .help(shown ? "Hide" : "Show")
+        }
     }
 }
 
