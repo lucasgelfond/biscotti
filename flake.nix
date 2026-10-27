@@ -20,8 +20,7 @@
   outputs = { self, nixpkgs, nixos-raspberrypi, ... }@inputs:
   let
     version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
-    # Task VMs: how many run at once, and each one's memory (8 GB machines: room for a browser with many tabs).
-    specialArgs = inputs // { inherit version; vms = { slots = 2; memMiB = 2560; }; };
+    specialArgs = inputs // { inherit version; vms = import ./nix/vms.nix; };
   in {
     nixosConfigurations = {
       pi5 = nixos-raspberrypi.lib.nixosSystem {
