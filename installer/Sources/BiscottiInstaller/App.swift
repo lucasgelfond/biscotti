@@ -96,6 +96,7 @@ struct InstallerView: View {
     @State private var importTarget = Import.image
     @State private var pasting = false
     @State private var pasted = ""
+    @State private var photonPaste = ""
     @State private var copied: String?
     @State private var confirming = false
     @State private var busy = false
@@ -335,7 +336,13 @@ struct InstallerView: View {
             Text("Because iMessage has no native API, biscotti texts you through Photon. You'll need to set up a Photon Spectrum project and get the keys.")
             serviceButtons("photon")
             Form {
-                field("Photon project ID", $settings.photonID, prompt: "or paste the .env lines from Photon")
+                field("Paste from Photon", $photonPaste, prompt: "both keys, as Photon copies them")
+                    .onChange(of: photonPaste) {
+                        guard $1.contains("SPECTRUM_PROJECT_") else { return }
+                        settings.loadPhoton($1)
+                        photonPaste = ""
+                    }
+                field("Photon project ID", $settings.photonID)
                 field("Photon project secret", $settings.photonSecret, secure: true)
             }
             .settingsForm()
