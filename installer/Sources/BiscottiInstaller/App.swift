@@ -96,7 +96,7 @@ struct InstallerView: View {
     @State private var importTarget = Import.image
     @State private var pasting = false
     @State private var pasted = ""
-    @State private var photonPaste = ""
+    @State private var photonPasteFailed = false
     @State private var copied: String?
     @State private var confirming = false
     @State private var busy = false
@@ -335,14 +335,17 @@ struct InstallerView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Because iMessage has no native API, biscotti texts you through Photon. You'll need to set up a Photon Spectrum project and get the keys.")
             serviceButtons("photon")
+            // Read from the clipboard itself: pasting two lines into a field depends on focus and keeps only the first.
+            HStack {
+                Button("Paste from Photon") {
+                    let copied = NSPasteboard.general.string(forType: .string) ?? ""
+                    photonPasteFailed = !copied.contains("SPECTRUM_PROJECT_")
+                    settings.loadPhoton(copied)
+                }
+                Text(photonPasteFailed ? "The clipboard has no SPECTRUM_PROJECT_ lines. Copy Photon's .env box first." : "Copy Photon's .env box, then click this to fill both keys.")
+                    .font(.callout).foregroundStyle(photonPasteFailed ? .red : .secondary)
+            }
             Form {
-                // Multiline: a one-line field keeps only the first of Photon's two lines.
-                field("Paste both lines from Photon's .env box", $photonPaste, multiline: true, prompt: "SPECTRUM_PROJECT_ID=…\nSPECTRUM_PROJECT_SECRET=…")
-                    .onChange(of: photonPaste) {
-                        guard $1.contains("SPECTRUM_PROJECT_") else { return }
-                        settings.loadPhoton($1)
-                        photonPaste = ""
-                    }
                 Section("Or enter them one at a time") {
                     field("Photon project ID", $settings.photonID)
                     field("Photon project secret", $settings.photonSecret, secure: true)
