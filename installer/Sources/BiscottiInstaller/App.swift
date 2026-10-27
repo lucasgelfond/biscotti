@@ -96,6 +96,7 @@ struct InstallerView: View {
     @State private var importTarget = Import.image
     @State private var pasting = false
     @State private var pasted = ""
+    @State private var photonPasteFailed = false
     @State private var copied: String?
     @State private var confirming = false
     @State private var busy = false
@@ -334,9 +335,21 @@ struct InstallerView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Because iMessage has no native API, biscotti texts you through Photon. You'll need to set up a Photon Spectrum project and get the keys.")
             serviceButtons("photon")
+            // Read from the clipboard itself: pasting two lines into a field depends on focus and keeps only the first.
+            HStack {
+                Button("Paste from Photon") {
+                    let copied = NSPasteboard.general.string(forType: .string) ?? ""
+                    photonPasteFailed = !copied.contains("SPECTRUM_PROJECT_")
+                    settings.loadPhoton(copied)
+                }
+                Text(photonPasteFailed ? "The clipboard has no SPECTRUM_PROJECT_ lines. Copy Photon's .env box first." : "Copy Photon's .env box, then click this to fill both keys.")
+                    .font(.callout).foregroundStyle(photonPasteFailed ? .red : .secondary)
+            }
             Form {
-                field("Photon project ID", $settings.photonID, prompt: "or paste the .env lines from Photon")
-                field("Photon project secret", $settings.photonSecret, secure: true)
+                Section("Or enter them one at a time") {
+                    field("Photon project ID", $settings.photonID)
+                    field("Photon project secret", $settings.photonSecret, secure: true)
+                }
             }
             .settingsForm()
             .onChange(of: settings.photonID) { if $1.contains("SPECTRUM_PROJECT_") { settings.loadPhoton($1) } }
@@ -769,7 +782,7 @@ func field(_ label: String, _ text: Binding<String>, secure: Bool = false, multi
         Text(label).font(.callout).foregroundStyle(.secondary)
         Group {
             if secure {
-                SecureField("", text: text, prompt: Text(prompt))
+                SecretField(text: text, prompt: prompt)
             } else if multiline {
                 TextField("", text: text, prompt: Text(prompt), axis: .vertical).lineLimit(3...6).font(.body.monospaced())
             } else {
@@ -779,6 +792,22 @@ func field(_ label: String, _ text: Binding<String>, secure: Bool = false, multi
         .textFieldStyle(.plain)
         .labelsHidden()
         .overlay(alignment: .leading) { if label == caretField { caret(after: text.wrappedValue, secure: secure) } }
+    }
+}
+
+/// A secret that can be shown, to check what was typed or pasted.
+private struct SecretField: View {
+    @Binding var text: String
+    let prompt: String
+    @State private var shown = false
+
+    var body: some View {
+        HStack {
+            if shown { TextField("", text: $text, prompt: Text(prompt)) } else { SecureField("", text: $text, prompt: Text(prompt)) }
+            Button { shown.toggle() } label: { Image(systemName: shown ? "eye.slash" : "eye") }
+                .buttonStyle(.borderless)
+                .help(shown ? "Hide" : "Show")
+        }
     }
 }
 
