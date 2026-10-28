@@ -40,6 +40,13 @@ or seat selection. Give it one concrete sub-goal at a time, with any text it sho
 check the page yourself (a snapshot) before going on.
 Do judgment calls, reading results, filling forms with given details and anything consequential (ordering, sending)
 yourself.`,
+  // Minted site integrations (Pomerado) trusted as the site's own answer, the browser only where none covers a step.
+  pom: `Site integrations: tools named after a site (seatwell_search, seatwell_book, tablenook_search, ...) run that
+site's own pages directly and answer in seconds. Each works only on the site in its name. Before you open a site in the
+browser, see whether one of them covers the step; if one does, use it instead of the browser. Their answers are the
+site's own: trust them and go on, without checking them in the browser. If one says a time or table isn't available,
+that is the site's answer. Pass \`run\`, the everydaybench_run value in the start address. Use the browser only for
+sites and steps no integration covers (another site, email, anything the integrations don't do).`,
   shots: `How to work the desktop:
 - Take a screenshot first and after every action that changes the page, and look at it before deciding the next step. Trust the screenshot over your assumptions.
 - For web pages, prefer reading the page's text or accessibility tree to find elements, then click them; fall back to coordinates from the latest screenshot.
