@@ -1,6 +1,4 @@
-# Compose apps (apps.nix) in a VM: one placed app comes up at boot in the apps' slice, again after Docker restarts, and
-# goes down when stopped; one that mounts biscotti's settings never starts.
-# Run: nix build .#checks.aarch64-linux.apps
+# VM test for apps.nix. Run: nix build .#checks.aarch64-linux.apps
 { pkgs, ... }:
 let
   image = pkgs.dockerTools.buildImage {

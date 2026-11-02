@@ -1,5 +1,4 @@
-# What in an app's compose config (`docker compose config --format json`) reaches past the app's own directory, $dir:
-# one line each, nothing when it's fine. A guard against mistakes, not a sandbox: whoever can write $dir is root.
+# Prints each part of an app's compose config that reaches outside $dir. Catches mistakes; not a sandbox.
 def inside: . == $dir or startswith($dir + "/");
 def file: if type == "string" then . else .path end;
 def device: if type == "string" then split(":")[0] else .source end;

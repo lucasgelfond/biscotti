@@ -1,6 +1,4 @@
-# Compose apps the owner places on this machine, one directory each: /var/lib/biscotti-apps/<name>/compose.yaml, with
-# its .env beside it. Each runs as its own Docker project (app-<name>) with its own network, can't mount anything
-# outside its directory (apps-check.jq), and all of them share one budget below biscotti's. With no apps, nothing runs.
+# Runs each compose app in /var/lib/biscotti-apps/<name>/. Does nothing when there are none.
 { pkgs, ... }:
 let
   dir = "/var/lib/biscotti-apps";
@@ -9,14 +7,13 @@ in
 {
   systemd.tmpfiles.rules = [ "d ${dir} 0700 root root -" ];
 
-  # Every app's containers together: what a Pi 5 has left beside biscotti and its task VMs, and biscotti first for CPU.
+  # Shared limit for all apps.
   systemd.slices.biscotti-apps.sliceConfig = {
     MemoryMax = "2G";
     CPUWeight = 50;
   };
 
-  # Up while active. A biscotti upgrade or rebuild leaves running apps alone; `systemctl restart biscotti-app@<name>`
-  # applies an app's changed compose.yaml, `systemctl stop` takes it down (its volumes stay).
+  # Not restarted by upgrades. Restart to apply changes; stop keeps volumes.
   systemd.services."biscotti-app@" = {
     description = "biscotti app %i";
     after = [ "docker.service" "network-online.target" ];
@@ -45,7 +42,7 @@ in
     '';
   };
 
-  # Every app placed here, whenever Docker starts: at boot, and again after Docker restarts or comes up late.
+  # Starts every app whenever Docker starts.
   systemd.services.biscotti-apps = {
     description = "biscotti apps";
     after = [ "docker.service" ];

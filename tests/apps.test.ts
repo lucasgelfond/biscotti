@@ -2,8 +2,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
-// The check biscotti-app@ runs on an app's compose config (nix/apps.nix), on configs shaped as `docker compose config
-// --no-env-resolution --format json` prints them.
+// Tests nix/apps-check.jq against `docker compose config --format json` output.
 
 const dir = "/var/lib/biscotti-apps/mail";
 const check = fileURLToPath(new URL("../nix/apps-check.jq", import.meta.url));
