@@ -46,6 +46,7 @@
     };
 
     checks.aarch64-linux.pi5-card = nixpkgs.legacyPackages.aarch64-linux.testers.runNixOSTest (import ./nix/tests/pi5-card.nix { specialArgs = specialArgs // { target = "pi5"; }; });
+    checks.aarch64-linux.apps = nixpkgs.legacyPackages.aarch64-linux.testers.runNixOSTest ./nix/tests/apps.nix;
 
     packages.aarch64-linux.pi5-sd-image = self.nixosConfigurations.pi5.config.system.build.sdImage;
     packages.aarch64-linux.mac-image = self.nixosConfigurations.mac.config.system.build.images.qemu-efi;
