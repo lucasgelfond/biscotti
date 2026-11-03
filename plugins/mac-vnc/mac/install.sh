@@ -12,7 +12,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 TS=$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)
 
 [ -x "$TS" ] || { echo "Install Tailscale and join the tailnet first: https://tailscale.com/download/mac" >&2; exit 1; }
-TS_IP=$("$TS" ip -4) || { echo "Tailscale isn't connected; sign in and run this again." >&2; exit 1; }
+"$TS" ip -4 >/dev/null || { echo "Tailscale isn't connected; sign in and run this again." >&2; exit 1; }
 mkdir -p "$HOME_DIR"
 
 # websockify, in a venv of its own (Homebrew's Python refuses pip --user).
@@ -30,7 +30,7 @@ if [ ! -f "$NOVNC/vnc.html" ]; then
   rm "$HOME_DIR/novnc.tgz"
 fi
 
-# websockify on the tailnet address only (nothing on the LAN or the internet), to Screen Sharing on localhost:5900.
+# websockify on localhost only, to Screen Sharing on localhost:5900; Tailscale exposes it to the tailnet (below).
 mkdir -p "$HOME/Library/LaunchAgents"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -42,7 +42,7 @@ cat > "$PLIST" <<EOF
   <array>
     <string>$HOME_DIR/venv/bin/websockify</string>
     <string>--web</string><string>$NOVNC</string>
-    <string>$TS_IP:6080</string>
+    <string>127.0.0.1:6080</string>
     <string>localhost:5900</string>
   </array>
   <key>RunAtLoad</key><true/>
@@ -57,9 +57,15 @@ launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 while launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; do sleep 0.2; done
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
+# For biscotti (plain TCP, as the plugin proxies it) and for a browser on the tailnet: noVNC needs HTTPS to log in to
+# Screen Sharing (WebCrypto only exists on secure pages).
+"$TS" serve --bg --tcp=6080 tcp://127.0.0.1:6080 >/dev/null
+"$TS" serve --bg --https=6443 http://127.0.0.1:6080 >/dev/null
+HOST=$("$TS" status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
+
 cat <<EOF
 
-Done: websockify is serving noVNC on $TS_IP:6080 (launchd job $LABEL).
+Done: noVNC is on the tailnet at https://$HOST:6443/vnc.html?autoconnect=1&resize=remote (launchd job $LABEL).
 
 Enable by hand, in System Settings:
   1. General > Sharing > Screen Sharing (or Remote Management): on.
@@ -69,5 +75,5 @@ To keep the Mac reachable, consider:
   sudo pmset -a sleep 0 disksleep 0 womp 1
   caffeinate -dimsu   # while you need it, instead
 
-Set on biscotti: MAC_VNC_HOST=$("$TS" status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
+Set on biscotti: MAC_VNC_HOST=$HOST
 EOF
