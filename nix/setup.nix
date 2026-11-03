@@ -84,6 +84,7 @@
       tailscale serve --bg --https=9443 http://127.0.0.1:4791
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
       if has mcp; then tailscale serve --bg --https=9443 --set-path=/mcp-oauth http://127.0.0.1:4793; fi
+      if has mac-vnc; then tailscale serve --bg --https=9443 --set-path=/mac http://127.0.0.1:4794; fi
       if has artifacts; then tailscale funnel --bg --https=443 http://127.0.0.1:8082; fi
       if has phoenix; then tailscale serve --bg --https=6006 http://127.0.0.1:6006; fi
 

@@ -146,6 +146,7 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
 
 // A vault entry's values, and saving one, for plugins that keep keys there or type them in.
 export { secrets } from "./vault.ts";
+export { previewPng } from "./preview.ts";
 export const secret = (db: Db, name: string) => db.select().from(vault).where(eq(vault.name, name)).get()?.value;
 export function saveSecret(db: Db, name: string, value: Record<string, string>) {
   const row = { name, fields: Object.keys(value), value };
@@ -171,6 +172,7 @@ input{display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:8px;
 input:focus{outline:2px solid #2400ff;outline-offset:-1px}
 button{font:inherit;padding:6px 14px;border:1px solid #000;background:#fff;color:#000;cursor:pointer}
 button:hover{background:#000;color:#fff}`;
+export const PAGE_ART_TEXT = ART;
 export const PAGE_ART = `<pre aria-hidden="true">${ART}</pre>`;
 export const sendPage = (res: ServerResponse, title: string, body: string, status = 200) =>
   void res.writeHead(status, { "Content-Type": "text/html; charset=utf-8" }).end(htmlPage(title, body));

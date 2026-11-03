@@ -1,14 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { escapeHtml, input, localTools, PAGE_ART, PAGE_STYLE, str, text, type Plugin } from "@biscotti/core";
+import { escapeHtml, input, localTools, PAGE_ART, PAGE_ART_TEXT, PAGE_STYLE, previewPng, str, text, type Plugin } from "@biscotti/core";
 
 // Pages the agent texts as links. Public (Funnel) under unguessable names, so iMessage can fetch the preview tags.
 
 const PORT = 8082;
-// The biscotti photo by Geertje Caliguire on Unsplash.
-const PREVIEW_IMAGE = "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=80&w=1200&h=630&fit=crop";
-const NAME = /^\/([0-9a-f]{24}\.html|preview\.jpg)$/;
+const NAME = /^\/([0-9a-f]{24}\.html|preview\.png)$/;
 
 // biscotti's look under the page's own CSS: plain HTML (headings, tables, lists) comes out styled, and a page can
 // still restyle anything.
@@ -17,7 +15,7 @@ ${PAGE_STYLE}
 body{max-width:720px;margin:0 auto;padding:40px 16px 64px;box-sizing:border-box}
 h2,h3{font-size:15px;font-weight:600;margin:32px 0 12px}
 table{border-collapse:collapse;display:block;overflow-x:auto;margin:0 0 24px}
-th,td{border:1px solid #000;padding:6px 10px;text-align:left;vertical-align:top}
+th,td{border:1px solid #000;padding:10px 14px;text-align:left;vertical-align:top}
 th{font-weight:600}
 ul,ol{padding-left:20px}
 pre{font-size:14px;line-height:1.35}
@@ -39,11 +37,8 @@ into a card, so keep the rest of the reply to a line or two.`,
     const dir = `${ctx.dir}/pages`;
     const baseUrl = `https://${ctx.env("TAILNET_HOST")}`;
     mkdirSync(dir, { recursive: true });
-    if (!existsSync(`${dir}/preview.jpg`))
-      void fetch(PREVIEW_IMAGE)
-        .then((r) => r.arrayBuffer())
-        .then((b) => writeFileSync(`${dir}/preview.jpg`, Buffer.from(b)))
-        .catch(() => {});
+    // The link card's image: biscotti's ASCII art.
+    writeFileSync(`${dir}/preview.png`, previewPng(PAGE_ART_TEXT));
 
     return localTools([
       {
@@ -62,7 +57,7 @@ into a card, so keep the rest of the reply to a line or two.`,
             `<title>${escapeHtml(title)}</title>`,
             `<meta property="og:title" content="${escapeHtml(title)}">`,
             `<meta property="og:description" content="${escapeHtml(summary)}">`,
-            `<meta property="og:image" content="${baseUrl}/preview.jpg">`,
+            `<meta property="og:image" content="${baseUrl}/preview.png">`,
             `<meta property="og:type" content="website">`,
             `<meta name="viewport" content="width=device-width, initial-scale=1">`,
             LOOK,
@@ -84,7 +79,7 @@ into a card, so keep the rest of the reply to a line or two.`,
       // Public pages on the owner's hostname: sandboxed (no access to anything else on it), kept out of search, and
       // self-contained: a page can't load or send anything, so one written from a poisoned web page can't phone home.
       res.writeHead(200, {
-        "Content-Type": name.endsWith(".html") ? "text/html; charset=utf-8" : "image/jpeg",
+        "Content-Type": name.endsWith(".html") ? "text/html; charset=utf-8" : "image/png",
         "Content-Security-Policy": `sandbox allow-scripts allow-popups; ${SELF_CONTAINED}`,
         "X-Robots-Tag": "noindex",
       });

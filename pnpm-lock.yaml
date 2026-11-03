@@ -69,12 +69,6 @@ importers:
         specifier: 12.10.1
         version: 12.10.1(@spectrum-ts/core@12.10.1(typescript@7.0.2))(typescript@7.0.2)
 
-  plugins/jev-quick-browse:
-    dependencies:
-      '@biscotti/core':
-        specifier: workspace:*
-        version: link:../../core
-
   plugins/embedding:
     dependencies:
       '@biscotti/core':
@@ -105,6 +99,12 @@ importers:
         specifier: 0.45.4
         version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
 
+  plugins/jev-quick-browse:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+
   plugins/lessons:
     dependencies:
       '@biscotti/core':
@@ -113,6 +113,12 @@ importers:
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
+
+  plugins/mac-vnc:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
 
   plugins/mcp:
     dependencies:
