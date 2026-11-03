@@ -10,12 +10,13 @@ VNC session (noVNC), good for two hours.
    Accessibility).
 3. In biscotti's `.env`, set `MAC_VNC_HOST` to the hostname the script printed, and add `mac-vnc` to `biscotti.json`.
 
-Then ask biscotti for your Mac.
+Then ask biscotti for your Mac. Without biscotti, open the noVNC link `install.sh` prints from any device on the
+tailnet (it has to be the HTTPS one: noVNC can't log in to Screen Sharing from a plain-HTTP page).
 
 ## Why this is safe
 
 - VNC never leaves the tailnet. The session page is `https://<biscotti>:9443/mac/<id>` (tailscale serve, not Funnel),
-  and the Mac's websockify listens only on its Tailscale address.
+  and the Mac's websockify listens only on localhost, reachable from the tailnet through `tailscale serve`.
 - Each link has a random 24-hex id and expires after two hours. Anything else is a 404.
 - The Mac opens no public port. macOS Screen Sharing still asks for your Mac's login.
 - biscotti proxies only to `MAC_VNC_HOST`.
