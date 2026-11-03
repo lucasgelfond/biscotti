@@ -88,6 +88,8 @@ RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> 
     # TigerVNC 1.15 moved ~/.vnc here; the link keeps it from moving the folder (which fails on overlay filesystems).
     ln -s .config/tigervnc $HOME/.vnc && \
     chown -R cua:cua $HOME && rm -rf /tmp/cua && \
+    # The task agent runs as cua (uid 1000); a runner that installs into /opt/pi would fail EPERM on root's files.
+    chown -R cua:cua /opt/pi && \
     # Replace Cua's fixed startup waits with readiness polls.
     sed -i 's|^sleep 5$|until (exec 3<>/dev/tcp/127.0.0.1/5901) 2>/dev/null; do sleep 0.1; done|' /usr/local/bin/start-novnc.sh && \
     sed -i 's|^    sleep 1$|    sleep 0.1|' /usr/local/bin/start-spacesd.sh
