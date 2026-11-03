@@ -60,11 +60,8 @@ COPY task/models.json task/mcp.json /home/cua/.pi/agent/
 COPY task/reload.ts task/lean.ts /home/cua/.pi/agent/extensions/
 COPY biscotti.html /opt/noVNC/
 
-# Wallpaper: "biscotti" by Geertje Caliguire on Unsplash (Unsplash License), fetched at a pinned size and checksum.
-RUN mkdir -p /usr/share/backgrounds && \
-    curl -fsSL -o /usr/share/backgrounds/biscotti.jpg \
-      "https://images.unsplash.com/photo-1685397166172-0308e96ee012?fm=jpg&q=85&w=1280&h=800&fit=crop" && \
-    echo "aa403dc64a9378a59a8fc137e27d8246d55b5f7c363fbd93080e52e8daa9942e  /usr/share/backgrounds/biscotti.jpg" | sha256sum -c -
+# Wallpaper: "biscotti" by Geertje Caliguire on Unsplash (Unsplash License), kept here since Unsplash re-encodes it.
+COPY biscotti.jpg /usr/share/backgrounds/
 COPY xfce4-desktop.xml /home/cua/.config/xfce4/xfconf/xfce-perchannel-xml/
 
 ADD --chmod=0644 https://raw.githubusercontent.com/trycua/cua/${CUA_COMMIT}/LICENSE.md /usr/share/licenses/cua-xfce/LICENSE.md
