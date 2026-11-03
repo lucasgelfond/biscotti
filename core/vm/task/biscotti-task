@@ -107,11 +107,18 @@ function runOwn(task, socket) {
   for (const [name, source] of Object.entries(task.runner)) writeFileSync(`${dir}/${name.replace(/[^\w.-]/g, "")}`, source);
   const child = spawn("node", [`${dir}/main.ts`], { stdio: ["pipe", "pipe", "pipe"] });
   let out = "";
+  const errors = [];
   child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
-  createInterface({ input: child.stderr }).on("line", (text) => socket.write(`${JSON.stringify({ type: "progress", text: text.slice(0, 500) })}\n`));
+  createInterface({ input: child.stderr }).on("line", (text) => {
+    if (errors.push(text) > 20) errors.shift();
+    socket.write(`${JSON.stringify({ type: "progress", text: text.slice(0, 500) })}\n`);
+  });
+  // A runner that dies before reading its goal would otherwise fail here with EPIPE, hiding why it died.
+  child.stdin.on("error", () => {});
   child.stdin.end(task.goal);
-  child.on("close", () => {
-    const report = out.trim() || "The runner ended without a report.";
+  child.on("close", (code) => {
+    const failed = code ? `The runner failed (exit ${code}):\n${errors.join("\n").slice(-3000)}` : "";
+    const report = [failed, out.trim()].filter(Boolean).join("\n\n") || "The runner ended without a report.";
     socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: report }] } })}\n`);
     screenshot(socket);
     socket.end();
