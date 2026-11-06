@@ -94,6 +94,9 @@ async function run(task: string, slot: number, guidance: string) {
       const sent = process.env.CU_JEV ? { goal: JSON.stringify({ goal }), runner: RUNNER } : { goal, context: Number(process.env.CU_CONTEXT) || undefined, lean: Number(process.env.CU_LEAN ?? 1) || undefined, oversee: Boolean(process.env.CU_OVERSEE) };
       const socket = connect({ host: `10.200.${slot}.2`, port: 4000 }, () => socket.end(JSON.stringify(sent)));
       socket.setTimeout(10 * 60_000, () => socket.destroy(new Error(`timed out; the VM's last event came at ${lastEvent}s`)));
+      // CU_TASK_MINUTES: the most a task may take, busy or not (a model that loops keeps acting).
+      const cap = Number(process.env.CU_TASK_MINUTES);
+      if (cap) setTimeout(() => socket.destroy(new Error(`stopped after ${cap} minutes`)), cap * 60_000).unref();
       // A connection that died without a word errors out instead of waiting for the timeout.
       socket.setKeepAlive(true, 30_000);
       createInterface({ input: socket }).on("line", (line) => {
