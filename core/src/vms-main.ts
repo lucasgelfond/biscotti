@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { listen } from "./http.ts";
 import { discard, restore, resume, SLOTS, suspend, type Vm } from "./tasks.ts";
@@ -26,6 +26,8 @@ async function stop(slot: number) {
 // POST /vms/<slot>: a fresh VM in the slot. DELETE: stop it. POST /vms/<slot>/suspend/<id>: pause and save it, freeing
 // the slot. POST /vms/<slot>/resume/<id>: bring a saved one back there. DELETE /vms/<slot>/suspended/<id>: delete one.
 const server = createServer(async (req, res) => {
+  // The live desktops' password, for the gate of the machine this one runs VMs for (an overflow machine).
+  if (req.url === "/vnc-password" && req.method === "GET") return void res.end(readFileSync(`${vmDir}/vnc-password`, "utf8"));
   const [, n, action, id] = /^\/vms\/(\d+)(?:\/(suspend|resume|suspended)\/(\d+))?$/.exec(req.url ?? "") ?? [];
   const slot = Number(n);
   if (!SLOTS.includes(slot)) return void res.writeHead(404).end();

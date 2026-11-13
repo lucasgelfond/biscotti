@@ -6,7 +6,8 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import type { createGate } from "./gate.ts";
 import { call } from "./http.ts";
-import { input, int, optional, str, text, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
+import { configuredNode, GATE_PORT_BASE, nodeAddress, tailscaleAddress } from "./nodes.ts";
+import { input, int, optional, REMOTE_BASE, str, text, vmEndpoint, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces), with one always
 // restored ahead of time.
@@ -79,12 +80,14 @@ export interface Keep {
 }
 
 // `busy` says whether a slot's task is in a tool call, which isn't going quiet.
-export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: number) => boolean = () => false, keep?: Keep) {
-  const free = [...SLOTS];
+// `slots`: this machine's, then an overflow machine's (above REMOTE_BASE), used only when this machine's are all busy.
+export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: number) => boolean = () => false, keep?: Keep, slots = SLOTS) {
+  const free = [...slots];
   // Tasks waiting for a slot: any one, or (to resume a suspended VM) a particular one.
   const waiting: { slot?: number; resolve: (slot: number) => void }[] = [];
   const acquire = (want?: number) =>
     new Promise<number>((resolve) => {
+      free.sort((a, b) => a - b);
       const i = want === undefined ? (free.length ? 0 : -1) : free.indexOf(want);
       if (i >= 0) resolve(free.splice(i, 1)[0]);
       else waiting.push({ slot: want, resolve });
@@ -99,9 +102,11 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
     warmUp();
   }
 
+  // Only this machine's slots are kept warm: an overflow machine stops when it has nothing to do.
   function warmUp() {
-    if (warm || !free.length) return;
-    const slot = free.shift()!;
+    const i = free.findIndex((s) => s <= REMOTE_BASE);
+    if (warm || i < 0) return;
+    const [slot] = free.splice(i, 1);
     warmSlot = slot;
     warm = restore(slot);
     // On failure (e.g. no snapshot yet), try again in a while rather than at once.
@@ -169,7 +174,7 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
         task.stopped.signal.throwIfAborted();
         Object.assign(task, { slot: vm.slot });
         onStart?.(vm.slot, task.id);
-        const { host, port } = vm.address ?? { host: `10.200.${vm.slot}.2`, port: 4000 };
+        const { host, port } = vm.address ?? vmEndpoint(vm.slot, 4000);
         return await runPi(host, port, goal, opts, () => busy(vm.slot), task.stopped.signal);
       } finally {
         await putAway(vm, task);
@@ -202,7 +207,7 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
         try {
           Object.assign(task, { slot });
           onStart?.(slot, id);
-          const { host, port } = vm.address ?? { host: `10.200.${slot}.2`, port: 4000 };
+          const { host, port } = vm.address ?? vmEndpoint(slot, 4000);
           return await runPi(host, port, message, { ...opts, followup: true }, () => busy(slot), task.stopped.signal);
         } finally {
           await putAway(vm, task);
@@ -400,7 +405,7 @@ type Pool = Pick<ReturnType<typeof taskVms>, "run" | "running" | "stop"> &
 
 // The task tool, and the main agent's view of the running tasks (`doing` says what a slot's task is in the middle of),
 // so a retry stops or waits on the run before it instead of racing it.
-export function taskTools(vms: Pool, onReport: (goal: string, result: TaskResult) => void, watch?: (slot: number) => string, doing?: (slot: number) => string | undefined): LocalTool[] {
+export function taskTools(vms: Pool, onReport: (goal: string, result: TaskResult) => void, watch?: (slot: number) => string | Promise<string>, doing?: (slot: number) => string | undefined): LocalTool[] {
   const describe = (t: Running) => {
     const minutes = Math.round((Date.now() - t.started) / 60_000);
     const now = t.slot === undefined ? "queued for a VM" : doing?.(t.slot);
@@ -427,7 +432,8 @@ export function taskTools(vms: Pool, onReport: (goal: string, result: TaskResult
         );
         // A queued task (every slot busy) doesn't hold up the reply.
         const slot = watch && (await Promise.race([running, new Promise<undefined>((r) => setTimeout(r, 3000))]));
-        const started = slot ? `Task started. Its live desktop, only for a user who asks to watch or take over: ${watch(slot)}` : "Task started.";
+        const link = slot ? await Promise.resolve(watch(slot)).catch(() => undefined) : undefined;
+        const started = link ? `Task started. Its live desktop, only for a user who asks to watch or take over: ${link}` : "Task started.";
         const also = others.length ? `\n\nAlso running (if one of these is the same errand, stop_task it so they don't both act):\n${others.map(describe).join("\n")}` : "";
         return text(started + also);
       },
@@ -482,9 +488,26 @@ export function taskTools(vms: Pool, onReport: (goal: string, result: TaskResult
 // (with a coding task's model routed to its slot), and the task tool, whose reports go to `report`.
 export async function gateTasks(gate: ReturnType<typeof createGate>, socket: string, vmDir: string, report: (goal: string, result: TaskResult) => void) {
   for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot, peer: `10.200.${slot}.2` });
+  // An overflow machine, if one is set up (nodes.ts): its slots' VMs reach this gate over Tailscale, one port each, and
+  // only from that machine.
+  const node = configuredNode(process.env.DATA_DIR);
+  if (node) {
+    const here = tailscaleAddress();
+    const peer = await nodeAddress(node.host);
+    if (!here) console.error("no Tailscale address here: the overflow machine's VMs can't reach the gate");
+    else for (const slot of node.slots) await gate.listen(here, GATE_PORT_BASE + slot, { slot, peer });
+  }
+  const local = vmService(socket);
+  const kept = suspendedService(socket);
+  const remote = (slot: number) => !!node && slot > REMOTE_BASE;
   // Finished and stopped tasks' VMs are kept (suspended) for follow-ups, listed in the data directory across restarts.
-  const keep = { ...suspendedService(socket), file: process.env.DATA_DIR ? `${process.env.DATA_DIR}/suspended.json` : undefined };
-  const vms = gatePool(taskVms(vmService(socket), (slot) => !!gate.busy(slot), keep), gate);
+  const keep = {
+    resume: (slot: number, id: string) => (remote(slot) ? node!.keep.resume(slot, id) : kept.resume(slot, id)),
+    discard: (slot: number, id: string) => (remote(slot) ? node!.keep.discard(slot, id) : kept.discard(slot, id)),
+    file: process.env.DATA_DIR ? `${process.env.DATA_DIR}/suspended.json` : undefined,
+  };
+  const restoreAny = (slot: number) => (remote(slot) ? node!.restore(slot) : local(slot));
+  const vms = gatePool(taskVms(restoreAny, (slot) => !!gate.busy(slot), keep, [...SLOTS, ...(node?.slots ?? [])]), gate);
   const doing = (slot: number) => {
     const call = gate.busy(slot);
     return call && `in ${call.tool} for ${Math.round((Date.now() - call.since) / 60_000)} min${call.tool === "vault_fill" ? ", likely waiting on the owner's yes" : ""}`;
@@ -492,7 +515,7 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
   // The live desktop's password goes in the link's fragment, which the browser never sends to the server.
   const host = process.env.TAILNET_HOST;
   const password = () => (existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : "");
-  const watch = host ? (slot: number) => `https://${host}:${10440 + slot}/biscotti.html#password=${password()}` : undefined;
+  const watch = host ? (slot: number) => (remote(slot) ? node!.watch(slot) : `https://${host}:${10440 + slot}/biscotti.html#password=${password()}`) : undefined;
   return {
     async task(goal: string, { model, ...opts }: TaskOptions = {}) {
       let slot: number | undefined;
