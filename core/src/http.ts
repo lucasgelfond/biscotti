@@ -34,3 +34,14 @@ export function call(socketPath: string, method: string, path: string, body?: st
     req.on("error", reject).end(body);
   });
 }
+
+// The same over TCP, for a remote machine's vms service (reached over Tailscale).
+export function callHost(host: string, port: number, method: string, path: string, body?: string) {
+  return new Promise<string>((resolve, reject) => {
+    const req = request({ host, port, method, path, headers: { "Content-Type": "application/json" }, timeout: 10 * 60_000 }, (res) => {
+      readBody(res).then((text) => (res.statusCode! < 300 ? resolve(text) : reject(new Error(`${path}: ${res.statusCode} ${text}`))), reject);
+    });
+    req.on("timeout", () => req.destroy(new Error(`${path}: timed out`)));
+    req.on("error", reject).end(body);
+  });
+}

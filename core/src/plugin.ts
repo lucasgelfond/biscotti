@@ -185,3 +185,12 @@ ${PAGE_STYLE}
 main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
 </style>
 <main>${PAGE_ART}${body}</main>`;
+
+// Where the gate reaches a port of the task VM in `slot`: slots 1 to 100 are this machine's (10.200.<slot>.2); slots above
+// 100 are an overflow machine's (NODE_HOST, nodes.ts), which forwards one port per slot and VM port to its VMs.
+export const REMOTE_BASE = 100;
+export const REMOTE_PORTS: Record<number, number> = { 4000: 14000, 3211: 13200, 6901: 16900, 9223: 19200 };
+export const vmEndpoint = (slot: number, port: number) =>
+  slot > REMOTE_BASE && process.env.NODE_HOST
+    ? { host: process.env.NODE_HOST, port: REMOTE_PORTS[port] + slot - REMOTE_BASE }
+    : { host: `10.200.${slot}.2`, port };
