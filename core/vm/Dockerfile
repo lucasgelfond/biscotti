@@ -21,6 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       xdotool xclip wmctrl chrony socat xz-utils scrot \
     && rm -rf /var/lib/apt/lists/*
 
+# For coding tasks: compilers for native packages, Python's venv and pip, and the search and inspection tools coding
+# agents reach for (fd-find installs as fdfind).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential pkg-config python3-dev python3-venv python3-pip \
+      ripgrep fd-find jq unzip zip less file procps lsof sqlite3 openssh-client patch \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+    && rm -rf /var/lib/apt/lists/*
+
 ARG NOVNC_COMMIT=ad7012fc021ee785a2877067f5b69ee94c3948c6
 ARG WEBSOCKIFY_COMMIT=3dd228b81ade1ff76a27ad12eed6e78df8c6f8a6
 RUN for r in "trycua/noVNC $NOVNC_COMMIT /opt/noVNC" "novnc/websockify $WEBSOCKIFY_COMMIT /opt/noVNC/utils/websockify"; do \

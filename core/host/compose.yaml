@@ -45,6 +45,7 @@ services:
     devices: [/dev/kvm, /dev/net/tun]
     environment:
       VM_DIR: /var/lib/biscotti/vm
+      WORK_DIR: /var/lib/biscotti/work
       FIRECRACKER: /usr/local/bin/firecracker
       TASK_UID_BASE: "1100"
     volumes:
@@ -54,6 +55,8 @@ services:
         read_only: true
         bind: { propagation: rslave }
       - /var/lib/biscotti/vm:/var/lib/biscotti/vm:ro
+      # The VMs' work disks: the snapshot's, and one per slot, each its slot user's.
+      - /var/lib/biscotti/work:/var/lib/biscotti/work
       - ${FIRECRACKER_BIN:?}:/usr/local/bin/firecracker:ro
       - /run/biscotti-vms:/run/biscotti-vms
     restart: unless-stopped

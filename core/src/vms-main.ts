@@ -9,6 +9,8 @@ import { restore, SLOTS, type Vm } from "./tasks.ts";
 const vmDir = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const firecracker = process.env.FIRECRACKER ?? "firecracker";
 const sockets = process.env.VMS_SOCKETS ?? "/run/biscotti-vms";
+// Each slot's work disk, in WORK_DIR/<slot>, copied from the snapshot's (WORK_DIR/base.ext4) at each restore.
+const workDir = process.env.WORK_DIR ?? "/var/lib/biscotti/work";
 // Slot N's Firecracker runs as uid base + N.
 const uidBase = Number(process.env.TASK_UID_BASE ?? 1100);
 
@@ -26,7 +28,7 @@ const server = createServer(async (req, res) => {
   if (!SLOTS.includes(slot)) return void res.writeHead(404).end();
   try {
     await stop(slot);
-    if (req.method === "POST") running.set(slot, await restore(vmDir, firecracker, slot, uidBase + slot));
+    if (req.method === "POST") running.set(slot, await restore(vmDir, firecracker, slot, uidBase + slot, workDir));
     res.end();
   } catch (err) {
     console.error(err);

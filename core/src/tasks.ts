@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
+import { promisify } from "node:util";
 import type { createGate } from "./gate.ts";
 import { call } from "./http.ts";
 import { input, int, str, text, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
@@ -110,11 +111,37 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
   };
 }
 
+// Restores take turns while one points the work disk's path (the one the snapshot remembers) at its slot's copy, until
+// its Firecracker has opened it.
+let disks = Promise.resolve();
+const turn = <T>(f: () => Promise<T>) => {
+  const done = disks.then(f);
+  disks = done.then(() => {}, () => {});
+  return done;
+};
+
+// A fresh work disk for the slot: a sparse copy of the one the snapshot was taken with, made as the slot's user, in the
+// slot's own directory (no other slot's user can read it); then `current`, the snapshot's path for it, points there.
+async function workDisk(workDir: string, slot: number, as: string[]) {
+  const disk = `${workDir}/${slot}/work.ext4`;
+  await promisify(execFile)(as[0], [...as.slice(1), "cp", "--sparse=always", "--reflink=auto", `${workDir}/base.ext4`, `${disk}.new`], { env: { PATH: process.env.PATH } });
+  await promisify(execFile)(as[0], [...as.slice(1), "mv", `${disk}.new`, disk], { env: { PATH: process.env.PATH } });
+  rmSync(`${workDir}/current.new`, { force: true });
+  symlinkSync(disk, `${workDir}/current.new`);
+  renameSync(`${workDir}/current.new`, `${workDir}/current`);
+}
+
 // Firecracker in the slot's namespace, as the slot's own user (`uid`) with no capabilities, like Firecracker's jailer.
-export async function restore(vmDir: string, firecracker: string, slot: number, uid: number): Promise<Vm> {
+// With a work disk (`workDir`, from a snapshot built with one), the VM writes there rather than to RAM.
+export async function restore(vmDir: string, firecracker: string, slot: number, uid: number, workDir?: string): Promise<Vm> {
+  const as = ["setpriv", `--reuid=${uid}`, `--regid=${uid}`, `--groups=${statSync("/dev/kvm").gid}`, "--inh-caps=-all", "--no-new-privs", "--"];
+  if (workDir && existsSync(`${workDir}/base.ext4`)) return turn(async () => (await workDisk(workDir, slot, as), start(vmDir, firecracker, slot, as)));
+  return start(vmDir, firecracker, slot, as);
+}
+
+async function start(vmDir: string, firecracker: string, slot: number, as: string[]): Promise<Vm> {
   const sock = `/tmp/fc-${slot}.sock`;
   rmSync(sock, { force: true });
-  const as = ["setpriv", `--reuid=${uid}`, `--regid=${uid}`, `--groups=${statSync("/dev/kvm").gid}`, "--inh-caps=-all", "--no-new-privs", "--"];
   const vm = spawn("nsenter", [`--net=/run/netns/fc${slot}`, ...as, firecracker, "--api-sock", sock], { stdio: "ignore", env: { PATH: process.env.PATH } });
   // A snapshot on huge pages (for nested virtualization, where every 4K page first touched is slow) can't be loaded
   // from the file directly: the handler copies it all in at the first fault.
