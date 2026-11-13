@@ -10,7 +10,9 @@
     "d /run/biscotti 0700 1000 1000 -"
     # The gate's and the vms service's.
     "d /run/biscotti-vms 0700 root root -"
-  ];
+    # The task VMs' work disks: the snapshot's (readable by every slot's user), and one directory per slot, its own.
+    "d /var/lib/biscotti/work 0755 root root -"
+  ] ++ map (n: "d /var/lib/biscotti/work/${toString n} 0700 ${toString (1100 + n)} ${toString (1100 + n)} -") (pkgs.lib.range 1 vms.slots);
 
   systemd.services.biscotti-setup = {
     after = [ "network-online.target" "docker.service" "tailscaled.service" "biscotti-net.service" ];
@@ -91,12 +93,12 @@
       # Huge pages reserved (the Mac): task VMs run on them.
       huge=$([ "$(cat /proc/sys/vm/nr_hugepages)" -gt 0 ] && echo 2M || true)
       # Rebuilt when the VM's source (the task agent or the desktop) or its memory changes.
-      vm_source=$({ cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum; echo ${toString vms.memMiB}; } | sha256sum | cut -d' ' -f1)
+      vm_source=$({ cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum; echo ${toString vms.memMiB} ${toString vms.workGiB}; } | sha256sum | cut -d' ' -f1)
       if [ ! -f "$STATE/vm/desktop.snap" ] || [ "$(cat "$STATE/vm/source" 2>/dev/null)" != "$vm_source" ]; then
         rm -f "$STATE/vm/desktop.snap"
         # The warm VMs hold the slots' network devices the build boots on; compose starts them again below.
         docker stop biscotti-vms-1 2>/dev/null || true
-        VM_MEM_MIB=${toString vms.memMiB} HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
+        VM_MEM_MIB=${toString vms.memMiB} WORK_GIB=${toString vms.workGiB} HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
         echo "$vm_source" > "$STATE/vm/source"
       fi
       # The gate, the agent and the vms service, plus the services of the plugins that bring one. Nix-built binaries

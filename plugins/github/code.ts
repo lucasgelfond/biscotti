@@ -55,7 +55,8 @@ export function codeTask(ctx: Context, token: string): LocalTool {
   }
 
   async function run(repo: string, goal: string, base: string | undefined, dir: string) {
-    await git(dir, "clone", "-q", "--depth", "50", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
+    // Enough history for log and blame to help the coding agent.
+    await git(dir, "clone", "-q", "--depth", "1000", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
     const work = join(dir, "repo");
     const baseBranch = base ?? (await git(work, "rev-parse", "--abbrev-ref", "HEAD"));
     await git(work, "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");

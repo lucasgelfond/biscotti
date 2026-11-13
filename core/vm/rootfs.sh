@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Turn the desktop image into an ext4 VM disk for Firecracker. Usage: sudo core/vm/rootfs.sh [image] [out.ext4]
-# The disk is attached read-only and shared by every VM; each VM writes to its own RAM overlay.
+# The disk is attached read-only and shared by every VM; each VM writes to an overlay on its own work disk (a second
+# drive, from the host's snapshot build), or to RAM when it has none.
 set -euo pipefail
 IMAGE=${1:-biscotti/cua-desktop:dev}
 OUT=${2:-cua-desktop.ext4}
@@ -13,12 +14,19 @@ docker rm "$cid" >/dev/null
 # docker export drops the image's ENV; carry it into the VM.
 docker image inspect "$IMAGE" --format '{{range .Config.Env}}export {{.}}{{"\n"}}{{end}}' > "$DIR/etc/biscotti-env"
 
-# PID 1 inside the VM. First pass: move the read-only root onto a RAM overlay and start again from there.
+# PID 1 inside the VM. First pass: move the read-only root onto an overlay and start again from there.
 mkdir -p "$DIR/overlay"
 cat > "$DIR/sbin/biscotti-init" <<'EOF'
 #!/bin/sh
 if [ ! -d /.lower ]; then
-  mount -t tmpfs tmpfs /overlay
+  # The work disk, if the VM has one: the host makes it sparse and leaves its inode tables uninitialized, so it costs
+  # disk only for what a task writes (noinit_itable keeps ext4 from zeroing them in the background).
+  [ -b /dev/vdb ] || mount -t devtmpfs dev /dev 2>/dev/null
+  if [ -b /dev/vdb ]; then
+    mount -t ext4 -o noatime,noinit_itable /dev/vdb /overlay
+  else
+    mount -t tmpfs tmpfs /overlay
+  fi
   mkdir -p /overlay/upper /overlay/work /overlay/root
   mount -t overlay overlay -o lowerdir=/,upperdir=/overlay/upper,workdir=/overlay/work /overlay/root
   mkdir /overlay/root/.lower
@@ -30,7 +38,9 @@ fi
 export VNC_PW=$(sed -n 's/.*biscotti\.vnc=\([^ ]*\).*/\1/p' /proc/cmdline)
 mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
 mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts; mount -t tmpfs tmpfs /dev/shm
-mount -t tmpfs tmpfs /run; mount -t tmpfs -o mode=1777 tmpfs /tmp
+mount -t tmpfs tmpfs /run
+# /tmp is on the work disk when there is one (package managers and builds fill it), in RAM otherwise.
+if grep -q ' /.lower/overlay ext4 ' /proc/mounts; then chmod 1777 /tmp; else mount -t tmpfs -o mode=1777 tmpfs /tmp; fi
 # Like Docker's default seccomp profile: no user namespaces (Chromium uses its setuid sandbox instead).
 sysctl -qw user.max_user_namespaces=0
 echo nameserver 1.1.1.1 > /etc/resolv.conf
@@ -47,5 +57,5 @@ EOF
 chmod +x "$DIR/sbin/biscotti-init"
 
 rm -f "$OUT"
-mkfs.ext4 -q -d "$DIR" -L rootfs "$OUT" 3G
+mkfs.ext4 -q -d "$DIR" -L rootfs "$OUT" 5G
 echo "$OUT"

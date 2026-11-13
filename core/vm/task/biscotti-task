@@ -57,8 +57,23 @@ pi.stdout.setEncoding("utf8").on("data", (chunk) => {
 // A coding task's repo arrives as a git bundle: checked out in ~/repo on its own branch with no remote (nothing in the
 // VM can push), and the commits made on it go back as a bundle for the host to review and open as a pull request.
 const REPO = "/home/cua/repo";
+// How long one tool call may run without output before the host may count the task as gone quiet.
+const TOOL_QUIET_MAX_MS = 30 * 60_000;
 const git = (...args) => execFileSync("git", ["-C", REPO, ...args], { encoding: "utf8" }).trim();
-const CODING = `This is a coding task. The repository is checked out in ~/repo on a branch of its own, with no remote: you can't push, and don't try. Work there: read the code, make the change, run its tests or build if it has them (git, node, npm and pnpm are installed), and commit your work with clear messages. Never merge, rebase onto other branches or rewrite existing commits. Your commits become a draft pull request the owner reviews; nothing is merged. Take the time the change needs: the 3-minute guideline is for browsing. End with a short summary of what changed and how you checked it.
+const CODING = `This is a coding task, not an errand: ignore the browsing guidelines' 3-minute target and take the time the change needs.
+
+The repository is checked out in ~/repo on a branch of its own, with no remote: you can't push, and don't try. Your commits become a draft pull request the owner reviews; nothing is merged.
+
+Work like this:
+1. Orient: read the README and any contributor or agent notes (AGENTS.md, CLAUDE.md, CONTRIBUTING), find how the project installs, builds and tests (package.json scripts, Makefile, pyproject, CI config under .github/), and read the code the change touches. Search with rg and fd rather than reading whole trees.
+2. Set up: install dependencies the way the project does (its lockfile's package manager; a venv for Python). If setup fails, say exactly what failed rather than working around it silently.
+3. Change: make the smallest change that fully does the goal, in the code's own style. Add or update tests for behavior you change.
+4. Check: run the tests, type checker, linter or build the project has, fix what you broke, and run them again. Long installs and test runs are fine; run a server or watcher in the background (with & and a log file) and stop it when done.
+5. Commit with clear messages. Never merge, rebase onto other branches or rewrite existing commits.
+
+Installed: git, node 22 with npm and pnpm, python3 with venv and pip, gcc and make (build-essential), rg, fd, jq, sqlite3; sudo works for anything else (apt-get install).
+
+End with a short report: what changed and why, the commands you ran to check it and their results (pass/fail counts), and anything you couldn't do or verify.
 
 The goal: `;
 
@@ -325,9 +340,19 @@ createServer({ allowHalfOpen: true }, (socket) => {
       if (listening) deliver(messages);
       else pending.push(...messages);
     }, 3000);
-    socket.on("close", () => clearInterval(poll));
+    // A tool call that prints nothing for a while (an install, a test run) isn't the task going quiet: while one runs,
+    // a heartbeat tells the host so, up to TOOL_QUIET_MAX_MS for any one call, after which the host's idle limit applies.
+    const tools = new Map();
+    const heartbeat = setInterval(() => {
+      const now = Date.now();
+      const live = [...tools.values()].filter((t) => now - t.since < TOOL_QUIET_MAX_MS);
+      if (live.length && !socket.destroyed) socket.write(`${JSON.stringify({ type: "heartbeat", tools: live.map((t) => t.name) })}\n`);
+    }, 30_000);
+    socket.on("close", () => (clearInterval(poll), clearInterval(heartbeat)));
     const forward = async (line, record) => {
       if (record.type !== "response") socket.write(`${line}\n`);
+      if (record.type === "tool_execution_start") tools.set(record.toolCallId, { name: record.toolName, since: Date.now() });
+      if (record.type === "tool_execution_end") tools.delete(record.toolCallId);
       if (record.type === "message_end" && record.message?.role === "assistant") report = text(record.message) || report;
       steps.add(record);
       if (task.oversee && record.type === "turn_end" && ++turns % OVERSEE_EVERY === 0)
