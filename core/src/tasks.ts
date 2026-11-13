@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
+import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import type { createGate } from "./gate.ts";
@@ -33,6 +34,23 @@ export interface Vm {
   // Firecracker's API socket, for the vms service.
   api?: string;
 }
+
+// What happens to tasks, for the task board (board.ts) and the app: each event names its task.
+export interface TaskEvent {
+  id: number;
+  type: "queued" | "started" | "step" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
+  at: number;
+  goal?: string;
+  slot?: number;
+  where?: "local" | "cloud";
+  text?: string;
+  tool?: string;
+  screenshot?: Buffer;
+}
+export const taskEvents = new EventEmitter();
+taskEvents.setMaxListeners(100);
+export const where = (slot: number) => (slot > REMOTE_BASE ? "cloud" : "local");
+const emit = (event: Omit<TaskEvent, "at">) => taskEvents.emit("event", { ...event, at: Date.now() });
 
 // A suspended task: its VM, kept on the slot's work disk directory until it's resumed or discarded.
 export interface Suspended {
@@ -84,19 +102,20 @@ export interface Keep {
 export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: number) => boolean = () => false, keep?: Keep, slots = SLOTS) {
   const free = [...slots];
   // Tasks waiting for a slot: any one, or (to resume a suspended VM) a particular one.
-  const waiting: { slot?: number; resolve: (slot: number) => void }[] = [];
-  const acquire = (want?: number) =>
+  const waiting: { fits: (slot: number) => boolean; resolve: (slot: number) => void }[] = [];
+  // The lowest free slot that fits (this machine's first), or the first one released that does.
+  const acquire = (fits: (slot: number) => boolean = () => true) =>
     new Promise<number>((resolve) => {
       free.sort((a, b) => a - b);
-      const i = want === undefined ? (free.length ? 0 : -1) : free.indexOf(want);
+      const i = free.findIndex(fits);
       if (i >= 0) resolve(free.splice(i, 1)[0]);
-      else waiting.push({ slot: want, resolve });
+      else waiting.push({ fits, resolve });
     });
   let warm: Promise<Vm> | undefined;
   let warmSlot: number | undefined;
 
   function release(slot: number) {
-    const i = waiting.findIndex((w) => w.slot === undefined || w.slot === slot);
+    const i = waiting.findIndex((w) => w.fits(slot));
     if (i >= 0) return waiting.splice(i, 1)[0].resolve(slot);
     free.push(slot);
     warmUp();
@@ -133,7 +152,7 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
       await (await claimed.catch(() => undefined))?.stop().catch(() => {});
       return slot;
     }
-    return acquire(slot);
+    return acquire((s) => s === slot);
   }
 
   // Suspended tasks, oldest first, kept in `keep.file` across restarts.
@@ -148,13 +167,15 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
   };
   // Keeps the VM a finished (or stopped, or stuck) task ran in, or throws it away when it can't be kept.
   async function putAway(vm: Vm, task: { id: number; goal: string }) {
-    if (!keep || !vm.suspend) return vm.stop();
+    const done = () => (emit({ id: task.id, type: "done" }), vm.stop());
+    if (!keep || !vm.suspend) return done();
     try {
       await vm.suspend(String(task.id));
     } catch (err) {
       console.error(`suspending task #${task.id}: ${(err as Error).message}`);
-      return vm.stop();
+      return done();
     }
+    emit({ id: task.id, type: "kept", slot: vm.slot, where: where(vm.slot) });
     suspended.push({ id: task.id, goal: task.goal, slot: vm.slot, at: Date.now() });
     for (const old of suspended.splice(0, Math.max(0, suspended.length - SUSPENDED_MAX))) await keep.discard(old.slot, String(old.id)).catch(() => {});
     saveSuspended();
@@ -167,19 +188,24 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
     // Listed before any await, so a task started right after sees this one.
     const task = { id: ++ids, goal, started: Date.now(), stopped: new AbortController() };
     running.set(task.id, task);
+    emit({ id: task.id, type: "queued", goal });
     try {
       const vm = await take();
       warmUp();
       try {
         task.stopped.signal.throwIfAborted();
         Object.assign(task, { slot: vm.slot });
+        emit({ id: task.id, type: "started", slot: vm.slot, where: where(vm.slot) });
         onStart?.(vm.slot, task.id);
         const { host, port } = vm.address ?? vmEndpoint(vm.slot, 4000);
-        return await runPi(host, port, goal, opts, () => busy(vm.slot), task.stopped.signal);
+        return reported(task.id, await runPi(host, port, goal, opts, () => busy(vm.slot), task.stopped.signal, steps(task.id)));
       } finally {
         await putAway(vm, task);
         release(vm.slot);
       }
+    } catch (err) {
+      emit({ id: task.id, type: "failed", text: (err as Error).message });
+      throw err;
     } finally {
       running.delete(task.id);
     }
@@ -206,9 +232,10 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
         }
         try {
           Object.assign(task, { slot });
+          emit({ id, type: "resumed", slot, where: where(slot), text: message });
           onStart?.(slot, id);
           const { host, port } = vm.address ?? vmEndpoint(slot, 4000);
-          return await runPi(host, port, message, { ...opts, followup: true }, () => busy(slot), task.stopped.signal);
+          return reported(id, await runPi(host, port, message, { ...opts, followup: true }, () => busy(slot), task.stopped.signal, steps(id)));
         } finally {
           await putAway(vm, task);
           release(slot);
@@ -219,13 +246,66 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
     })();
   }
 
+  // Moves a task from this machine to the overflow machine: stopped there if it's running, its home folder (without
+  // caches like node_modules) and conversation taken out of its VM, then carried on in a fresh VM on the other machine,
+  // with what it did so far. A VM's memory can't move (the Pi's and EC2's CPUs differ), so open pages and running
+  // processes don't come along; files, commits and the conversation do.
+  async function move(id: number, onStart?: (slot: number, id: number) => void, opts: TaskOptions = {}): Promise<TaskResult> {
+    if (!keep) throw new Error("tasks aren't kept on this machine");
+    if (!slots.some((s) => s > REMOTE_BASE)) throw new Error("there's no cloud machine set up (installer/aws/NODE.md)");
+    if (running.has(id)) {
+      running.get(id)!.stopped.abort(new Error("the task was moved to the cloud"));
+      for (let i = 0; running.has(id) && i < 600; i++) await new Promise((r) => setTimeout(r, 100));
+    }
+    const i = suspended.findIndex((t) => t.id === id);
+    if (i < 0) throw new Error(`task #${id} isn't kept here to move`);
+    if (suspended[i].slot > REMOTE_BASE) throw new Error(`task #${id} is already in the cloud`);
+    const [kept] = suspended.splice(i, 1);
+    saveSuspended();
+    const task = { id, goal: kept.goal, started: Date.now(), stopped: new AbortController() };
+    running.set(id, task);
+    emit({ id, type: "moving", text: "Packing it up" });
+    try {
+      const slot = await takeSlot(kept.slot);
+      let packed: Packed;
+      try {
+        const vm = await keep.resume(slot, String(id));
+        const { host, port } = vm.address ?? vmEndpoint(slot, 4000);
+        packed = await pack(host, port);
+        await vm.stop();
+        await keep.discard(slot, String(id)).catch(() => {});
+      } finally {
+        release(slot);
+      }
+      emit({ id, type: "moving", text: `Packed ${Math.round(packed.tar.length / 1e6)} MB; starting it in the cloud` });
+      const there = await acquire((s) => s > REMOTE_BASE);
+      const vm = await restore(there).catch((err) => (release(there), Promise.reject(err)));
+      try {
+        Object.assign(task, { slot: there });
+        emit({ id, type: "moved", slot: there, where: "cloud" });
+        onStart?.(there, id);
+        const { host, port } = vm.address ?? vmEndpoint(there, 4000);
+        return reported(id, await runPi(host, port, kept.goal, { ...opts, moved: packed }, () => busy(there), task.stopped.signal, steps(id)));
+      } finally {
+        await putAway(vm, task);
+        release(there);
+      }
+    } catch (err) {
+      emit({ id, type: "failed", text: `Moving it failed: ${(err as Error).message}` });
+      throw err;
+    } finally {
+      running.delete(id);
+    }
+  }
+
   warmUp();
   return {
     run,
     resume,
+    move,
     suspended: (): Suspended[] => [...suspended],
     running: (): Running[] => [...running.values()].map(({ stopped, ...task }) => task),
-    // Its VM is thrown away and its report says it was stopped; false when there's no such task.
+    // Its report says it was stopped (its VM is kept, when it can be); false when there's no such task.
     stop(id: number) {
       const task = running.get(id);
       task?.stopped.abort(new Error("the task was stopped"));
@@ -353,10 +433,60 @@ async function start(vmDir: string, firecracker: string, slot: number, as: strin
 // The goal (and a repo, as a git bundle) goes to pi in the VM, or to a plugin's own runner; its last assistant text is
 // the report, then a screenshot and the repo's new commits follow. Pi runs lean (core/vm/task/lean.ts): the bench's
 // best setup with lessons, at a sixth of the tokens per call.
+// A task's steps as they happen, for the task board: what it's doing (each tool call) and what it says.
+const steps = (id: number) => (event: { type: string; toolName?: string; args?: unknown; message?: { role: string; content: { type: string; text?: string }[] } }) => {
+  if (event.type === "tool_execution_start" && event.toolName) {
+    const args = event.args === undefined ? "" : JSON.stringify(event.args);
+    emit({ id, type: "step", tool: event.toolName, text: args.length > 160 ? `${args.slice(0, 160)}…` : args });
+  }
+  if (event.type === "message_end" && event.message?.role === "assistant") {
+    const text = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
+    if (text) emit({ id, type: "step", text: text.slice(0, 600) });
+  }
+};
+const reported = (id: number, result: TaskResult) => (emit({ id, type: "report", text: result.report, screenshot: result.screenshot }), result);
+
+// A task taken out of its VM to carry on elsewhere (move): its home folder as a tarball, its conversation as text, and
+// (for a coding task) the commit its branch started from.
+export interface Packed {
+  tar: Buffer;
+  transcript: string;
+  base?: string;
+}
+const MAX_PACK = 1_500_000_000;
+function pack(host: string, port: number) {
+  return new Promise<Packed>((resolve, reject) => {
+    const socket = connect({ host, port }, () => socket.end(JSON.stringify({ export: true })));
+    let received = 0;
+    let packed: Packed | undefined;
+    socket.on("data", (d: Buffer) => {
+      if ((received += d.length) > MAX_PACK) socket.destroy(new Error("the task's files are too big to move"));
+    });
+    createInterface({ input: socket, crlfDelay: Infinity }).on("error", () => {}).on("line", (line) => {
+      try {
+        const e = JSON.parse(line);
+        if (e.type === "export") packed = { tar: Buffer.from(e.tar, "base64"), transcript: e.transcript ?? "", base: e.base };
+      } catch {}
+    });
+    socket.on("error", reject).on("close", () => (packed ? resolve(packed) : reject(new Error("the VM sent nothing to move"))));
+  });
+}
+
 // A follow-up (`followup`, on a resumed VM) sends the owner's message instead of a new goal.
-function runPi(host: string, port: number, goal: string, { repo, runner, timeoutMs = TASK_TIMEOUT_MS, display = DISPLAY, followup }: TaskOptions & { followup?: boolean }, busy: () => boolean, stopped: AbortSignal) {
+// A moved task (`moved`) starts with its home folder and what it did so far.
+function runPi(
+  host: string,
+  port: number,
+  goal: string,
+  { repo, runner, timeoutMs = TASK_TIMEOUT_MS, display = DISPLAY, followup, moved }: TaskOptions & { followup?: boolean; moved?: Packed },
+  busy: () => boolean,
+  stopped: AbortSignal,
+  onEvent?: (event: { type: string }) => void,
+) {
   return new Promise<TaskResult>((resolve, reject) => {
-    const payload = followup ? { followup: goal } : { goal, repo: repo?.toString("base64"), runner, lean: 1, display };
+    const payload = followup
+      ? { followup: goal }
+      : { goal, repo: repo?.toString("base64"), runner, lean: 1, display, ...(moved && { moved: { tar: moved.tar.toString("base64"), transcript: moved.transcript, base: moved.base } }) };
     const socket = connect({ host, port }, () => socket.end(JSON.stringify(payload)));
     const idleMs = Math.min(IDLE_MS, timeoutMs);
     let heard = Date.now();
@@ -383,6 +513,7 @@ function runPi(host: string, port: number, goal: string, { repo, runner, timeout
       } catch {
         return;
       }
+      onEvent?.(event);
       if (event.type === "screenshot") screenshot = Buffer.from(event.png!, "base64");
       if (event.type === "bundle") bundle = Buffer.from(event.data!, "base64");
       if (event.type !== "message_end" || event.message?.role !== "assistant") return;
@@ -401,7 +532,7 @@ function runPi(host: string, port: number, goal: string, { repo, runner, timeout
 // `tell` passes the owner's later message to a running task: "told", "queued" (it hasn't got a VM yet; it gets the message
 // when it starts) or false (no such task).
 type Pool = Pick<ReturnType<typeof taskVms>, "run" | "running" | "stop"> &
-  Partial<Pick<ReturnType<typeof taskVms>, "resume" | "suspended">> & { tell?(id: number, message: string): "told" | "queued" | false };
+  Partial<Pick<ReturnType<typeof taskVms>, "resume" | "suspended" | "move">> & { tell?(id: number, message: string): "told" | "queued" | false };
 
 // The task tool, and the main agent's view of the running tasks (`doing` says what a slot's task is in the middle of),
 // so a retry stops or waits on the run before it instead of racing it.
@@ -526,6 +657,43 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
       }
     },
     tools: taskTools(vms, report, watch, doing),
+    kept: () => vms.suspended?.() ?? [],
+    // For the app's API (api.ts): the same as the task tools, with reports going to the main agent as theirs do.
+    actions: {
+      start(goal: string, display?: "mobile" | "desktop") {
+        let id = 0;
+        const queued = (e: TaskEvent) => e.type === "queued" && !id && (id = e.id);
+        taskEvents.on("event", queued);
+        vms.run(goal, undefined, { display }).then(
+          (result) => report(goal, result),
+          (err) => report(goal, { report: `The task failed: ${err.message}` }),
+        );
+        taskEvents.off("event", queued);
+        return Promise.resolve(id);
+      },
+      tell(id: number, message: string) {
+        const told = vms.tell?.(id, message);
+        if (told) return told;
+        const kept = vms.suspended?.().find((t) => t.id === id);
+        const resumed = kept && vms.resume?.(id, message);
+        if (!resumed) return "none";
+        resumed.then(
+          (result) => report(kept.goal, result),
+          (err) => report(kept.goal, { report: `The follow-up failed: ${err.message}` }),
+        );
+        return "resumed";
+      },
+      stop: (id: number) => vms.stop(id),
+      move(id: number) {
+        if (!vms.move) return "unavailable";
+        const goal = vms.suspended?.().find((t) => t.id === id)?.goal ?? vms.running().find((t) => t.id === id)?.goal ?? `task #${id}`;
+        vms.move(id).then(
+          (result) => report(goal, result),
+          (err) => report(goal, { report: `Moving task #${id} to the cloud failed: ${err.message}` }),
+        );
+        return "moving";
+      },
+    },
   };
 }
 
@@ -570,6 +738,12 @@ export function gatePool(pool: Pool, gate: ReturnType<typeof createGate>): Pool 
               return proposed.length ? { ...result, report: `${result.report}\n\nThe task proposes, for you to decide:\n${proposed.map((p) => `- ${p}`).join("\n")}` } : result;
             })
             .finally(() => slot && gate.assign(slot));
+        }
+      : undefined,
+    move: pool.move
+      ? (id, onStart, opts) => {
+          let slot = 0;
+          return pool.move!(id, (s, i) => ((slot = s), gate.assign(s, i, `moved task #${i}`), gate.proposed(s), onStart?.(s, i)), opts).finally(() => slot && gate.assign(slot));
         }
       : undefined,
     tell(id, message) {

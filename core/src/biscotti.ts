@@ -4,7 +4,10 @@ import crons from "./crons.ts";
 import { createGate, LOCKS, scrub } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import { localTools, type Channel, type Context, type Plugin } from "./plugin.ts";
-import { gateTasks } from "./tasks.ts";
+import { startApi } from "./api.ts";
+import { taskBoard } from "./board.ts";
+import { pusher } from "./push.ts";
+import { gateTasks, taskEvents, type TaskEvent } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
 
 function env(name: string) {
@@ -48,6 +51,16 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
 
   gate.add(memoryTools(db, recalls));
   if (vms) gate.add(localTools(vms.tools));
+  // The task API for the app and the multiplexer, and push notifications when a task reports (api.ts, push.ts).
+  if (vms && process.env.API_PORT !== "0") {
+    const push = pusher(dir);
+    const board = taskBoard(vms.kept);
+    taskEvents.on("event", (e: TaskEvent) => {
+      if (e.type === "report") void push.notify(`Task #${e.id} reported`, e.text ?? "", e.id);
+      if (e.type === "failed") void push.notify(`Task #${e.id} failed`, e.text ?? "", e.id);
+    });
+    await startApi(board, vms.actions, push);
+  }
   const prompt = [readFileSync(new URL("../SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
 
   const turn = await connectAgent(sockets, { db, prompt, gate: gate.handle });
