@@ -41,6 +41,11 @@ mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts; mount -t tmpfs tmpf
 mount -t tmpfs tmpfs /run
 # /tmp is on the work disk when there is one (package managers and builds fill it), in RAM otherwise.
 if grep -q ' /.lower/overlay ext4 ' /proc/mounts; then chmod 1777 /tmp; else mount -t tmpfs -o mode=1777 tmpfs /tmp; fi
+# Docker for the task's own services: cgroups v2, and its data on the work disk (overlay2 can't sit on the root's
+# overlay). Started here, so restored VMs have it running.
+mount -t cgroup2 cgroup2 /sys/fs/cgroup
+mkdir -p /.lower/overlay/docker /var/lib/docker && mount --bind /.lower/overlay/docker /var/lib/docker
+(dockerd --exec-opt native.cgroupdriver=cgroupfs > /var/log/dockerd.log 2>&1 &)
 # Like Docker's default seccomp profile: no user namespaces (Chromium uses its setuid sandbox instead).
 sysctl -qw user.max_user_namespaces=0
 echo nameserver 1.1.1.1 > /etc/resolv.conf

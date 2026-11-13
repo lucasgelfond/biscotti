@@ -71,7 +71,7 @@ Work like this:
 4. Check: run the tests, type checker, linter or build the project has, fix what you broke, and run them again. Long installs and test runs are fine; run a server or watcher in the background (with & and a log file) and stop it when done.
 5. Commit with clear messages. Never merge, rebase onto other branches or rewrite existing commits.
 
-Installed: git, node 22 with npm and pnpm, python3 with venv and pip, gcc and make (build-essential), rg, fd, jq, sqlite3; sudo works for anything else (apt-get install).
+Installed: git, node 22 with npm and pnpm, python3 with venv and pip, gcc and make (build-essential), rg, fd, jq, sqlite3, and Docker with docker compose (dockerd is running; use it for the services the project needs, such as a database, or its own compose file); sudo works for anything else (apt-get install).
 
 End with a short report: what changed and why, the commands you ran to check it and their results (pass/fail counts), and anything you couldn't do or verify.
 
@@ -298,6 +298,25 @@ function screenshot(socket) {
   } catch {}
 }
 
+// The desktop's shape for a task the owner watches from their phone: portrait and phone-sized, so sites lay out as they
+// do on a phone, and the live view fills the phone's screen. Chromium is maximized to fill it.
+const SHAPES = { mobile: "432x936" };
+function shape(display) {
+  const size = SHAPES[display];
+  if (!size) return;
+  const env = { ...process.env, DISPLAY: ":1" };
+  try {
+    execFileSync("xrandr", ["--fb", size], { env });
+    execFileSync("wmctrl", ["-r", "Chromium", "-b", "add,maximized_vert,maximized_horz"], { env });
+  } catch (err) {
+    console.error(`couldn't make the desktop ${size}: ${err.message}`);
+  }
+}
+
+// The task this VM is on, kept across a suspend: a later connection with `followup` (the owner's message, once the host
+// has resumed the VM from its snapshot) carries on in the same pi conversation, checkout and desktop.
+let session;
+
 createServer({ allowHalfOpen: true }, (socket) => {
   let goal = "";
   socket.setEncoding("utf8").on("data", (d) => (goal += d));
@@ -307,21 +326,29 @@ createServer({ allowHalfOpen: true }, (socket) => {
     if (!goal.trim()) return socket.end();
     const task = JSON.parse(goal);
     if (task.runner) return runOwn(task, socket);
-    let base;
+    const followup = task.followup && session;
+    if (task.followup && !session) {
+      socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "This VM has no task to follow up on." }] } })}\n`);
+      return socket.end();
+    }
+    // A run the host walked away from (it went quiet, ran out of time or was stopped) is ended before the follow-up.
+    const interrupted = followup && session.forward && listeners.has(session.forward);
+    if (interrupted) listeners.delete(session.forward);
+    let base = followup ? session.base : undefined;
     try {
-      if (task.repo) base = checkout(task.repo);
+      if (task.repo && !followup) base = checkout(task.repo);
     } catch (err) {
       socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't check out the repo: ${err.message}` }] } })}\n`);
       return socket.end();
     }
     let report = "";
-    let checked = Boolean(base);
+    let checked = Boolean(base) || Boolean(followup);
     let missing;
     const steps = trail();
     let turns = 0;
     const nudged = { done: 0, stuck: 0 };
     // Lessons from earlier tasks on the goal's sites; undefined without the lessons plugin, and then no reflecting.
-    const lessons = base ? undefined : await gateTool("lessons_for", { goal: task.goal }).catch(() => undefined);
+    const lessons = base || followup ? undefined : await gateTool("lessons_for", { goal: task.goal }).catch(() => undefined);
     // The requester's messages reach pi as they come: while it works they steer its next step; while it's idle they
     // start it again. Paused while a finished run is being checked and wrapped up (below).
     let listening = true;
@@ -348,7 +375,13 @@ createServer({ allowHalfOpen: true }, (socket) => {
       const live = [...tools.values()].filter((t) => now - t.since < TOOL_QUIET_MAX_MS);
       if (live.length && !socket.destroyed) socket.write(`${JSON.stringify({ type: "heartbeat", tools: live.map((t) => t.name) })}\n`);
     }, 30_000);
-    socket.on("close", () => (clearInterval(poll), clearInterval(heartbeat)));
+    let settled = false;
+    socket.on("close", () => {
+      clearInterval(poll);
+      clearInterval(heartbeat);
+      // The host gave up on this run (and will suspend the VM): stop pi, so a resumed VM doesn't carry on with it.
+      if (!settled) send({ type: "abort" });
+    });
     const forward = async (line, record) => {
       if (record.type !== "response") socket.write(`${line}\n`);
       if (record.type === "tool_execution_start") tools.set(record.toolCallId, { name: record.toolName, since: Date.now() });
@@ -377,9 +410,11 @@ createServer({ allowHalfOpen: true }, (socket) => {
       clearInterval(poll);
       listeners.delete(forward);
       if (lessons !== undefined) await reflect(goalNow(), String(steps), report, missing, lessons).catch(() => {});
+      settled = true;
       if (base) {
         try {
-          const data = commits(base);
+          const data = commits(session.delivered ?? base);
+          session.delivered = git("rev-parse", "HEAD");
           if (data) socket.write(`${JSON.stringify({ type: "bundle", data })}\n`);
         } catch (err) {
           socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't bundle the commits: ${err.message}` }] } })}\n`);
@@ -388,6 +423,14 @@ createServer({ allowHalfOpen: true }, (socket) => {
       screenshot(socket);
       socket.end();
     };
+    session = followup ? session : { base, goal: task.goal };
+    session.forward = forward;
+    if (followup) {
+      listeners.add(forward);
+      const message = `[The requester, following up${interrupted ? " on a run that was interrupted (it went quiet, ran out of time or was stopped; check what it got done)" : ""}] ${task.followup}`;
+      return send({ type: "prompt", message });
+    }
+    shape(task.display);
     // The gate's tools may have changed since the snapshot was taken (reload.ts).
     await rpc({ type: "prompt", message: "/biscotti-reload" });
     // A model with a small context (the host says how big): pi compacts sooner and asks for less at a time.

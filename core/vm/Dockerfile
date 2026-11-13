@@ -29,6 +29,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 
+# Docker, for a task's own services (a database, a repo's docker compose). The guest kernel has no nftables masquerade,
+# so iptables is the legacy backend. Its data goes on the work disk (see rootfs.sh).
+RUN apt-get update && apt-get install -y --no-install-recommends docker.io docker-compose iptables \
+    && update-alternatives --set iptables /usr/sbin/iptables-legacy \
+    && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy \
+    && rm -rf /var/lib/apt/lists/*
+
 ARG NOVNC_COMMIT=ad7012fc021ee785a2877067f5b69ee94c3948c6
 ARG WEBSOCKIFY_COMMIT=3dd228b81ade1ff76a27ad12eed6e78df8c6f8a6
 RUN for r in "trycua/noVNC $NOVNC_COMMIT /opt/noVNC" "novnc/websockify $WEBSOCKIFY_COMMIT /opt/noVNC/utils/websockify"; do \
@@ -81,7 +88,7 @@ ADD ${CUA_SRC}/supervisor/supervisord.conf /tmp/cua/supervisor/
 ADD ${CUA_SRC}/xfce-config/helpers.rc ${CUA_SRC}/xfce-config/xfce4-session.xml \
     ${CUA_SRC}/xfce-config/xfce4-power-manager.xml /tmp/cua/xfce-config/
 
-RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+RUN useradd -m -s /bin/bash -G sudo,docker cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     cp /tmp/cua/supervisor/* /etc/supervisor/conf.d/ && \
     install -m 0755 /tmp/cua/scripts/* /usr/local/bin/ && \
     install -d -o cua -g cua -m 0700 /run/cua && \
