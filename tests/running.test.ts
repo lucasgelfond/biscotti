@@ -20,7 +20,8 @@ async function agent() {
     let goal = "";
     socket.on("data", (d) => (goal += d)).on("error", () => {});
     socket.on("end", async () => {
-      const said = JSON.parse(goal).goal as string;
+      const task = JSON.parse(goal);
+      const said = (task.goal ?? `followup ${task.followup}`) as string;
       if (said === "silent") return;
       const wait = Number(said.match(/^wait (\d+)/)?.[1] ?? 0);
       await new Promise((r) => setTimeout(r, wait));
@@ -100,7 +101,7 @@ test("tell_task passes the owner's message to that running task's VM, holds it f
   expect(await messages(second)).toEqual(["make it 4 people at 8"]);
   expect(await messages(second === 1 ? 2 : 1)).toEqual([]);
   expect(await said("tell_task", { id: 3, message: "Friday instead" })).toBe("#3 is still waiting for a VM; it gets the message when it starts.");
-  expect(await said("tell_task", { id: 9, message: "never mind" })).toContain("No task #9 is running.");
+  expect(await said("tell_task", { id: 9, message: "never mind" })).toContain("No task #9 is running or kept.");
   // Task 1 stops; task 3 gets its slot and, with it, the message it was told while queued.
   vms.stop(1);
   await until(() => vms.running().find((t) => t.id === 3)?.slot !== undefined);
@@ -130,4 +131,35 @@ test("the gate stamps a task VM's tool calls with its task, and knows the slot i
   await call;
   expect(gate.busy(1)).toBeUndefined();
   server.close();
+});
+
+test("keeps a finished task's VM and resumes it in the same slot for a follow-up", async () => {
+  const address = await agent();
+  const events: string[] = [];
+  const vm = (slot: number) => ({
+    slot,
+    address,
+    stop: async () => void events.push(`stop ${slot}`),
+    suspend: async (id: string) => void events.push(`suspend ${slot} ${id}`),
+  });
+  const keep = {
+    resume: async (slot: number, id: string) => (events.push(`resume ${slot} ${id}`), vm(slot)),
+    discard: async (slot: number, id: string) => void events.push(`discard ${slot} ${id}`),
+  };
+  const vms = taskVms(async (slot) => vm(slot), () => false, keep);
+  let slot = 0;
+  const first = await vms.run("book it", (s) => (slot = s));
+  expect(first.report).toBe("done: book it");
+  expect(vms.suspended().map((t) => t.id)).toEqual([1]);
+  expect(events).toContain(`suspend ${slot} 1`);
+
+  const reports: string[] = [];
+  const tools = localTools(taskTools({ ...vms, tell: () => false }, (_, r) => reports.push(r.report)));
+  const reply = await tools.call("tell_task", { id: 1, message: "make it two" });
+  expect(JSON.stringify(reply)).toContain("Resumed #1");
+  await until(() => reports.length > 0);
+  expect(reports[0]).toBe("done: followup make it two");
+  expect(events).toContain(`resume ${slot} 1`);
+  // Kept again afterwards, for the next follow-up.
+  expect(vms.suspended().map((t) => t.id)).toEqual([1]);
 });
