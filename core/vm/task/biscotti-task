@@ -313,6 +313,37 @@ function shape(display) {
   }
 }
 
+const HOME = "/home/cua";
+// Everything a moved task needs, minus what can be rebuilt: dependencies, caches and the browser's profile (Chromium
+// is running here; its pages don't move).
+const NOT_MOVED = ["node_modules", ".cache", ".npm", ".local/share/pnpm", ".pnpm-store", ".venv", "venv", "__pycache__", ".config/chromium", ".mozilla"];
+
+// The conversation so far as text, for the VM it moves to: what was asked, said and done, latest last, at most ~30k
+// characters (the start is dropped first).
+function transcriptOf(messages) {
+  const lines = [];
+  for (const m of messages ?? []) {
+    const parts = Array.isArray(m.content) ? m.content : [{ type: "text", text: String(m.content ?? "") }];
+    for (const c of parts) {
+      if (c.type === "text" && c.text) lines.push(`${m.role === "user" ? "Asked" : m.role === "assistant" ? "Said" : "Result"}: ${m.role === "toolResult" ? c.text.slice(0, 300) : c.text}`);
+      if (c.type === "toolCall") lines.push(`Ran ${c.name}: ${JSON.stringify(c.arguments ?? {}).slice(0, 300)}`);
+    }
+  }
+  const text = lines.join("\n");
+  return text.length > 30_000 ? `…${text.slice(-30_000)}` : text;
+}
+
+// Packs this VM's task up to move (the host's move): its home folder, conversation and branch base, in one line.
+async function exportTask(socket) {
+  try {
+    const messages = (await rpc({ type: "get_messages" }))?.data?.messages;
+    const tar = execFileSync("tar", ["czf", "-", "-C", HOME, ...NOT_MOVED.map((p) => `--exclude=${p}`), "."], { maxBuffer: 2 ** 31 - 1 });
+    socket.end(`${JSON.stringify({ type: "export", tar: tar.toString("base64"), transcript: transcriptOf(messages), base: session?.base })}\n`);
+  } catch (err) {
+    socket.end(`${JSON.stringify({ type: "error", message: err.message })}\n`);
+  }
+}
+
 // The task this VM is on, kept across a suspend: a later connection with `followup` (the owner's message, once the host
 // has resumed the VM from its snapshot) carries on in the same pi conversation, checkout and desktop.
 let session;
@@ -326,6 +357,7 @@ createServer({ allowHalfOpen: true }, (socket) => {
     if (!goal.trim()) return socket.end();
     const task = JSON.parse(goal);
     if (task.runner) return runOwn(task, socket);
+    if (task.export) return exportTask(socket);
     const followup = task.followup && session;
     if (task.followup && !session) {
       socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "This VM has no task to follow up on." }] } })}\n`);
@@ -335,8 +367,13 @@ createServer({ allowHalfOpen: true }, (socket) => {
     const interrupted = followup && session.forward && listeners.has(session.forward);
     if (interrupted) listeners.delete(session.forward);
     let base = followup ? session.base : undefined;
+    // A task moved here from another machine: its home folder as it was there, and (for a coding task) its checkout.
+    if (task.moved) {
+      execFileSync("tar", ["xzf", "-", "-C", HOME], { input: Buffer.from(task.moved.tar, "base64"), maxBuffer: 1 << 30 });
+      base = task.moved.base;
+    }
     try {
-      if (task.repo && !followup) base = checkout(task.repo);
+      if (task.repo && !followup && !task.moved) base = checkout(task.repo);
     } catch (err) {
       socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't check out the repo: ${err.message}` }] } })}\n`);
       return socket.end();
@@ -431,6 +468,9 @@ createServer({ allowHalfOpen: true }, (socket) => {
       return send({ type: "prompt", message });
     }
     shape(task.display);
+    if (task.moved) {
+      task.goal = `[This task was moved here from another machine part-way through. Your home folder is as it was there, without caches such as node_modules, virtualenvs and Docker's data: reinstall or restart what you need. Open pages and running programs didn't come along. What happened so far:]\n${task.moved.transcript}\n\n[Carry on from there with the goal:] ${task.goal}`;
+    }
     // The gate's tools may have changed since the snapshot was taken (reload.ts).
     await rpc({ type: "prompt", message: "/biscotti-reload" });
     // A model with a small context (the host says how big): pi compacts sooner and asks for less at a time.
