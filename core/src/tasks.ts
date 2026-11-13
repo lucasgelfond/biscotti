@@ -684,6 +684,10 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
         return "resumed";
       },
       stop: (id: number) => vms.stop(id),
+      async watch(id: number) {
+        const slot = vms.running().find((t) => t.id === id)?.slot;
+        return slot && watch ? await watch(slot) : undefined;
+      },
       move(id: number) {
         if (!vms.move) return "unavailable";
         const goal = vms.suspended?.().find((t) => t.id === id)?.goal ?? vms.running().find((t) => t.id === id)?.goal ?? `task #${id}`;

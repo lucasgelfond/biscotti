@@ -12,6 +12,7 @@ import { taskEvents, type TaskEvent } from "./tasks.ts";
 //   GET  /api/tasks                  the tasks, newest first
 //   GET  /api/tasks/<id>             one, with its steps
 //   GET  /api/tasks/<id>/screenshot  its last screenshot (PNG)
+//   GET  /api/tasks/<id>/watch       {url}: its live desktop, while it runs
 //   GET  /api/events                 a stream: "tasks" (the list) first, then "task" events as they happen
 //   POST /api/tasks                  {goal, display?}: start one
 //   POST /api/tasks/<id>/tell        {message}: tell a running task, or resume a kept one
@@ -23,6 +24,8 @@ export interface Actions {
   tell(id: number, message: string): string;
   stop(id: number): boolean;
   move(id: number): string;
+  // The live desktop's link for a running task's VM.
+  watch(id: number): Promise<string | undefined>;
 }
 
 const PORT = Number(process.env.API_PORT ?? 7700);
@@ -62,6 +65,7 @@ export function startApi(board: ReturnType<typeof taskBoard>, actions: Actions, 
         const png = board.screenshot(id);
         return png ? res.writeHead(200, { "Content-Type": "image/png" }).end(png) : json(res, 404, { error: "no screenshot" });
       }
+      if (req.method === "GET" && what === "tasks" && action === "watch") return json(res, 200, { url: (await actions.watch(id)) ?? null });
       if (req.method === "GET" && what === "events") {
         res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive", "X-Accel-Buffering": "no" });
         res.write(`event: tasks\ndata: ${JSON.stringify(board.list().map(({ steps, ...t }) => ({ ...t, last: steps.at(-1) })))}\n\n`);

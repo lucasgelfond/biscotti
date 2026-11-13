@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# The task API (core/src/api.ts) from a terminal or a multiplexer's keybindings, over Tailscale.
+#   BISCOTTI=biscotti.tail1234.ts.net biscotti-tasks [list | watch | show ID | start GOAL | tell ID MESSAGE | stop ID | move ID | desktop ID]
+set -euo pipefail
+api="https://${BISCOTTI:?set BISCOTTI to your biscotti\'s Tailscale name}:7443/api"
+post() { curl -fsS -X POST -H 'Content-Type: application/json' "$api/$1" -d "${2:-{\}}"; echo; }
+case "${1:-list}" in
+  list) curl -fsS "$api/tasks" | jq -r '.tasks[] | "#\(.id)\t\(.status)\t\(.where // "-")\t\(.goal | .[0:80])"' | column -t -s $'\t' ;;
+  watch) curl -fsSN "$api/events" | sed -n 's/^data: //p' | jq -rc 'if type == "array" then "\(length) tasks" else "#\(.id) \(.type) \(.where // "") \(.tool // "") \((.text // "") | .[0:120])" end' ;;
+  show) curl -fsS "$api/tasks/$2" | jq -r '"#\(.id) \(.status) \(.where // "")\n\(.goal)\n", (.steps[] | "  \(.tool // "·") \((.text // "") | .[0:140])"), "\n\(.report // "")"' ;;
+  start) post tasks "$(jq -n --arg g "$2" '{goal: $g}')" ;;
+  tell) post "tasks/$2/tell" "$(jq -n --arg m "$3" '{message: $m}')" ;;
+  stop) post "tasks/$2/stop" ;;
+  move) post "tasks/$2/move" ;;
+  desktop) curl -fsS "$api/tasks/$2/watch" | jq -r '.url // "not running"' ;;
+  *) sed -n 2,3p "$0"; exit 1 ;;
+esac
