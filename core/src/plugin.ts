@@ -33,6 +33,8 @@ export interface TaskOptions {
   runner?: Record<string, string>;
   model?: string;
   timeoutMs?: number;
+  // The desktop's shape: "mobile" (portrait, phone-sized) when the owner will watch from a phone, "desktop" otherwise.
+  display?: "mobile" | "desktop";
 }
 
 export interface TaskResult {
