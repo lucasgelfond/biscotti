@@ -14,6 +14,7 @@ test("lists tasks, streams their events, and takes actions, for the owner only",
     tell: (id, message) => (told.push(`tell ${id} ${message}`), "told"),
     stop: (id) => (told.push(`stop ${id}`), true),
     move: (id) => (told.push(`move ${id}`), "moving"),
+    watch: async () => undefined,
   }, undefined, 0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
   const as = { "Tailscale-User-Login": "owner@github" };
