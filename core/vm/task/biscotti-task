@@ -365,7 +365,7 @@ async function setUpBox({ key, repo, setup }, socket) {
       if (code !== 0) throw new Error(`the setup command (${setup}) exited with ${code}`);
     }
     execFileSync("chown", ["-R", "cua:cua", HOME]);
-    say({ type: "box", ok: true });
+    say({ type: "box", ok: true, hostKey: readFileSync("/etc/ssh/ssh_host_ed25519_key.pub", "utf8").trim().split(" ").slice(0, 2).join(" ") });
   } catch (err) {
     say({ type: "box", ok: false, error: err.message });
   }
