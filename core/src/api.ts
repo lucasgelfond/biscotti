@@ -102,7 +102,13 @@ export function startApi(board: ReturnType<typeof taskBoard>, actions: Actions, 
           const { repo, base, key, setup } = await read(req);
           if (typeof key !== "string") return json(res, 400, { error: "an ssh public key, please" });
           const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-          return json(res, 200, await box.open({ repo: str(repo), base: str(base), key, setup: str(setup) }));
+          // A box whose asker went away before it was ready (an app sent to the background, a client that gave up) is
+          // closed, so it's kept to open again rather than left open with no one on it.
+          let gone = false;
+          res.on("close", () => (gone = !res.writableEnded));
+          const opened = await box.open({ repo: str(repo), base: str(base), key, setup: str(setup) });
+          if (gone) return void (await box.close(opened.id));
+          return json(res, 200, opened);
         }
         if (req.method === "DELETE" && n && !action) {
           if (url.searchParams.get("discard")) return json(res, 200, { discarded: await box.discard(id) });

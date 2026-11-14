@@ -182,7 +182,11 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
     }
     emit({ id: task.id, type: "kept", slot: vm.slot, where: where(vm.slot) });
     suspended.push({ id: task.id, goal: task.goal, slot: vm.slot, at: Date.now() });
-    for (const old of suspended.splice(0, Math.max(0, suspended.length - SUSPENDED_MAX))) await keep.discard(old.slot, String(old.id)).catch(() => {});
+    for (const old of suspended.splice(0, Math.max(0, suspended.length - SUSPENDED_MAX))) {
+      await keep.discard(old.slot, String(old.id)).catch(() => {});
+      // Off the board's kept list too, which otherwise kept listing it.
+      emit({ id: old.id, type: "done", text: "Discarded (too many kept)" });
+    }
     saveSuspended();
   }
 

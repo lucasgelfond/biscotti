@@ -27,3 +27,16 @@ test("lists a kept box from before the database as a box, with its repo", () => 
   const board = taskBoard(() => [{ id: 9, goal: "Box on o/r", slot: 1, at: 1 }]);
   expect(board.list().find((t) => t.id === 9)).toMatchObject({ kind: "box", repo: "o/r", status: "kept" });
 });
+
+test("a kept row whose VM was dropped (over the keep limit) is listed as done", () => {
+  const kept = [{ id: 31, goal: "Box on o/r", slot: 1, at: 1 }];
+  const board = taskBoard(() => kept);
+  const at = Date.now();
+  for (const id of [30, 31]) {
+    taskEvents.emit("event", { id, type: "started", goal: "Box on o/r", kind: "box", slot: 1, where: "local", at });
+    taskEvents.emit("event", { id, type: "kept", slot: 1, where: "local", at: at + 1 });
+  }
+  expect(board.get(30)?.status).toBe("kept");
+  board.list();
+  expect([board.get(30)?.status, board.get(31)?.status]).toEqual(["done", "kept"]);
+});

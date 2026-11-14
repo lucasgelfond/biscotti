@@ -69,7 +69,11 @@ export function taskBoard(kept: () => { id: number; goal: string; slot: number; 
   return {
     // Newest first.
     list(): BoardTask[] {
-      for (const k of kept()) {
+      // Listed as kept only while its VM still is (one dropped for being over the limit, from before that was recorded).
+      const keptNow = kept();
+      const keptIds = new Set(keptNow.map((k) => k.id));
+      for (const t of tasks.values()) if (t.status === "kept" && !keptIds.has(t.id)) t.status = "done";
+      for (const k of keptNow) {
         if (tasks.has(k.id)) continue;
         const repo = /^Box on (.+)$/.exec(k.goal)?.[1];
         const kind = k.goal.startsWith("Box") ? "box" : "task";
