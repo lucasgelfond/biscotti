@@ -1,4 +1,5 @@
-# The biscotti app (iPhone, iPad and Mac): `brew install xcodegen && xcodegen` makes biscotti.xcodeproj. See README.md.
+# The biscotti app (iPhone, iPad and Mac): `TEAM_ID=… BUNDLE_PREFIX=… xcodegen` makes biscotti.xcodeproj (and the
+# Info.plist and entitlements below). How to build, sign and install: the comment at the top of Sources/App.swift.
 name: biscotti
 options:
   bundleIdPrefix: ${BUNDLE_PREFIX}

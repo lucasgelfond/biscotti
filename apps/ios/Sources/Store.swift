@@ -8,13 +8,24 @@ final class Store {
     var tasks: [Int: TaskItem] = [:]
     var connected = false
     var error: String?
+    /// The gate didn't answer at all (no such name, no route, timed out): it's only on the tailnet, so Tailscale is off
+    /// (or the address is wrong). iOS won't tell one app whether another's VPN is up, and every iPhone has utun
+    /// interfaces of its own, so whether the gate answers is the check. Shows the Tailscale prompt (TailscaleView).
+    var offTailnet = false
+    /// Checking whether the gate answers.
+    var checking = false
+    /// The address is being changed (SetupView).
+    var editingHost = false
     var host: String { didSet { UserDefaults.standard.set(host, forKey: "host"); restart() } }
+
+    /// The owner's biscotti, used until another address is saved.
+    static let defaultHost = "https://biscotti-4.tail396c12.ts.net:7443"
 
     private var stream: Task<Void, Never>?
     var api: API? { API(host: host) }
 
     init() {
-        host = UserDefaults.standard.string(forKey: "host") ?? ""
+        host = UserDefaults.standard.string(forKey: "host") ?? Store.defaultHost
         restart()
     }
 
@@ -26,10 +37,20 @@ final class Store {
     func restart() {
         stream?.cancel()
         guard let api else { connected = false; return }
+        checking = true
         stream = Task { [weak self] in
             var pause: Duration = .seconds(1)
             while !Task.isCancelled {
                 do {
+                    // A quick answer first, so being off the tailnet shows in seconds rather than when the stream
+                    // (with its hour-long timeout) gives up.
+                    do {
+                        try await api.ping()
+                        await MainActor.run { self?.offTailnet = false; self?.checking = false }
+                    } catch {
+                        await MainActor.run { self?.offTailnet = API.unreachable(error); self?.checking = false }
+                        throw error
+                    }
                     try await api.events(
                         onList: { list in Task { @MainActor in self?.replace(list); self?.connected = true; self?.error = nil } },
                         onEvent: { event in Task { @MainActor in self?.apply(event) } })
