@@ -88,10 +88,13 @@ struct LiveTests {
         let acp = ACPConnection(url: url)
         let initialized = try await acp.connect()
         #expect(initialized["agentCapabilities"]?["loadSession"] == .bool(true))
-        let updates = Task { () -> [JSON] in
-            var seen: [JSON] = []
-            for await case .notification("session/update", let params) in acp.events { seen.append(params) }
-            return seen
+        let updates = Task { () -> (updates: [JSON], board: [JSON]) in
+            var seen: [JSON] = [], board: [JSON] = []
+            for await case .notification(let method, let params) in acp.events {
+                if method == "session/update" { seen.append(params) }
+                if method == "_biscotti/session" { board.append(params) }
+            }
+            return (seen, board)
         }
         let new = try await acp.request("session/new", ["cwd": "/", "mcpServers": [], "_meta": ["biscotti": ["display": "mobile"]]])
         let id = try #require(new["sessionId"]?.string)
@@ -108,7 +111,11 @@ struct LiveTests {
         // A VM takes no prompts, and says so.
         await #expect(throws: RPCError.self) { _ = try await acp.request("session/prompt", ["sessionId": "34", "prompt": [["type": "text", "text": "hi"]]]) }
         await acp.close()
-        let seen = await updates.value.filter { $0["sessionId"]?.string == id }.compactMap { $0["update"]?["sessionUpdate"]?.string }
+        let got = await updates.value
+        let seen = got.updates.filter { $0["sessionId"]?.string == id }.compactMap { $0["update"]?["sessionUpdate"]?.string }
+        // The board's own stream: this session's changes, without following it.
+        let changes = got.board.compactMap { try? $0["session"]?.decode(Session.Info.self) }.filter { $0.sessionId == id }
+        #expect(changes.contains { $0._meta?.biscotti?.status == .kept })
         #expect(seen.contains("user_message_chunk"))
         #expect(seen.contains("tool_call"))
         #expect(seen.contains("agent_message_chunk"))

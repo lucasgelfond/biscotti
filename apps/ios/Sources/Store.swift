@@ -2,12 +2,11 @@ import Foundation
 import Observation
 
 /// The board and its sessions' timelines, kept current from biscotti's ACP agent (ACPConnection): the list once per
-/// connection, then each session's session/update as it comes, so nothing polls. When the connection drops (the phone
-/// slept, Tailscale reconnected) it makes a new one, with a growing pause, and lists again.
+/// connection, then every session's changes as _biscotti/session on the connection's stream, so nothing polls. When the
+/// connection drops (the phone slept, Tailscale reconnected) it makes a new one, with a growing pause, and lists again.
 ///
-/// Over HTTP an agent's updates come on each session's own stream, so the store follows the sessions that can still
-/// change (working, kept, an open VM), the one on screen, and the next few numbers to come (biscotti numbers sessions
-/// one after another), so a task started elsewhere (by text, by the main agent) shows up as it starts.
+/// Over HTTP a session's timeline (its session/update) comes only on its own stream, so the store follows the one on
+/// screen, and the working ones (their rows show what they're doing).
 @MainActor @Observable
 final class Store {
     var sessions: [String: Session] = [:]
@@ -33,8 +32,6 @@ final class Store {
 
     /// The owner's biscotti, used until another address is saved.
     static let defaultHost = "https://biscotti-4.tail396c12.ts.net:7443"
-    /// How many numbers past the newest session to follow, for sessions started elsewhere.
-    static let lookahead = 3
 
     private var acp: ACPConnection?
     private var loop: Task<Void, Never>?
@@ -160,6 +157,12 @@ final class Store {
 
     private func handle(_ event: ACPConnection.Event) {
         switch event {
+        case .notification("_biscotti/session", let params):
+            guard let info = try? params["session"]?.decode(Session.Info.self), let id = info.sessionId else { return }
+            var s = sessions[id] ?? .placeholder(id)
+            s.apply(info)
+            sessions[id] = s
+            follow()
         case .notification("session/update", let params):
             guard let id = params["sessionId"]?.string, let update = params["update"] else { return }
             var s = sessions[id] ?? .placeholder(id)
@@ -178,13 +181,11 @@ final class Store {
         }
     }
 
-    /// Follows what can still change, and stops following what can't.
+    /// Follows the timelines on show (the session on screen, the working ones' rows), and stops following the rest.
     private func follow() {
         guard let acp else { return }
-        let newest = sessions.keys.compactMap(Int.init).max() ?? 0
-        var wanted = Set(sessions.values.filter { $0.isLive || $0.status == .kept || ($0.isVM && $0.status != .done) }.map(\.id))
+        var wanted = Set(sessions.values.filter(\.isLive).map(\.id))
         if let viewing { wanted.insert(viewing) }
-        if newest > 0 { for n in 1...Store.lookahead { wanted.insert(String(newest + n)) } }
         for id in wanted.subtracting(following) {
             following.insert(id)
             Task { do { try await acp.follow(id) } catch { if self.acp === acp { following.remove(id) } } }
@@ -231,8 +232,8 @@ final class Store {
         return id
     }
 
-    /// A message for a running task, or a follow-up for a kept one (which resumes it). Shown at once: the agent echoes
-    /// a follow-up, but not a message to a running task.
+    /// A message for a running task, or a follow-up for a kept one (which resumes it). Shown at once, and marked as
+    /// arrived when the agent echoes it.
     func tell(_ id: String, _ message: String) { prompt(id, message, echo: true) }
 
     private func prompt(_ id: String, _ text: String, echo: Bool) {
