@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -42,9 +43,9 @@ const toolReply = streamed([
   { type: "message_stop" },
 ]);
 
-async function gateWith(command: string, env: Record<string, string> = {}) {
+async function gateWith(command: string, env: Record<string, string> = {}, upstream = { url: "http://127.0.0.1:1", models: { main: "provider/main", task: "provider/task" } as Record<string, string> }) {
   const seen: { model: string; body: string }[] = [];
-  const gate = createGate({ llm: { url: "http://127.0.0.1:1", key: "unused" }, models: { main: "provider/main", task: "provider/task" }, send: async () => {} });
+  const gate = createGate({ llm: { url: upstream.url, key: "unused" }, models: upstream.models, send: async () => {} });
   gate.serve(backend({ PATH: process.env.PATH, CLAUDE_CODE_COMMAND: command, CLAUDE_CODE_MODELS: "main=opus", CLAUDE_CONFIG_DIR: "/tmp/claude-config", ...env }));
   gate.observe({ llm: ({ model }) => (response) => void seen.push({ model, body: response.body }) });
   const server = await gate.listen("127.0.0.1", 0);
@@ -156,13 +157,16 @@ test("streams a tool call back as OpenAI chunks, stops Claude Code before it act
 });
 
 test("fails with a status of its own when Claude Code isn't logged in, isn't there, or hit its limit", async () => {
-  const loggedOut = await gateWith(fakeClaude([], { loggedIn: false }).command);
-  const missing = await gateWith(join(tmpdir(), "no-such-claude"));
+  const none = { url: "http://127.0.0.1:1", models: { task: "provider/task" } };
+  const loggedOut = await gateWith(fakeClaude([], { loggedIn: false }).command, {}, none);
+  const missing = await gateWith(join(tmpdir(), "no-such-claude"), {}, none);
   const limited = await gateWith(
     fakeClaude([
       { type: "assistant", error: "rate_limit", message: { role: "assistant", content: [{ type: "text", text: "Claude AI usage limit reached|1763100000" }] } },
       { type: "result", subtype: "success", is_error: true, result: "Claude AI usage limit reached|1763100000" },
     ]).command,
+    {},
+    none,
   );
   const ask = { model: "main", stream: true, messages: [{ role: "user", content: "hi" }] };
 
@@ -178,7 +182,7 @@ test("fails with a status of its own when Claude Code isn't logged in, isn't the
 
 test("stops calling Claude Code once a reply is charged to usage credits instead of the plan", async () => {
   const overage = { type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", isUsingOverage: true, resetsAt: Math.floor(Date.now() / 1000) + 3600 } };
-  const gate = await gateWith(fakeClaude(textReply("hi", [overage])).command);
+  const gate = await gateWith(fakeClaude(textReply("hi", [overage])).command, {}, { url: "http://127.0.0.1:1", models: { task: "provider/task" } });
 
   const first = await gate.post({ model: "main", messages: [{ role: "user", content: "hi" }] });
   const second = await gate.post({ model: "main", messages: [{ role: "user", content: "hi again" }] });
@@ -235,4 +239,32 @@ test.runIf(process.env.CLAUDE_CODE_LIVE)("calls a tool through the real Claude C
   expect(res.status).toBe(200);
   expect(chunks.flatMap((c) => c.choices[0].delta.tool_calls ?? [])[0].function.name).toBe("web_search");
   expect(chunks.at(-1).choices[0].finish_reason).toBe("tool_calls");
+});
+
+test("sends a call to LLM_BASE_URL when Claude Code hits its limit, and keeps doing so for a while", async () => {
+  const asked: string[] = [];
+  const provider = createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    asked.push(JSON.parse(body).model);
+    res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "from the provider" }, finish_reason: "stop" }] }));
+  });
+  await new Promise<void>((r) => provider.listen(0, "127.0.0.1", r));
+  const limited = fakeClaude([
+    { type: "assistant", error: "rate_limit", message: { role: "assistant", content: [{ type: "text", text: "Claude AI usage limit reached|1763100000" }] } },
+    { type: "result", subtype: "success", is_error: true, result: "Claude AI usage limit reached|1763100000" },
+  ]);
+  const gate = await gateWith(limited.command, {}, { url: `http://127.0.0.1:${(provider.address() as AddressInfo).port}`, models: { main: "provider/main" } });
+
+  const first = await gate.post({ model: "main", messages: [{ role: "user", content: "hi" }] });
+  const runs = limited.entries().length;
+  const second = await gate.post({ model: "main", messages: [{ role: "user", content: "hi again" }] });
+  gate.close();
+  provider.close();
+
+  expect(first.status).toBe(200);
+  expect((await first.json()).choices[0].message.content).toBe("from the provider");
+  expect(second.status).toBe(200);
+  expect(asked).toEqual(["provider/main", "provider/main"]);
+  expect(limited.entries().length).toBe(runs);
 });
