@@ -194,9 +194,11 @@ export function createGate(opts: {
 
   // A task VM slot's listener gets the task set, only from that slot's VM (`peer`), and only requests addressed to the
   // gate (no DNS rebinding from a page).
-  const handler = (slot?: number, peer?: string) => (req: IncomingMessage, res: ServerResponse) => {
+  // `peer` may be a function, for a machine whose address is known only once it's up (nodes.ts).
+  const handler = (slot?: number, peer?: string | (() => string | undefined)) => (req: IncomingMessage, res: ServerResponse) => {
     const set = slot ? "tasks" : "main";
-    if (peer && req.socket.remoteAddress?.replace(/^::ffff:/, "") !== peer) return void res.writeHead(403).end();
+    const allowed = typeof peer === "function" ? (peer() ?? "") : peer;
+    if (allowed !== undefined && req.socket.remoteAddress?.replace(/^::ffff:/, "") !== allowed) return void res.writeHead(403).end();
     if (set === "tasks" && !TASK_HOSTS.test(req.headers.host ?? "")) return void res.writeHead(403).end();
     // A task VM asks for what the owner said since its task started, each message once.
     if (slot && req.method === "GET" && req.url === "/messages") {
@@ -242,7 +244,7 @@ export function createGate(opts: {
       proposals.delete(slot);
       return said;
     },
-    listen: (host: string, port: number, opts: { slot?: number; peer?: string } = {}) =>
+    listen: (host: string, port: number, opts: { slot?: number; peer?: string | (() => string | undefined) } = {}) =>
       new Promise<Server>((resolve, reject) => {
         const server = createServer(handler(opts.slot, opts.peer)).once("error", reject);
         server.listen(port, host, () => resolve(server));

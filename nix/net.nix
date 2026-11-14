@@ -35,11 +35,11 @@ let
       # (a slow model call or page lost the rest of a task). Keep it for as long as a task can run.
       ip netns exec ${ns} sysctl -qw net.netfilter.nf_conntrack_tcp_timeout_close_wait=7200 net.netfilter.nf_conntrack_tcp_timeout_fin_wait=7200
       # The VM's traffic leaves as the slot's address; the VM's gateway reaches the gate; the host reaches the VM's
-      # task listener (4000), cua-spacesd (3211), noVNC (6901) and Chromium
-      # DevTools (9223, for the vault to type into pages) at the slot's address.
+      # task listener (4000), cua-spacesd (3211), noVNC (6901), Chromium DevTools (9223, for the vault to type into
+      # pages) and sshd (22, a box's, core/src/boxes.ts) at the slot's address.
       ${rule ns "nat" "POSTROUTING" "-s 172.16.0.2 -o veth0 -j SNAT --to-source ${inside}"}
       ${rule ns "nat" "PREROUTING" "-i fc-task -d 172.16.0.1 -p tcp --dport 80 -j DNAT --to-destination ${host}:80"}
-      ${rule ns "nat" "PREROUTING" "-i veth0 -d ${inside} -p tcp -m multiport --dports 4000,3211,6901,9223 -j DNAT --to-destination 172.16.0.2"}
+      ${rule ns "nat" "PREROUTING" "-i veth0 -d ${inside} -p tcp -m multiport --dports 4000,3211,6901,9223,22 -j DNAT --to-destination 172.16.0.2"}
     '';
   host = rule null;
 in

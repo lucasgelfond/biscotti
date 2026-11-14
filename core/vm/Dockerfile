@@ -29,9 +29,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 
+# sshd for boxes (core/src/boxes.ts): keys only. Host keys are baked in, so every VM shares them.
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers cua\nX11Forwarding no\nAcceptEnv LANG LC_* COLORTERM TERM_PROGRAM\n' > /etc/ssh/sshd_config.d/biscotti.conf
+
+# jj, checked against GitHub's published digest.
+ARG JJ_VERSION=0.47.1
+RUN case "$TARGETARCH" in \
+      amd64) a=x86_64 sum=d4b657f622ee50929c8916466dfa3d6a6c17a0a32b50e7b2c793707ec9ebcad7 ;; \
+      arm64) a=aarch64 sum=0f300e1576de8dabe0a9dedf0b87ae44f8accea5cf54d9a342a51061c1fb1bcd ;; esac && \
+    curl -fsSL -o /tmp/jj.tgz "https://github.com/jj-vcs/jj/releases/download/v$JJ_VERSION/jj-v$JJ_VERSION-$a-unknown-linux-musl.tar.gz" && \
+    echo "$sum  /tmp/jj.tgz" | sha256sum -c - && mkdir /tmp/jj && tar -xzf /tmp/jj.tgz -C /tmp/jj && \
+    install -m 0755 "$(find /tmp/jj -type f -name jj | head -1)" /usr/local/bin/jj && rm -rf /tmp/jj /tmp/jj.tgz
+
 # Docker, for a task's own services (a database, a repo's docker compose). The guest kernel has no nftables masquerade,
 # so iptables is the legacy backend. Its data goes on the work disk (see rootfs.sh).
-RUN apt-get update && apt-get install -y --no-install-recommends docker.io docker-compose iptables \
+RUN apt-get update && apt-get install -y --no-install-recommends docker.io docker-cli docker-compose iptables \
     && update-alternatives --set iptables /usr/sbin/iptables-legacy \
     && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy \
     && rm -rf /var/lib/apt/lists/*
@@ -70,7 +84,7 @@ RUN curl -fsSL -o /etc/hosts.block \
 # adds the key).
 COPY task/package.json task/package-lock.json /opt/pi/
 RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /opt/pi/node_modules/.bin/playwright-mcp /usr/local/bin/
-COPY task/biscotti-task task/biscotti-start /usr/local/bin/
+COPY task/biscotti-task task/biscotti-start task/box-pi /usr/local/bin/
 COPY task/models.json task/mcp.json /home/cua/.pi/agent/
 COPY task/reload.ts task/lean.ts /home/cua/.pi/agent/extensions/
 COPY biscotti.html /opt/noVNC/

@@ -24,6 +24,8 @@ export interface Context {
   // A goal for a task VM, where this machine has them. With `repo` (a git bundle), the VM works on it in ~/repo and
   // its new commits come back as `bundle`; `model` names one of the gate's models.
   task?(goal: string, opts?: TaskOptions): Promise<TaskResult>;
+  // Set by a plugin that can read the owner's repos (GitHub): a repo as a git bundle, for boxes.
+  repos?: { bundle?(repo: string, base?: string): Promise<Buffer> };
 }
 
 export interface TaskOptions {
@@ -186,11 +188,13 @@ main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
 </style>
 <main>${PAGE_ART}${body}</main>`;
 
-// Where the gate reaches a port of the task VM in `slot`: slots 1 to 100 are this machine's (10.200.<slot>.2); slots above
-// 100 are an overflow machine's (NODE_HOST, nodes.ts), which forwards one port per slot and VM port to its VMs.
+// Where the gate reaches a port of the task VM in `slot`: slots 1 to 99 are this machine's (10.200.<slot>.2); slot
+// 100k + n is cloud machine k's (nodes.ts), which forwards one port per slot and VM port to its VMs.
 export const REMOTE_BASE = 100;
-export const REMOTE_PORTS: Record<number, number> = { 4000: 14000, 3211: 13200, 6901: 16900, 9223: 19200 };
-export const vmEndpoint = (slot: number, port: number) =>
-  slot > REMOTE_BASE && process.env.NODE_HOST
-    ? { host: process.env.NODE_HOST, port: REMOTE_PORTS[port] + slot - REMOTE_BASE }
-    : { host: `10.200.${slot}.2`, port };
+export const REMOTE_PORTS: Record<number, number> = { 4000: 14000, 3211: 13200, 6901: 16900, 9223: 19200, 22: 12200 };
+// Cloud machine k's Tailscale name (nodes.ts fills it in).
+export const nodeHosts = new Map<number, string>();
+export const vmEndpoint = (slot: number, port: number) => {
+  const host = slot > REMOTE_BASE ? nodeHosts.get(Math.floor(slot / REMOTE_BASE)) : undefined;
+  return host ? { host, port: REMOTE_PORTS[port] + (slot % REMOTE_BASE) } : { host: `10.200.${slot}.2`, port };
+};

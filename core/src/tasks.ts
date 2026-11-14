@@ -6,8 +6,9 @@ import { EventEmitter } from "node:events";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import type { createGate } from "./gate.ts";
+import { boxes } from "./boxes.ts";
 import { call } from "./http.ts";
-import { configuredNode, GATE_PORT_BASE, nodeAddress, tailscaleAddress } from "./nodes.ts";
+import { configuredNodes, GATE_PORT_BASE, tailscaleAddress } from "./nodes.ts";
 import { input, int, optional, REMOTE_BASE, str, text, vmEndpoint, type LocalTool, type TaskOptions, type TaskResult } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in one of three slots (network namespaces), with one always
@@ -46,6 +47,10 @@ export interface TaskEvent {
   text?: string;
   tool?: string;
   screenshot?: Buffer;
+  kind?: "task" | "box";
+  repo?: string;
+  ssh?: { host: string; port: number; user: string };
+  preview?: string;
 }
 export const taskEvents = new EventEmitter();
 taskEvents.setMaxListeners(100);
@@ -99,7 +104,7 @@ export interface Keep {
 
 // `busy` says whether a slot's task is in a tool call, which isn't going quiet.
 // `slots`: this machine's, then an overflow machine's (above REMOTE_BASE), used only when this machine's are all busy.
-export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: number) => boolean = () => false, keep?: Keep, slots = SLOTS) {
+export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: number) => boolean = () => false, keep?: Keep, slots = SLOTS, firstId = 0) {
   const free = [...slots];
   // Tasks waiting for a slot: any one, or (to resume a suspended VM) a particular one.
   const waiting: { fits: (slot: number) => boolean; resolve: (slot: number) => void }[] = [];
@@ -181,7 +186,7 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
     saveSuspended();
   }
 
-  let ids = Math.max(0, ...suspended.map((t) => t.id));
+  let ids = Math.max(firstId, ...suspended.map((t) => t.id));
   const running = new Map<number, Running & { stopped: AbortController }>();
 
   async function run(goal: string, onStart?: (slot: number, id: number) => void, opts: TaskOptions = {}): Promise<TaskResult> {
@@ -298,11 +303,50 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
     }
   }
 
+  // For boxes (boxes.ts), which share the slots and numbering with tasks.
+  async function hold(): Promise<Vm> {
+    const vm = await take();
+    warmUp();
+    return vm;
+  }
+  async function give(vm: Vm, box: { id: number; goal: string }) {
+    try {
+      await putAway(vm, box);
+    } finally {
+      release(vm.slot);
+    }
+  }
+  async function drop(vm: Vm) {
+    try {
+      await vm.stop();
+    } finally {
+      release(vm.slot);
+    }
+  }
+  async function reclaim(id: number): Promise<Vm | undefined> {
+    const i = suspended.findIndex((t) => t.id === id);
+    if (i < 0 || !keep) return undefined;
+    const [kept] = suspended.splice(i, 1);
+    saveSuspended();
+    const slot = await takeSlot(kept.slot);
+    try {
+      return await keep.resume(slot, String(id));
+    } catch (err) {
+      release(slot);
+      throw err;
+    }
+  }
+
   warmUp();
   return {
     run,
     resume,
     move,
+    hold,
+    give,
+    drop,
+    reclaim,
+    nextId: () => ++ids,
     suspended: (): Suspended[] => [...suspended],
     running: (): Running[] => [...running.values()].map(({ stopped, ...task }) => task),
     // Its report says it was stopped (its VM is kept, when it can be); false when there's no such task.
@@ -617,16 +661,23 @@ export function taskTools(vms: Pool, onReport: (goal: string, result: TaskResult
 
 // Task VMs for the gate, from the vms service at `socket`: each slot's listener on its link, the `task` plugins get
 // (with a coding task's model routed to its slot), and the task tool, whose reports go to `report`.
-export async function gateTasks(gate: ReturnType<typeof createGate>, socket: string, vmDir: string, report: (goal: string, result: TaskResult) => void) {
+export async function gateTasks(
+  gate: ReturnType<typeof createGate>,
+  socket: string,
+  vmDir: string,
+  report: (goal: string, result: TaskResult) => void,
+  bundle: () => ((repo: string, base?: string) => Promise<Buffer>) | undefined = () => undefined,
+  // The highest task number already used (the board's), so numbering carries on.
+  firstId = 0,
+) {
   for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot, peer: `10.200.${slot}.2` });
-  // An overflow machine, if one is set up (nodes.ts): its slots' VMs reach this gate over Tailscale, one port each, and
-  // only from that machine.
-  const node = configuredNode(process.env.DATA_DIR);
+  // Cloud machines, if set up (nodes.ts): each remote slot's VM reaches this gate over Tailscale on its own port, and
+  // only from its machine.
+  const node = configuredNodes(process.env.DATA_DIR);
   if (node) {
     const here = tailscaleAddress();
-    const peer = await nodeAddress(node.host);
-    if (!here) console.error("no Tailscale address here: the overflow machine's VMs can't reach the gate");
-    else for (const slot of node.slots) await gate.listen(here, GATE_PORT_BASE + slot, { slot, peer });
+    if (!here) console.error("no Tailscale address here: cloud machines' VMs can't reach the gate");
+    else for (const slot of node.slots) await gate.listen(here, GATE_PORT_BASE + slot, { slot, peer: () => node.peer(slot) });
   }
   const local = vmService(socket);
   const kept = suspendedService(socket);
@@ -638,7 +689,8 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
     file: process.env.DATA_DIR ? `${process.env.DATA_DIR}/suspended.json` : undefined,
   };
   const restoreAny = (slot: number) => (remote(slot) ? node!.restore(slot) : local(slot));
-  const vms = gatePool(taskVms(restoreAny, (slot) => !!gate.busy(slot), keep, [...SLOTS, ...(node?.slots ?? [])]), gate);
+  const pool = taskVms(restoreAny, (slot) => !!gate.busy(slot), keep, [...SLOTS, ...(node?.slots ?? [])], firstId);
+  const vms = gatePool(pool, gate);
   const doing = (slot: number) => {
     const call = gate.busy(slot);
     return call && `in ${call.tool} for ${Math.round((Date.now() - call.since) / 60_000)} min${call.tool === "vault_fill" ? ", likely waiting on the owner's yes" : ""}`;
@@ -647,6 +699,8 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
   const host = process.env.TAILNET_HOST;
   const password = () => (existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : "");
   const watch = host ? (slot: number) => (remote(slot) ? node!.watch(slot) : `https://${host}:${10440 + slot}/biscotti.html#password=${password()}`) : undefined;
+  const box = boxes(pool, gate, { bundle, watch });
+  void box.warmUp();
   return {
     async task(goal: string, { model, ...opts }: TaskOptions = {}) {
       let slot: number | undefined;
@@ -658,6 +712,7 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
     },
     tools: taskTools(vms, report, watch, doing),
     kept: () => vms.suspended?.() ?? [],
+    boxes: box,
     // For the app's API (api.ts): the same as the task tools, with reports going to the main agent as theirs do.
     actions: {
       start(goal: string, display?: "mobile" | "desktop") {

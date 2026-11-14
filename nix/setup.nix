@@ -82,6 +82,8 @@
       plugins=$(jq -r '.plugins[]' "$STATE/biscotti.json")
       has() { grep -qx "$1" <<< "$plugins"; }
       for n in $(seq ${toString vms.slots}); do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
+      # Each slot's sshd, for boxes.
+      for n in $(seq ${toString vms.slots}); do tailscale serve --bg --tcp=$((2200 + n)) "tcp://10.200.$n.2:22"; done
       # The vault's one-time forms, and Google's and other services' sign-in callbacks.
       tailscale serve --bg --https=9443 http://127.0.0.1:4791
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi

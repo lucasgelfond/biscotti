@@ -4,6 +4,7 @@
 // screenshot of the final screen.
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
 import { createServer } from "node:net";
 import { createInterface } from "node:readline";
 
@@ -344,6 +345,33 @@ async function exportTask(socket) {
   }
 }
 
+// A box (core/src/boxes.ts): authorize the key, check out the repo, run setup; each optional. Answers {type: "box", ok}.
+async function setUpBox({ key, repo, setup }, socket) {
+  const say = (event) => !socket.destroyed && socket.write(`${JSON.stringify(event)}\n`);
+  try {
+    if (key) {
+      mkdirSync(`${HOME}/.ssh`, { recursive: true, mode: 0o700 });
+      writeFileSync(`${HOME}/.ssh/authorized_keys`, `${key.trim()}\n`, { mode: 0o600 });
+      execFileSync("chown", ["-R", "cua:cua", `${HOME}/.ssh`]);
+    }
+    if (repo) {
+      checkout(repo);
+      execFileSync("jj", ["git", "init", "--colocate", REPO], { stdio: "ignore", env: { ...process.env, HOME } });
+    }
+    if (setup) {
+      const child = spawn("bash", ["-lc", setup], { cwd: existsSync(REPO) ? REPO : HOME, stdio: ["ignore", "pipe", "pipe"] });
+      for (const stream of [child.stdout, child.stderr]) createInterface({ input: stream }).on("line", (line) => say({ type: "setup", line }));
+      const [code] = await once(child, "close");
+      if (code !== 0) throw new Error(`the setup command (${setup}) exited with ${code}`);
+    }
+    execFileSync("chown", ["-R", "cua:cua", HOME]);
+    say({ type: "box", ok: true });
+  } catch (err) {
+    say({ type: "box", ok: false, error: err.message });
+  }
+  socket.end();
+}
+
 // The task this VM is on, kept across a suspend: a later connection with `followup` (the owner's message, once the host
 // has resumed the VM from its snapshot) carries on in the same pi conversation, checkout and desktop.
 let session;
@@ -358,6 +386,7 @@ createServer({ allowHalfOpen: true }, (socket) => {
     const task = JSON.parse(goal);
     if (task.runner) return runOwn(task, socket);
     if (task.export) return exportTask(socket);
+    if (task.box) return setUpBox(task.box, socket);
     const followup = task.followup && session;
     if (task.followup && !session) {
       socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "This VM has no task to follow up on." }] } })}\n`);
