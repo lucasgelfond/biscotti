@@ -3,7 +3,7 @@ import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { readBody } from "./http.ts";
-import { input, localTools, str, text, type Caller, type Observer, type Tools } from "./plugin.ts";
+import { input, localTools, str, text, type Caller, type Llm, type Observer, type Tools } from "./plugin.ts";
 
 // The gate holds every key: the model at /llm, every plugin's tools at /mcp, and the owner's approvals. Saved secrets
 // never reach the model provider: any in a model call becomes a placeholder.
@@ -68,6 +68,8 @@ export function createGate(opts: {
   const byTool = { main: new Map<string, Tools>(), tasks: new Map<string, Tools>() };
   const proposals = new Map<number, string[]>();
   const observers: Observer[] = [];
+  // Plugins' backends (Plugin.llm), by the model names they answer.
+  const backends = new Map<string, Llm>();
   const propose = localTools([
     {
       name: "propose",
@@ -164,14 +166,21 @@ export function createGate(opts: {
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
-    const model = opts.models[slot ? (slotModels.get(slot) ?? "task") : body.model];
+    const name = slot ? (slotModels.get(slot) ?? "task") : body.model;
+    const backend = backends.get(name);
+    const model = backend ? backend.models[name] : opts.models[name];
     if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
     const done = observers.map((o) => o.llm?.({ slot, model, request: body }));
-    const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
-      body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict), ...opts.llm.extra }),
-    });
+    const request = { ...body, model, tools: body.tools?.map(strict) };
+    const abort = new AbortController();
+    res.on("close", () => abort.abort());
+    const upstream = backend
+      ? await backend.complete(request, abort.signal)
+      : await fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
+          body: JSON.stringify({ ...request, ...opts.llm.extra }),
+        });
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
     const chunks: Uint8Array[] = [];
     for await (const chunk of upstream.body ?? []) {
@@ -238,6 +247,7 @@ export function createGate(opts: {
       if (tools.tasks) sets.tasks.push(tools.tasks);
     },
     observe: (observer: Observer) => void observers.push(observer),
+    serve: (llm: Llm) => Object.keys(llm.models).forEach((name) => backends.set(name, llm)),
     // What a task VM in `slot` proposed for the main agent, cleared as it's read.
     proposed(slot: number) {
       const said = proposals.get(slot) ?? [];

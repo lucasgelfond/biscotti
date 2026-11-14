@@ -79,8 +79,17 @@ export interface Observer {
   tool?(call: { name: string; args: Record<string, unknown>; slot?: number }): (result?: CallToolResult, error?: unknown) => void;
 }
 
+// A model backend in place of LLM_BASE_URL for some of the gate's models (`models`: main, task, code -> the backend's
+// model id). The gate scrubs, maps and observes the call as for any other; `complete` gets the OpenAI chat completions
+// request with `model` already mapped, and answers as an OpenAI-compatible API would (SSE when `stream` is set).
+export interface Llm {
+  models: Record<string, string>;
+  complete(body: Record<string, unknown>, signal: AbortSignal): Promise<Response>;
+}
+
 export interface Plugin {
   prompt?: string;
+  llm?(ctx: Context): Promise<Llm>;
   channel?(ctx: Context): Promise<Channel>;
   tools?(ctx: Context): Promise<Tools>;
   recall?(ctx: Context): Promise<Recall>;

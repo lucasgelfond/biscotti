@@ -44,6 +44,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, task: vms?.task, repos };
   const observers = await Promise.all(plugins.flatMap((p) => (p.observe ? [p.observe(ctx)] : [])));
   for (const observer of observers) gate.observe(observer);
+  for (const plugin of plugins) if (plugin.llm) gate.serve(await plugin.llm(ctx));
 
   const channelPlugin = plugins.find((p) => p.channel);
   if (!channelPlugin) throw new Error("biscotti.json needs a channel plugin, e.g. channels/spectrum");
