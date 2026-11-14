@@ -7,9 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 WORKDIR /app
 # Dependencies from the lockfile alone, so a code change doesn't refetch them.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-# A stalled download can hang pnpm for good, so each try gets 10 minutes. The store is a build cache, so a try (or the
-# next build) carries on from what the last one downloaded, on a slow connection too.
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store for try in 1 2 3 4 5 6; do timeout 600 pnpm fetch --prod --store-dir /pnpm-store && exit 0; done; exit 1
+# A stalled download can hang pnpm for good, so each try gets an hour: enough for the largest package (Claude Code's
+# binary, ~100 MB) on a slow connection. The store is a build cache, so a try (or the next build) carries on from the
+# packages the last one finished.
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store for try in 1 2 3; do timeout 3600 pnpm fetch --prod --store-dir /pnpm-store && exit 0; done; exit 1
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store pnpm install --offline --frozen-lockfile --prod --store-dir /pnpm-store --package-import-method copy
 CMD ["node", "core/src/main.ts"]
