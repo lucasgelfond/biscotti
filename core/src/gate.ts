@@ -53,6 +53,11 @@ export function scrub(node: unknown, secrets: { label: string; value: string }[]
   return walk(node);
 }
 
+// A plugin backend's answers that send a call to LLM_BASE_URL instead: usage credits needed, rate or usage limit,
+// unavailable (not logged in, not installed).
+const FALLBACK_STATUSES = new Set([402, 429, 503]);
+const FALLBACK_MS = Number(process.env.LLM_FALLBACK_MIN ?? 10) * 60_000;
+
 export function createGate(opts: {
   // Any OpenAI-compatible API (AI Gateway, OpenRouter, OpenAI, a local server, …).
   // extra: fields every model call carries, for the API's own options (LLM_EXTRA, e.g. a gateway's caching or region).
@@ -163,24 +168,36 @@ export function createGate(opts: {
   const slotTasks = new Map<number, number>();
   const slotAsked = new Map<number, string>();
 
+  // Models whose plugin backend failed recently, until when (see FALLBACK_STATUSES).
+  const benched = new Map<string, number>();
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
     const name = slot ? (slotModels.get(slot) ?? "task") : body.model;
-    const backend = backends.get(name);
-    const model = backend ? backend.models[name] : opts.models[name];
+    const fallback = opts.models[name];
+    const backend = (Date.now() < (benched.get(name) ?? 0) && fallback) ? undefined : backends.get(name);
+    let model = backend ? backend.models[name] : fallback;
     if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
     const done = observers.map((o) => o.llm?.({ slot, model, request: body }));
-    const request = { ...body, model, tools: body.tools?.map(strict) };
     const abort = new AbortController();
     res.on("close", () => abort.abort());
-    const upstream = backend
-      ? await backend.complete(request, abort.signal)
-      : await fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
-          body: JSON.stringify({ ...request, ...opts.llm.extra }),
-        });
+    const direct = (m: string) =>
+      fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
+        body: JSON.stringify({ ...body, model: m, tools: body.tools?.map(strict), ...opts.llm.extra }),
+      });
+    let upstream = backend
+      ? await backend.complete({ ...body, model, tools: body.tools?.map(strict) }, abort.signal).catch(() => new Response(null, { status: 503 }))
+      : await direct(model);
+    // A plugin's backend that's out of usage, logged out or unavailable: the call goes to LLM_BASE_URL instead, and so
+    // do this model's next calls for a while.
+    if (backend && fallback && FALLBACK_STATUSES.has(upstream.status)) {
+      console.error(`model ${name}: the plugin's backend answered ${upstream.status}; using ${fallback} for ${FALLBACK_MS / 60_000} min`);
+      benched.set(name, Date.now() + FALLBACK_MS);
+      model = fallback;
+      upstream = await direct(fallback);
+    }
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
     const chunks: Uint8Array[] = [];
     for await (const chunk of upstream.body ?? []) {
