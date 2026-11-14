@@ -357,8 +357,11 @@ async function setUpBox({ key, repo, setup }, socket) {
       execFileSync("chown", ["-R", "cua:cua", `${HOME}/.ssh`]);
     }
     if (repo) {
-      checkout(repo);
+      const base = checkout(repo);
+      const jj = (...args) => execFileSync("jj", ["-R", REPO, ...args], { stdio: "ignore", env: { ...process.env, HOME } });
       execFileSync("jj", ["git", "init", "--colocate", REPO], { stdio: "ignore", env: { ...process.env, HOME } });
+      // The checkout has no remote, so trunk() would be the root: diffs are against the commit the box started from.
+      jj("config", "set", "--repo", 'revset-aliases."trunk()"', base);
     }
     if (setup) {
       const child = spawn("bash", ["-lc", setup], { cwd: existsSync(REPO) ? REPO : HOME, stdio: ["ignore", "pipe", "pipe"] });

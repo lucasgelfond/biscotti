@@ -186,6 +186,12 @@ export function boxes(
       return box;
     },
 
+    // Closed if open, then its kept VM deleted.
+    async discard(id: number) {
+      if (open.has(id)) await this.close(id);
+      return pool.forget(id);
+    },
+
     list: (): Box[] => [...open.values()].map((h) => h.box),
     warmUp,
   };
