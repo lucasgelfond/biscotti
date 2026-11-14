@@ -49,3 +49,29 @@ test("lists tasks, streams their events, and takes actions, for the owner only",
   expect(told).toEqual(["start book it", "tell 1 two seats", "stop 1", "move 1"]);
   server.close();
 });
+
+test("a box whose asker went away before it was ready is closed", async () => {
+  delete process.env.API_OWNER;
+  let ready!: () => void;
+  const closed: number[] = [];
+  const box = {
+    open: async () => (await new Promise<void>((r) => (ready = r)), { id: 3 } as never),
+    close: async (id: number) => (closed.push(id), true),
+    reopen: async () => undefined,
+    list: () => [],
+    discard: async () => false,
+  };
+  const actions = { start: async () => 1, tell: () => "", stop: () => false, move: () => "", watch: async () => undefined };
+  const server = await startApi(taskBoard(), actions, undefined, 0, box);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const asking = new AbortController();
+  const request = fetch(`${base}/boxes`, { method: "POST", headers: { "Tailscale-User-Login": "owner@github" }, body: JSON.stringify({ key: "ssh-ed25519 AAAA" }), signal: asking.signal }).catch(() => undefined);
+  await new Promise((r) => setTimeout(r, 100));
+  asking.abort();
+  await request;
+  await new Promise((r) => setTimeout(r, 50));
+  ready();
+  await new Promise((r) => setTimeout(r, 50));
+  expect(closed).toEqual([3]);
+  server.close();
+});
