@@ -156,8 +156,8 @@ export function taskVms(
       return release(vm.slot);
     }
     release(vm.slot);
-    emit({ id, type: "kept", slot: vm.slot, where: where(vm.slot) });
     kept.push({ id, goal, slot: vm.slot, at: Date.now() });
+    emit({ id, type: "kept", slot: vm.slot, where: where(vm.slot) });
     for (const old of kept.splice(0, Math.max(0, kept.length - KEPT_MAX))) {
       await hostOf.get(old.slot)?.discard?.(old.slot, old.id).catch(() => {});
       emit({ id: old.id, type: "done", text: "Deleted (too many kept)" });

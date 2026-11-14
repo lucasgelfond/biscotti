@@ -13,14 +13,14 @@ import { sql } from "drizzle-orm";
 //                    _meta.biscotti.display: "mobile" (a phone-shaped desktop: the iPhone app's) or "desktop"
 //   session/prompt   the goal, or the owner's message for a running or kept task; answered when the task reports
 //   session/cancel   stop it (its VM is kept)
-//   session/load     its history replayed; session/resume and session/close are accepted (every connection follows all)
+//   session/load     its history replayed, and followed; session/resume follows it, session/close stops
 //   session/delete   its kept VM deleted, and its row
 //
 // What a task does comes as session/update: the goal and the owner's messages (user_message_chunk), each tool call
 // (tool_call), what it says and its report, with its screenshot (agent_message_chunk), and session_info_update as its
-// status changes. Every connection is sent every session's updates (one owner, a few devices); over HTTP they reach
-// only the sessions whose streams it opened, so each change also comes as _biscotti/session {session: SessionInfo} on
-// the connection's own stream, for a board without polling. Plugins add methods of
+// status changes, to each connection that opened the session (session/new, prompt, load or resume). Every
+// connection also gets each change of every session as _biscotti/session {session: SessionInfo} on its own stream,
+// for a board without following each session. Plugins add methods of
 // their own (`extension`), named _biscotti/…; this one has _biscotti/watch {sessionId} -> {url}, the live desktop.
 
 // What the board knows of a session (in _meta.biscotti).
@@ -118,7 +118,11 @@ export default {
     if (!ctx.vms) return;
     const vms = ctx.vms;
     const tasks = board(ctx);
-    const connections = new Set<acp.AgentContext>();
+    // Each open connection (keyed by the SDK's connection object, which every request's context shares) and the
+    // sessions it opened.
+    const connections = new Map<object, { client: acp.AgentContext; follows: Set<string> }>();
+    const of = (client: acp.AgentContext) => (client as unknown as { cx: object }).cx;
+    const follow = (client: acp.AgentContext, sessionId: string) => connections.get(of(client))?.follows.add(sessionId);
     // Prompts waiting on a task's next report (or its failing or stopping).
     const waiting = new Map<number, ((stop: acp.StopReason) => void)[]>();
     let seq = 0;
@@ -130,8 +134,8 @@ export default {
       const sessionId = String(e.id);
       const content = updates(e, ++seq, tasks.screenshots.get(e.id));
       const status: acp.SessionUpdate = { sessionUpdate: "session_info_update", title: t.goal.split("\n")[0].slice(0, 200), updatedAt: new Date(t.updated).toISOString(), _meta: { biscotti: info(t, vms)._meta!.biscotti } };
-      for (const client of connections) {
-        for (const update of [...content, status]) void client.notify(acp.methods.client.session.update, { sessionId, update }).catch(() => {});
+      for (const { client, follows } of connections.values()) {
+        if (follows.has(sessionId)) for (const update of [...content, status]) void client.notify(acp.methods.client.session.update, { sessionId, update }).catch(() => {});
         // Also on the connection's own stream (a session's updates go only to that session's stream, over HTTP), so a
         // board learns of every session as it starts and changes without following each one.
         void client.notify("_biscotti/session", { session: info(t, vms) }).catch(() => {});
@@ -150,8 +154,8 @@ export default {
     const agent = acp
       .agent({ name: "biscotti" })
       .onConnect((connection) => {
-        connections.add(connection.client);
-        void connection.closed.finally(() => connections.delete(connection.client));
+        connections.set(of(connection.client), { client: connection.client, follows: new Set() });
+        void connection.closed.finally(() => connections.delete(of(connection.client)));
       })
       .onRequest(acp.methods.agent.initialize, () => ({
         protocolVersion: acp.PROTOCOL_VERSION,
@@ -160,14 +164,16 @@ export default {
         authMethods: [],
       }))
       .onRequest(acp.methods.agent.session.list, () => ({ sessions: [...tasks.rows.values()].sort((a, b) => b.updated - a.updated).map((t) => info(t, vms)) }))
-      .onRequest(acp.methods.agent.session.new, ({ params }) => {
+      .onRequest(acp.methods.agent.session.new, ({ params, client }) => {
         const id = vms.reserve();
+        follow(client, String(id));
         const display = (params._meta?.biscotti as { display?: string } | undefined)?.display;
         if (display === "mobile" || display === "desktop") displays.set(id, display);
         return { sessionId: String(id) };
       })
       .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
         const t = known(params.sessionId);
+        follow(client, params.sessionId);
         const history = [
           ...updates({ id: t.id, type: "queued", goal: t.goal }, 0),
           ...t.steps.flatMap((s, i) => updates({ id: t.id, type: s.owner ? "told" : "step", text: s.text, tool: s.tool }, i)),
@@ -176,14 +182,15 @@ export default {
         for (const update of history) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId, update });
         return {};
       })
-      .onRequest(acp.methods.agent.session.resume, ({ params }) => (known(params.sessionId), {}))
-      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .onRequest(acp.methods.agent.session.resume, ({ params, client }) => (known(params.sessionId), follow(client, params.sessionId), {}))
+      .onRequest(acp.methods.agent.session.close, ({ params, client }) => (connections.get(of(client))?.follows.delete(params.sessionId), {}))
       .onRequest(acp.methods.agent.session.delete, async ({ params }) => {
         await vms.forget(Number(params.sessionId));
         tasks.forget(Number(params.sessionId));
         return {};
       })
-      .onRequest(acp.methods.agent.session.prompt, async ({ params }) => {
+      .onRequest(acp.methods.agent.session.prompt, async ({ params, client }) => {
+        follow(client, params.sessionId);
         const id = Number(params.sessionId);
         const message = params.prompt.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n").trim();
         if (!message) throw acp.RequestError.invalidParams(undefined, "a prompt with text, please");
