@@ -45,6 +45,8 @@ final class AppTests: XCTestCase {
         composer.typeText("Somewhere with a counter")
         app.buttons["Send"].tap()
         XCTAssertTrue(app.staticTexts["Noted: Somewhere with a counter"].waitForExistence(timeout: 15))
+        // The agent echoes it; it's shown once.
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "label == %@", "Somewhere with a counter")).count, 1)
 
         // Its report and screenshot.
         XCTAssertTrue(app.staticTexts["Report"].waitForExistence(timeout: 30))
