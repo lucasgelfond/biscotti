@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 
-# sshd for boxes (core/src/boxes.ts): keys only. Host keys are baked in, so every VM shares them.
+# sshd for boxes (core/src/boxes.ts): keys only. Each box replaces the image's host keys with its own (biscotti-task's setUpBox).
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-server \
     && rm -rf /var/lib/apt/lists/* \
     && printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers cua\nX11Forwarding no\nAcceptEnv LANG LC_* COLORTERM TERM_PROGRAM\n' > /etc/ssh/sshd_config.d/biscotti.conf

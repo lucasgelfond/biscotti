@@ -349,6 +349,22 @@ async function exportTask(socket) {
 async function setUpBox({ key, repo, setup }, socket) {
   const say = (event) => !socket.destroyed && socket.write(`${JSON.stringify(event)}\n`);
   try {
+    // Every VM starts from the same image and snapshot, so the box makes its own host keys the first time it's set up
+    // (they live on its work disk, so a kept box keeps them) and sshd reloads them.
+    if (!existsSync("/etc/ssh/biscotti-box")) {
+      for (const type of ["ed25519", "ecdsa", "rsa"]) rmSync(`/etc/ssh/ssh_host_${type}_key`, { force: true }), rmSync(`/etc/ssh/ssh_host_${type}_key.pub`, { force: true });
+      execFileSync("ssh-keygen", ["-A"], { stdio: "ignore" });
+      writeFileSync("/etc/ssh/biscotti-box", "");
+      execFileSync("pkill", ["-HUP", "-x", "sshd"], { stdio: "ignore" });
+      // Answer once sshd serves the new key, so the owner's first ssh sees the key the box reports.
+      const pub = readFileSync("/etc/ssh/ssh_host_ed25519_key.pub", "utf8").split(" ")[1];
+      for (let i = 0; i < 50; i++) {
+        try {
+          if (execFileSync("ssh-keyscan", ["-t", "ed25519", "127.0.0.1"], { stdio: ["ignore", "pipe", "ignore"], timeout: 2000 }).toString().includes(pub)) break;
+        } catch {}
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
     if (key) {
       mkdirSync(`${HOME}/.ssh`, { recursive: true, mode: 0o700 });
       // Each of the owner's devices adds its key.
