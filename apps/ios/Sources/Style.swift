@@ -1,21 +1,20 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#else
+import AppKit
+#endif
 
 // The installer's look (installer/Sources/BiscottiInstaller/App.swift): rounded bold titles, the accent color for
-// what's happening, quiet secondary text, capsules.
+// what's happening, quiet secondary text, capsules. Status as Paseo draws it: a small dot, a turning ring while it works.
 extension Font {
     static let hero = Font.system(size: 40, weight: .bold, design: .rounded)
     static let label = Font.system(.subheadline, design: .rounded).weight(.semibold)
 }
 
-/// A task's status as a capsule: the accent color while it works, quieter once it's done.
-struct StatusPill: View {
-    var status: TaskItem.Status
-    var body: some View {
-        Text(label).font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.15))).foregroundStyle(color)
-    }
-    private var label: String {
-        switch status {
+extension Session.Status {
+    var label: String {
+        switch self {
         case .queued: "Waiting"
         case .running: "Working"
         case .moving: "Moving"
@@ -24,36 +23,98 @@ struct StatusPill: View {
         case .failed: "Failed"
         }
     }
-    private var color: Color {
-        switch status {
+    var color: Color {
+        switch self {
         case .queued, .moving: .orange
-        case .running: .accentColor
-        case .kept: .secondary
-        case .done: .green
+        case .running: .blue
+        case .kept: .green
+        case .done: .secondary
         case .failed: .red
         }
     }
 }
 
-/// Where a task runs: this machine or the cloud.
-struct PlaceBadge: View {
-    var place: TaskItem.Place?
-    var body: some View {
-        if let place {
-            Label(place == .cloud ? "Cloud" : "Local", systemImage: place == .cloud ? "cloud" : "house")
-                .font(.caption).foregroundStyle(.secondary).labelStyle(.titleAndIcon)
+extension Session {
+    /// Its status in words: an ssh VM is open or closed rather than working or kept.
+    var statusLabel: String {
+        guard isVM else { return status.label }
+        switch status {
+        case .running: return "Open"
+        case .kept: return "Closed"
+        case .queued: return "Setting up"
+        default: return status.label
         }
     }
 }
 
-extension TaskItem.Step {
-    var line: String {
-        if let tool { return text.map { "\(tool) \($0)" } ?? tool }
-        return text ?? ""
+/// A session's status: a dot, or a ring turning around it while it works.
+struct StatusDot: View {
+    var status: Session.Status
+    @State private var turning = false
+
+    var body: some View {
+        ZStack {
+            if status == .running || status == .moving {
+                Circle().stroke(status.color.opacity(0.3), lineWidth: 1.5)
+                Circle().trim(from: 0, to: 0.25).stroke(status.color.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .rotationEffect(.degrees(turning ? 360 : 0))
+                    .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: turning)
+                    .onAppear { turning = true }
+            }
+            Circle().fill(status.color.opacity(status == .done ? 0.4 : 1)).frame(width: 6, height: 6)
+        }
+        .frame(width: 12, height: 12)
+        .accessibilityLabel(status.label)
     }
 }
 
-func ago(_ ms: Double) -> String {
-    let date = Date(timeIntervalSince1970: ms / 1000)
-    return date.formatted(.relative(presentation: .named))
+/// The status, in words, with its dot.
+struct StatusLabel: View {
+    var session: Session
+    var body: some View {
+        let status = session.status
+        HStack(spacing: 5) {
+            StatusDot(status: status)
+            Text(session.statusLabel).font(.caption.weight(.semibold)).foregroundStyle(status == .done ? Color.secondary : status.color)
+        }
+    }
+}
+
+/// A round button, as Paseo's composer has: send (the accent), or stop (red) while the task works.
+struct DiscButton: View {
+    var systemImage: String
+    var color: Color
+    var action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage).font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
+                .frame(width: 34, height: 34).background(Circle().fill(color))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Text with its markdown (bold, links, code) shown.
+func markdown(_ text: String) -> AttributedString {
+    (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+}
+
+func ago(_ date: Date) -> String { date.formatted(.relative(presentation: .named)) }
+
+/// A PNG's image, on either platform.
+func picture(_ data: Data) -> Image? {
+    #if os(iOS)
+    UIImage(data: data).map(Image.init(uiImage:))
+    #else
+    NSImage(data: data).map(Image.init(nsImage:))
+    #endif
+}
+
+func copy(_ text: String) {
+    #if os(iOS)
+    UIPasteboard.general.string = text
+    #else
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    #endif
 }

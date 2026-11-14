@@ -1,9 +1,11 @@
-// The biscotti app, for iPhone, iPad and Mac: your tasks from your biscotti (working, kept, done), each task's steps
-// as they happen, its report, screenshot and live desktop. Start, tell, follow up on, stop, and move tasks to the cloud
-// (long-press, or right-click on a Mac). Push notifications when a task reports or fails.
+// The biscotti app, for iPhone, iPad and Mac: your tasks from your biscotti (working, kept, done) and your ssh VMs,
+// each one's timeline as it happens (what it was asked, its tool calls, what it says, its report and screenshot), and
+// its live desktop. Start, tell, follow up on, stop, delete, and move tasks to the cloud (long-press, or right-click on
+// a Mac). Push notifications when a task reports or fails.
 //
-// It talks to the gate's task API (core/src/api.ts) over Tailscale, so the device has to be on the tailnet. There's
-// no sign-in: Tailscale says who's asking, and the gate lets only API_OWNER in.
+// It's an ACP client (agentclientprotocol.com): biscotti is an ACP agent at <base URL>/acp (plugins/api/index.ts),
+// and ACP.swift speaks its Streamable HTTP transport. It's reached over Tailscale, so the device has to be on the
+// tailnet. There's no sign-in: Tailscale says who's asking, and the gate lets only API_OWNER in.
 //
 // Build: TEAM_ID is your Apple developer team (developer.apple.com → Membership), BUNDLE_PREFIX your reverse domain.
 //   brew install xcodegen
@@ -27,24 +29,33 @@ struct BiscottiApp: App {
     #endif
     @State private var store = Store()
     @Environment(\.scenePhase) private var phase
+    @State private var slept = false
 
     var body: some Scene {
         WindowGroup {
             Group {
                 // Tailscale first: the board only once the gate answers.
-                if store.api == nil || store.editingHost { SetupView(store: store) }
+                if store.acpURL == nil || store.editingHost { SetupView(store: store) }
                 else if store.offTailnet { TailscaleView(store: store) }
-                else { TasksView(store: store) }
+                else { BoardView(store: store) }
             }
-            // Back from the Tailscale app (or from sleep): try again now.
-            .onChange(of: phase) { if phase == .active { store.restart() } }
+            .alert("That didn't work", isPresented: Binding(get: { store.problem != nil }, set: { if !$0 { store.problem = nil } })) {
+                Button("OK") { store.problem = nil }
+            } message: { Text(store.problem ?? "") }
+            // Back from the background (the Tailscale app, sleep): a new connection now, rather than waiting for the old
+            // one's streams to time out.
+            .onChange(of: phase) {
+                if phase == .background { slept = true }
+                if phase == .active && slept { slept = false; store.restart() }
+            }
             // Asked once the gate answers, so the Tailscale prompt comes before the notifications one.
             .task(id: store.connected) { if store.connected { await Push.ask(store: store) } }
         }
     }
 }
 
-/// Push notifications: the phone asks once, then gives the gate its token (push.ts sends the alerts).
+/// Push notifications: the phone asks once, then gives the gate its token (_biscotti/devices/register; the push plugin
+/// sends the alerts).
 ///
 /// Setting up the gate's side, once:
 /// 1. developer.apple.com → Certificates, IDs & Profiles → Keys → +, check Apple Push Notifications service (APNs),
@@ -60,7 +71,8 @@ enum Push {
 
     @MainActor static func ask(store: Store) async {
         Push.store = store
-        guard !asked else { return }
+        // UI tests (biscottiUITests) skip the notifications prompt.
+        guard !asked, !UserDefaults.standard.bool(forKey: "skipPush") else { return }
         asked = true
         #if os(iOS)
         guard (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) == true else { return }
@@ -75,7 +87,7 @@ enum Push {
         #else
         let sandbox = false
         #endif
-        Task { @MainActor in try? await store?.api?.register(device: hex, sandbox: sandbox) }
+        Task { @MainActor in store?.device = (hex, sandbox) }
     }
 }
 
