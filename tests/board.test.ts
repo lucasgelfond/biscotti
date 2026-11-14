@@ -22,3 +22,8 @@ test("keeps tasks and boxes in the database across a restart, numbering on from 
   expect(again.get(5)).toMatchObject({ kind: "box", repo: "o/r", ssh: { port: 2201 }, preview: "https://p" });
   expect(store.lastId()).toBe(5);
 });
+
+test("lists a kept box from before the database as a box, with its repo", () => {
+  const board = taskBoard(() => [{ id: 9, goal: "Box on o/r", slot: 1, at: 1 }]);
+  expect(board.list().find((t) => t.id === 9)).toMatchObject({ kind: "box", repo: "o/r", status: "kept" });
+});

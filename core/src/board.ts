@@ -70,7 +70,10 @@ export function taskBoard(kept: () => { id: number; goal: string; slot: number; 
     // Newest first.
     list(): BoardTask[] {
       for (const k of kept()) {
-        if (!tasks.has(k.id)) tasks.set(k.id, { id: k.id, kind: "task", goal: k.goal, status: "kept", slot: k.slot, where: k.slot > 100 ? "cloud" : "local", started: k.at, updated: k.at, steps: [], screenshot: false });
+        if (tasks.has(k.id)) continue;
+        const repo = /^Box on (.+)$/.exec(k.goal)?.[1];
+        const kind = k.goal.startsWith("Box") ? "box" : "task";
+        tasks.set(k.id, { id: k.id, kind, goal: k.goal, repo, status: "kept", slot: k.slot, where: k.slot > 100 ? "cloud" : "local", started: k.at, updated: k.at, steps: [], screenshot: false });
       }
       return [...tasks.values()].sort((a, b) => b.updated - a.updated);
     },
