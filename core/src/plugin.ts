@@ -70,7 +70,9 @@ export interface Recall {
 // Watches what goes through the gate (e.g. to trace it): each turn of the main agent, each model call and each tool
 // call, with saved secrets already placeholders. Each returns what to call once it's done; neither may throw.
 export interface Observer {
-  turn?(message: string): (reply?: string, error?: unknown) => void;
+  // `from` says whose message it is: the owner's own (`owner`), or something biscotti delivered, like a task report or
+  // a wake.
+  turn?(message: string, from: { owner?: boolean }): (reply?: string, error?: unknown) => void;
   llm?(call: { slot?: number; model: string; request: Record<string, unknown> }): (response: { status: number; body: string }) => void;
   tool?(call: { name: string; args: Record<string, unknown>; slot?: number }): (result?: CallToolResult, error?: unknown) => void;
 }
