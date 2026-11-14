@@ -57,7 +57,7 @@ export interface Host {
 // What happens to tasks and VMs, as events naming the task (or VM) number: for the owner's apps (the api plugin).
 export interface TaskEvent {
   id: number;
-  type: "queued" | "started" | "step" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
+  type: "queued" | "started" | "step" | "told" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
   at: number;
   goal?: string;
   slot?: number;
