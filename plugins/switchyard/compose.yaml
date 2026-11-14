@@ -1,0 +1,26 @@
+# NVIDIA's Switchyard (github.com/NVIDIA-NeMo/Switchyard), the model router (index.ts) at 127.0.0.1:4801, built here
+# (Dockerfile). On the host's network, to reach Claude Code's port in the gate (127.0.0.1:4802) and Bifrost's. Its
+# config is written from /var/lib/biscotti/.env before each start, so a changed setting takes a restart of setup.
+services:
+  switchyard-config:
+    image: biscotti/agent
+    command: ["node", "plugins/switchyard/write-config.ts", "/out", "/app/biscotti.json"]
+    env_file: /var/lib/biscotti/.env
+    network_mode: none
+    volumes:
+      - /var/lib/biscotti/switchyard:/out
+      - /var/lib/biscotti/biscotti.json:/app/biscotti.json:ro
+    restart: "no"
+
+  switchyard:
+    build: .
+    image: biscotti/switchyard:0.4.0-rc.2
+    network_mode: host
+    entrypoint:
+      - sh
+      - -c
+      - set -a && . /config/switchyard.env && exec switchyard-server --host 127.0.0.1 --port 4801 --config /config/switchyard.toml --routing-log-file /config/routing.jsonl
+    volumes: [/var/lib/biscotti/switchyard:/config]
+    depends_on:
+      switchyard-config: { condition: service_completed_successfully, restart: true }
+    restart: unless-stopped

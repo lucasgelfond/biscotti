@@ -73,8 +73,9 @@ export function createGate(opts: {
   const byTool = { main: new Map<string, Tools>(), tasks: new Map<string, Tools>() };
   const proposals = new Map<number, string[]>();
   const observers: Observer[] = [];
-  // Plugins' backends (Plugin.llm), by the model names they answer.
+  // Plugins' backends (Plugin.llm), by the model names they answer; upstream ones apart.
   const backends = new Map<string, Llm>();
+  const upstreams = new Map<string, Llm>();
   const propose = localTools([
     {
       name: "propose",
@@ -168,35 +169,41 @@ export function createGate(opts: {
   const slotTasks = new Map<number, number>();
   const slotAsked = new Map<number, string>();
 
-  // Models whose plugin backend failed recently, until when (see FALLBACK_STATUSES).
-  const benched = new Map<string, number>();
+  // Each plugin backend's models that failed recently, until when (see FALLBACK_STATUSES).
+  const benched = new Map<Llm, Map<string, number>>();
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
     const name = slot ? (slotModels.get(slot) ?? "task") : body.model;
-    const fallback = opts.models[name];
-    const backend = (Date.now() < (benched.get(name) ?? 0) && fallback) ? undefined : backends.get(name);
-    let model = backend ? backend.models[name] : fallback;
-    if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
-    const done = observers.map((o) => o.llm?.({ slot, model, request: body }));
+    // The ways to answer, in order: a plugin's backend, an upstream plugin's, LLM_BASE_URL. One that failed recently
+    // is skipped, unless it's the last.
+    const ways: { llm?: Llm; model: string }[] = [backends.get(name), upstreams.get(name)].flatMap((b) => (b ? [{ llm: b, model: b.models[name] }] : []));
+    if (opts.models[name]) ways.push({ model: opts.models[name] });
+    const live = ways.filter((w, i) => i === ways.length - 1 || Date.now() >= (benched.get(w.llm!)?.get(name) ?? 0));
+    if (!live.length) return void res.writeHead(400).end(`unknown model ${body.model}`);
+    let way = live[0];
+    const done = observers.map((o) => o.llm?.({ slot, model: way.model, request: body }));
     const abort = new AbortController();
     res.on("close", () => abort.abort());
-    const direct = (m: string) =>
-      fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
-        body: JSON.stringify({ ...body, model: m, tools: body.tools?.map(strict), ...opts.llm.extra }),
-      });
-    let upstream = backend
-      ? await backend.complete({ ...body, model, tools: body.tools?.map(strict) }, abort.signal).catch(() => new Response(null, { status: 503 }))
-      : await direct(model);
-    // A plugin's backend that's out of usage, logged out or unavailable: the call goes to LLM_BASE_URL instead, and so
+    const call = { name, slot, task: slot ? slotTasks.get(slot) : undefined };
+    const send = ({ llm: b, model }: { llm?: Llm; model: string }) =>
+      b
+        ? b.complete({ ...body, model, tools: body.tools?.map(strict) }, abort.signal, call).catch(() => new Response(null, { status: 503 }))
+        : fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
+            body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict), ...opts.llm.extra }),
+          });
+    let upstream = await send(way);
+    // A plugin's backend that's out of usage, logged out or unavailable: the call goes the next way instead, and so
     // do this model's next calls for a while.
-    if (backend && fallback && FALLBACK_STATUSES.has(upstream.status)) {
-      console.error(`model ${name}: the plugin's backend answered ${upstream.status}; using ${fallback} for ${FALLBACK_MS / 60_000} min`);
-      benched.set(name, Date.now() + FALLBACK_MS);
-      model = fallback;
-      upstream = await direct(fallback);
+    for (const next of live.slice(1)) {
+      if (!way.llm || !FALLBACK_STATUSES.has(upstream.status)) break;
+      console.error(`model ${name}: the plugin's backend answered ${upstream.status}; using ${next.model} for ${FALLBACK_MS / 60_000} min`);
+      benched.set(way.llm, (benched.get(way.llm) ?? new Map()).set(name, Date.now() + FALLBACK_MS));
+      await upstream.body?.cancel().catch(() => {});
+      way = next;
+      upstream = await send(way);
     }
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
     const chunks: Uint8Array[] = [];
@@ -264,7 +271,7 @@ export function createGate(opts: {
       if (tools.tasks) sets.tasks.push(tools.tasks);
     },
     observe: (observer: Observer) => void observers.push(observer),
-    serve: (llm: Llm) => Object.keys(llm.models).forEach((name) => backends.set(name, llm)),
+    serve: (llm: Llm) => Object.keys(llm.models).forEach((name) => (llm.upstream ? upstreams : backends).set(name, llm)),
     // What a task VM in `slot` proposed for the main agent, cleared as it's read.
     proposed(slot: number) {
       const said = proposals.get(slot) ?? [];
