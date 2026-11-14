@@ -238,7 +238,8 @@ export function createGate(opts: {
       told.delete(slot);
       return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(said));
     }
-    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot, task: slot && slotTasks.get(slot), asked: slot ? slotAsked.get(slot) : undefined })).catch((err) => {
+    const caller = slot ? { slot, task: slotTasks.get(slot), asked: slotAsked.get(slot) } : { session: new URL(req.url ?? "/", "http://gate").searchParams.get("session") ?? "main" };
+    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, caller)).catch((err) => {
       console.error(err);
       if (!res.headersSent) res.writeHead(502).end(String(err));
     });

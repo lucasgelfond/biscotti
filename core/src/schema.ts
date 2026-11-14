@@ -7,6 +7,8 @@ export const transcripts = sqliteTable("transcripts", {
   id: text().notNull().unique(),
   entry: text({ mode: "json" }).$type<FileEntry>().notNull(),
   text: text(),
+  // Which of the main agent's sessions ("main": the owner's texts; otherwise its number). Memory searches them all.
+  session: text().notNull().default("main"),
 });
 
 // Prompts the agent schedules for itself (crons.ts).
