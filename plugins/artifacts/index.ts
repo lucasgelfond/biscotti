@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { escapeHtml, input, localTools, PAGE_ART, PAGE_ART_TEXT, PAGE_STYLE, previewPng, str, text, type Plugin } from "@biscotti/core";
+import { escapeHtml, input, localTools, PAGE_ART, PAGE_ART_TEXT, PAGE_STYLE, str, text, type Plugin } from "@biscotti/core";
+import { previewPng } from "./preview.ts";
 
 // Pages the agent texts as links, under unguessable names, tailnet-only (tailscale serve): they open on the owner's devices, without iMessage previews.
 
