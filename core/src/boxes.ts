@@ -170,7 +170,11 @@ export function boxes(
     },
 
     async reopen(id: number, key: string): Promise<Box | undefined> {
-      if (open.has(id)) return open.get(id)!.box;
+      const held = open.get(id);
+      if (held) {
+        const hostKey = await prepare(held.vm, { key });
+        return (held.box = { ...held.box, hostKey: hostKey ?? held.box.hostKey });
+      }
       const goal = pool.suspended().find((t) => t.id === id)?.goal ?? `Box #${id}`;
       const vm = await pool.reclaim(id);
       if (!vm) return undefined;
