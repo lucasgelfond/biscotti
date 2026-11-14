@@ -351,7 +351,9 @@ async function setUpBox({ key, repo, setup }, socket) {
   try {
     if (key) {
       mkdirSync(`${HOME}/.ssh`, { recursive: true, mode: 0o700 });
-      writeFileSync(`${HOME}/.ssh/authorized_keys`, `${key.trim()}\n`, { mode: 0o600 });
+      // Each of the owner's devices adds its key.
+      const keys = existsSync(`${HOME}/.ssh/authorized_keys`) ? readFileSync(`${HOME}/.ssh/authorized_keys`, "utf8").split("\n").filter(Boolean) : [];
+      writeFileSync(`${HOME}/.ssh/authorized_keys`, `${[...new Set([...keys, key.trim()])].join("\n")}\n`, { mode: 0o600 });
       execFileSync("chown", ["-R", "cua:cua", `${HOME}/.ssh`]);
     }
     if (repo) {
