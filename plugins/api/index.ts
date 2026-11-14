@@ -4,7 +4,7 @@ import { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
 import { taskEvents, type Context, type Plugin, type TaskEvent, type Vms } from "@biscotti/core";
 import { sql } from "drizzle-orm";
 
-// The owner's apps (apps/ios, and Concourse in the dotfiles) reach biscotti as an ACP agent
+// The owner's apps (Concourse, in the dotfiles: its iPhone/Mac app and its Zellij plugin) reach biscotti as an ACP agent
 // (agentclientprotocol.com), over its Streamable HTTP transport at /acp on the owner's API. Each task, and each of a
 // plugin's VMs (ssh-vms), is a session, numbered as biscotti numbers them:
 //

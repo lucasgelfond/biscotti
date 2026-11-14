@@ -93,7 +93,7 @@
       if has mac-vnc; then tailscale serve --bg --https=9443 --set-path=/mac http://127.0.0.1:4794; fi
       if has artifacts; then tailscale funnel --https=443 off >/dev/null 2>&1 || true; tailscale serve --bg --https=443 http://127.0.0.1:8082; fi
       if has phoenix; then tailscale serve --bg --https=6006 http://127.0.0.1:6006; fi
-      # The task API for the iOS app and the multiplexer (core/src/api.ts): Tailscale names who's asking.
+      # The owner's API (plugins/api, ACP at /acp) for Concourse: Tailscale names who's asking.
       tailscale serve --bg --https=7443 http://127.0.0.1:7700
 
       # Huge pages reserved (the Mac): task VMs run on them.

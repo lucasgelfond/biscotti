@@ -3,7 +3,7 @@ import { taskEvents, type Plugin } from "@biscotti/core";
 import { ApnsClient, Errors, Notification } from "apns2";
 import { extension } from "../api/index.ts";
 
-// Push notifications to the owner's phones (apps/ios) when a task reports or fails, straight to Apple's APNs with a
+// Push notifications to the owner's phones (the Concourse app, in the dotfiles) when a task reports or fails, straight to Apple's APNs with a
 // token key. Settings: APNS_KEY_FILE (the .p8 from the Apple developer site), APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC
 // (the app's bundle ID). Phones register through the api plugin's ACP agent, _biscotti/devices/register {token,
 // sandbox} (a development build's token is a sandbox one), and are kept in the data directory.
