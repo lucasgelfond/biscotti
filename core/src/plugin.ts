@@ -82,9 +82,20 @@ export interface Observer {
 // A model backend in place of LLM_BASE_URL for some of the gate's models (`models`: main, task, code -> the backend's
 // model id). The gate scrubs, maps and observes the call as for any other; `complete` gets the OpenAI chat completions
 // request with `model` already mapped, and answers as an OpenAI-compatible API would (SSE when `stream` is set).
+// An `upstream` backend stands in for LLM_BASE_URL itself (a gateway in front of it): it serves its models where no
+// other backend does, and what falls back from one. A backend that answers 402, 429 or 503 is skipped for a while.
 export interface Llm {
   models: Record<string, string>;
-  complete(body: Record<string, unknown>, signal: AbortSignal): Promise<Response>;
+  upstream?: boolean;
+  complete(body: Record<string, unknown>, signal: AbortSignal, call: LlmCall): Promise<Response>;
+}
+
+// Whose call it is: the gate's model name (main, task, code, or another a backend serves), and for a task VM its
+// slot and task (one per run).
+export interface LlmCall {
+  name: string;
+  slot?: number;
+  task?: number;
 }
 
 export interface Plugin {
