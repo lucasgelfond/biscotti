@@ -38,8 +38,9 @@ const KEPT_MAX = Number(process.env.SUSPENDED_MAX ?? 6);
 const DISPLAY = process.env.TASK_DISPLAY === "mobile" ? "mobile" : "desktop";
 export const SLOTS = Array.from({ length: Number(process.env.VM_SLOTS ?? 2) }, (_, i) => i + 1);
 
-// This machine's VMs, from the vms service over its socket (vms-main.ts).
-export function localHost(socketPath: string): Host {
+// This machine's VMs, from the vms service over its socket (vms-main.ts). Their live desktops are on the tailnet at
+// 10440 + slot (`tailscale serve`), the password in the link's fragment, which the browser never sends to the server.
+export function localHost(socketPath: string, vmDir: string): Host {
   const vm = (slot: number): Vm => ({
     slot,
     stop: async () => void (await call(socketPath, "DELETE", `/vms/${slot}`)),
@@ -50,6 +51,9 @@ export function localHost(socketPath: string): Host {
     restore: async (slot) => (await call(socketPath, "POST", `/vms/${slot}`), vm(slot)),
     resume: async (slot, id) => (await call(socketPath, "POST", `/vms/${slot}/resume/${id}`), vm(slot)),
     discard: async (slot, id) => void (await call(socketPath, "DELETE", `/vms/${slot}/suspended/${id}`)),
+    watch: process.env.TAILNET_HOST
+      ? (slot) => `https://${process.env.TAILNET_HOST}:${10440 + slot}/biscotti.html#password=${existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : ""}`
+      : undefined,
   };
 }
 
@@ -384,7 +388,7 @@ export function taskTools(vms: Vms, doing?: (slot: number) => string | undefined
 // Task VMs through the gate: each slot's VM reaches the gate on its own listener; the gate knows which task each slot
 // runs (stamping its tool calls, routing its model), passes the owner's later messages to it, and appends what it
 // proposed to its report. Reports of tasks started for the main agent go to `report`.
-export async function gateTasks(gate: ReturnType<typeof createGate>, socket: string, vmDir: string, report: (goal: string, result: TaskResult) => void, file?: string) {
+export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host, report: (goal: string, result: TaskResult) => void, file?: string) {
   // Messages for tasks still waiting for a VM, given to the VM when it starts.
   const waiting = new Map<number, string[]>();
   const pool = taskVms(
@@ -408,11 +412,6 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, socket: str
   );
   const reportTo = (goal: string) => (r: Promise<TaskResult>) =>
     r.then((result) => report(goal, result), (err) => report(goal, { report: `The task failed: ${err.message}` }));
-
-  // The live desktop's password goes in the link's fragment, which the browser never sends to the server.
-  const tailnet = process.env.TAILNET_HOST;
-  const password = () => (existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : "");
-  const local: Host = { ...localHost(socket), watch: tailnet ? (slot) => `https://${tailnet}:${10440 + slot}/biscotti.html#password=${password()}` : undefined };
 
   const vms: Vms = {
     run: (goal, opts) => pool.run(goal, opts).result,

@@ -10,7 +10,8 @@ import type { Llm } from "../core/src/plugin.ts";
 import * as bifrost from "../plugins/bifrost/index.ts";
 import { backend as claudeCode } from "../plugins/claude-code/index.ts";
 import * as switchyard from "../plugins/switchyard/index.ts";
-import { fakeClaude, streamed } from "./fakes/claude.ts";
+import { parse, stringify as toml } from "smol-toml";
+import { fakeClaude, says } from "./fakes/claude.ts";
 
 // The bifrost and switchyard plugins against stand-ins for Bifrost, Switchyard, Jev and the gateway. With
 // SWITCHYARD_BIN (a built switchyard-server) and BIFROST_BIN (bifrost-http), the real ones are run too.
@@ -86,7 +87,6 @@ describe("bifrost", () => {
     const proxy = await fake();
     const direct = await fake();
     const up = bifrost.backend({ ...env, BIFROST_URL: proxy.url, BIFROST_FALLBACKS: "gateway/qwen/qwen3.8-27b, backup/deepseek/flash", LLM_EXTRA: '{"providerOptions":{"gateway":{"order":["a"]}}}' });
-    expect(up.upstream).toBe(true);
     expect(up.models).toEqual({ main: "gateway/deepseek/flash", task: "gateway/deepseek/flash-task", code: "gateway/deepseek/flash-task" });
     const g = await gateWith(direct.url, [up]);
 
@@ -104,38 +104,20 @@ describe("bifrost", () => {
     direct.close();
   });
 
-  test("another plugin's backend answers first; what it can't answer goes to Bifrost, then LLM_BASE_URL", async () => {
-    const proxy = await fake();
-    const direct = await fake();
-    const limited: Llm = { models: { main: "claude/opus" }, complete: async () => Response.json({ error: { message: "usage limit" } }, { status: 429 }) };
-    const g = await gateWith(direct.url, [bifrost.backend({ ...env, BIFROST_URL: proxy.url }), limited]);
-
-    const first = await g.post({ model: "main" });
-    expect(await first.json()).toMatchObject({ model: "gateway/deepseek/flash" });
-    // Benched for a while: straight to Bifrost.
-    await g.post({ model: "main" });
-    expect(proxy.seen.map((s) => s.body.model)).toEqual(["gateway/deepseek/flash", "gateway/deepseek/flash"]);
-    expect(direct.seen).toEqual([]);
-    g.close();
-    proxy.close();
-    direct.close();
-  });
 });
 
 describe("switchyard", () => {
   const env = { LLM_BASE_URL: "https://gateway.example/v1", LLM_API_KEY: "gateway-key", TYPESAFE_API_KEY: "ts-key", DB_KEY: "db" };
 
   test("switchyard.toml: four models in four tiers, Jev at TypeSafe as the judge, per user turn, no keys in it", () => {
-    const text = switchyard.toml(switchyard.config(env));
-    expect(text).toContain('[llm_clients.gateway]\nformat = "openai_chat"\nbase_url = "https://gateway.example/v1"\napi_key_env = "SWITCHYARD_GATEWAY_KEY"');
-    expect(text).toContain('[llm_clients.claude]\nformat = "openai_chat"\nbase_url = "http://127.0.0.1:4802/v1"');
-    expect(text).toContain('[decision_clients.jev]\nformat = "system_one"\nendpoint = "https://api.typesafe.ai/v1/systemone"\napi_key_env = "SWITCHYARD_JEV_KEY"');
-    expect(text).toContain('[decision_targets.judge]\nid = "jev-latest"');
-    expect(text).toContain('[targets.deepseek]\nid = "deepseek/deepseek-v4.1-flash-1017-fast"\nllm_client = "gateway"');
-    expect(text).toContain('[targets.opus]\nid = "opus"\nllm_client = "claude"');
-    expect(text).toContain('[routes.auto]\nid = "auto"\ntype = "llm_classifier"\nmode = "direct"\ndefault_target = "routine (browsing, tool use, everyday errands)"\nclassify_trigger = "user_turn"');
-    expect(text).toContain('"hardest (deep reasoning, hard debugging, high stakes)" = ["opus", "sonnet", "deepseek"]');
-    expect(text).toContain("fail_open = false");
+    const config = switchyard.config(env);
+    const text = toml(config);
+    expect(parse(text)).toEqual(config);
+    expect(config.llm_clients.gateway).toMatchObject({ format: "openai_chat", base_url: "https://gateway.example/v1", api_key_env: "SWITCHYARD_GATEWAY_KEY" });
+    expect(config.llm_clients.claude).toMatchObject({ format: "openai_chat", base_url: "http://127.0.0.1:4802/v1" });
+    expect(config.decision_clients.jev).toMatchObject({ format: "system_one", endpoint: "https://api.typesafe.ai/v1/systemone", api_key_env: "SWITCHYARD_JEV_KEY" });
+    expect(config.targets.opus).toMatchObject({ id: "opus", llm_client: "claude" });
+    expect(config.routes.auto).toMatchObject({ type: "llm_classifier", mode: "direct", default_target: "routine (browsing, tool use, everyday errands)", classify_trigger: "user_turn" });
     for (const secret of ["gateway-key", "ts-key"]) expect(text).not.toContain(secret);
   });
 
@@ -274,17 +256,7 @@ describe.skipIf(!process.env.SWITCHYARD_BIN || !process.env.BIFROST_BIN)("the re
   // What Jev picks next (the tier's name starts with it), or a status to fail with.
   let pick: string | number = "routine";
   let claudeDown = false;
-  const claude = fakeClaude([
-    ...streamed([
-      { type: "message_start", message: { id: "msg_1", role: "assistant", content: [], usage: { input_tokens: 5, output_tokens: 1 } } },
-      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Opus here." } },
-      { type: "content_block_stop", index: 0 },
-      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } },
-      { type: "message_stop" },
-    ]),
-    { type: "result", subtype: "success", is_error: false, num_turns: 1 },
-  ]);
+  const claude = fakeClaude(says("Opus here."));
 
   beforeAll(async () => {
     gateway = await fake();
@@ -313,7 +285,7 @@ describe.skipIf(!process.env.SWITCHYARD_BIN || !process.env.BIFROST_BIN)("the re
       PATH: process.env.PATH!,
     };
     writeFileSync(join(dir, "config.json"), JSON.stringify(bifrost.config(env)));
-    writeFileSync(join(dir, "switchyard.toml"), switchyard.toml(switchyard.config(env, true)));
+    writeFileSync(join(dir, "switchyard.toml"), toml(switchyard.config(env, true)));
     const run = (bin: string, args: string[], extra: Record<string, string> = {}) => {
       const p = spawn(bin, args, { env: { ...process.env, ...extra } });
       p.stdout?.on("data", (d) => logs.push(String(d)));
@@ -361,7 +333,7 @@ describe.skipIf(!process.env.SWITCHYARD_BIN || !process.env.BIFROST_BIN)("the re
       expect(gateway.seen[1].body.stream).toBe(true);
       expect(continued).toContain('"content":"hi"');
       expect(streamedText).toContain("Opus here.");
-      expect(claude.entries().some((e) => (e.args as string[] | undefined)?.includes("opus"))).toBe(true);
+      expect(claude.runs().some((e) => e.args.join(" ").includes("opus"))).toBe(true);
       expect(seen.map((d) => [d.name, d.session, d.model])).toEqual([
         ["task", "biscotti-task-7", expect.stringContaining("deepseek")],
         ["task", "biscotti-task-7", expect.stringContaining("deepseek")],

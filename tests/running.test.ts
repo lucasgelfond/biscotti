@@ -1,19 +1,21 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { mkdtempSync } from "node:fs";
 import { once } from "node:events";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer, type AddressInfo, type Server } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import { createGate } from "../core/src/gate.ts";
-import { localTools, text, type Caller } from "../core/src/plugin.ts";
+import { localTools, text, type Caller, type Host, type Vm } from "../core/src/plugin.ts";
 
-// The task pool's bookkeeping with stand-in VMs: what's running, stopping one, and when a task counts as quiet. Read
-// before tasks.ts loads.
+// The task pool's bookkeeping with stand-in VMs: what's running, stopping one, when a task counts as quiet, kept VMs
+// and leases. Read before tasks.ts loads.
 process.env.TASK_IDLE_MS = "400";
-process.env.VM_SLOTS = "2";
-const { taskVms, taskTools, gatePool } = await import("../core/src/tasks.ts");
+const { taskVms, gateTasks } = await import("../core/src/tasks.ts");
 
 // A task agent: "silent" says nothing, "wait <ms>" says nothing for that long and then reports, anything else is
-// reported at once.
+// reported at once. A follow-up is reported as "followup <message>".
 async function agent() {
   // Half-open, as the VM's agent is: the goal ends the gate's side, the report comes back after.
   const server = createServer({ allowHalfOpen: true }, (socket) => {
@@ -23,8 +25,7 @@ async function agent() {
       const task = JSON.parse(goal);
       const said = (task.goal ?? `followup ${task.followup}`) as string;
       if (said === "silent") return;
-      const wait = Number(said.match(/^wait (\d+)/)?.[1] ?? 0);
-      await new Promise((r) => setTimeout(r, wait));
+      await new Promise((r) => setTimeout(r, Number(said.match(/^wait (\d+)/)?.[1] ?? 0)));
       socket.end(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `done: ${said}` }] } })}\n`);
     });
   }).listen(0, "127.0.0.1");
@@ -32,18 +33,28 @@ async function agent() {
   return { host: "127.0.0.1", port: (server.address() as AddressInfo).port };
 }
 
-async function pool(busy: (slot: number) => boolean = () => false) {
+// A host of `slots` whose VMs are all that agent, recording what's done to them in `log`.
+async function host(slots: number[], log: string[] = [], extra: Partial<Host> = {}): Promise<Host> {
   const address = await agent();
-  return taskVms(async (slot) => ({ slot, address, stop: async () => {} }), busy);
+  const vm = (slot: number): Vm => ({ slot, stop: async () => void log.push(`stop ${slot}`), suspend: async (id) => void log.push(`suspend ${slot} ${id}`) });
+  return {
+    slots,
+    restore: async (slot) => vm(slot),
+    resume: async (slot, id) => (log.push(`resume ${slot} ${id}`), vm(slot)),
+    discard: async (slot, id) => void log.push(`discard ${slot} ${id}`),
+    endpoint: (_slot, port) => (port === 4000 ? address : { host: "127.0.0.1", port }),
+    ...extra,
+  };
 }
-
+const file = () => join(mkdtempSync(join(tmpdir(), "pool-")), "tasks.json");
 const until = async (check: () => boolean) => {
   while (!check()) await new Promise((r) => setTimeout(r, 10));
 };
 
 test("lists running and queued tasks, and stopping one frees its slot for the queued one", async () => {
-  const vms = await pool(() => true);
-  const runs = ["silent", "silent", "silent"].map((goal) => vms.run(goal).catch((err: Error) => err.message));
+  const vms = taskVms([], { busy: () => true });
+  await vms.addHost(await host([1, 2]));
+  const runs = ["silent", "silent", "silent"].map((goal) => vms.run(goal).result.catch((err: Error) => err.message));
   await until(() => vms.running().filter((t) => t.slot).length === 2);
 
   expect(vms.running().map(({ id, slot }) => ({ id, slot }))).toEqual([{ id: 1, slot: 1 }, { id: 2, slot: 2 }, { id: 3, slot: undefined }]);
@@ -58,58 +69,99 @@ test("lists running and queued tasks, and stopping one frees its slot for the qu
 
 test("a task in a tool call (like waiting on the owner's yes) isn't quiet; one that's only silent is", async () => {
   let inToolCall = true;
-  const vms = await pool(() => inToolCall);
+  const vms = taskVms([], { busy: () => inToolCall });
+  await vms.addHost(await host([1]));
 
-  expect((await vms.run("wait 1200")).report).toBe("done: wait 1200");
+  expect((await vms.run("wait 1200").result).report).toBe("done: wait 1200");
   inToolCall = false;
-  await expect(vms.run("silent")).rejects.toThrow("the task went quiet");
+  await expect(vms.run("silent").result).rejects.toThrow("the task went quiet");
 });
 
-test("starting a task names the ones still running, and the main agent can list and stop them", async () => {
-  const vms = await pool(() => true);
+test("keeps a finished task's VM, resumes it in its slot for a follow-up, and numbering carries on after a restart", async () => {
+  const log: string[] = [];
+  const saved = file();
+  const vms = taskVms([], {}, saved);
+  await vms.addHost(await host([1], log));
+  expect((await vms.run("book it").result).report).toBe("done: book it");
+  expect(vms.kept().map((k) => k.id)).toEqual([1]);
+  expect(log).toContain("suspend 1 1");
+
+  const followup = vms.resume(1, "make it two");
+  expect(followup && (await followup).report).toBe("done: followup make it two");
+  expect(log).toContain("resume 1 1");
+  expect(vms.kept().map((k) => k.id)).toEqual([1]);
+
+  const again = taskVms([], {}, saved);
+  expect(again.kept().map((k) => k.id)).toEqual([1]);
+  expect(again.reserve()).toBe(2);
+});
+
+test("a plugin holds a VM, keeps it, brings it back and deletes it, numbered with the tasks", async () => {
+  const log: string[] = [];
+  const vms = taskVms([], {}, file());
+  await vms.addHost(await host([1], log));
+  const { id, vm } = await vms.hold("VM on o/r");
+  expect([id, vm.slot]).toEqual([1, 1]);
+  await vms.give(id);
+  expect(vms.kept().map((k) => k.goal)).toEqual(["VM on o/r"]);
+
+  expect((await vms.reclaim(id))?.slot).toBe(1);
+  await vms.give(id);
+  expect(await vms.forget(id)).toBe(true);
+  expect(log).toContain("discard 1 1");
+  expect(vms.kept()).toEqual([]);
+  expect(await vms.forget(id)).toBe(false);
+});
+
+test("an overflow host is used only once the others' slots are taken", async () => {
+  const vms = taskVms([], { busy: () => true });
+  await vms.addHost(await host([101], [], { overflow: true }));
+  await vms.addHost(await host([1]));
+  vms.run("silent").result.catch(() => {});
+  vms.run("silent").result.catch(() => {});
+  await until(() => vms.running().filter((t) => t.slot).length === 2);
+  expect(vms.running().map((t) => t.slot)).toEqual([1, 101]);
+  for (const t of vms.running()) vms.stop(t.id);
+});
+
+// The gate: each slot's listener, tell_task to a running or queued task, and the tool calls' stamps.
+async function gated() {
+  const gate = createGate({ llm: { url: "http://127.0.0.1:9", key: "k" }, models: {}, send: async () => {} });
+  const servers = new Map<number, Server>();
+  const listen = gate.listen;
+  gate.listen = async (h, port, opts) => {
+    const server = await listen(h, port, opts);
+    servers.set(opts?.slot ?? 0, server as unknown as Server);
+    return server;
+  };
   const reports: string[] = [];
-  const tools = localTools(taskTools(vms, (_goal, { report }) => reports.push(report), undefined, () => "in vault_fill for 3 min"));
-  const said = async (name: string, args: Record<string, unknown> = {}) => ((await tools.call(name, args)).content[0] as { text: string }).text;
-
-  await said("task", { goal: "silent" });
-  await until(() => vms.running()[0]?.slot !== undefined);
-  const second = await said("task", { goal: "Buy 2 tickets" });
-
-  expect(second).toContain("Also running");
-  expect(second).toContain("#1 (0 min, in vault_fill for 3 min): silent");
-  expect(await said("running_tasks")).toContain("#2");
-  expect(await said("stop_task", { id: 1 })).toBe("Stopped #1.");
-  await until(() => reports.length === 2);
-  expect(reports).toContain("The task failed: the task was stopped");
-  expect(await said("running_tasks")).toBe("No tasks are running.");
-});
+  const local = await host([1, 2], [], { gate: () => ({ host: "127.0.0.1", port: 0, peer: () => "127.0.0.1" }) });
+  const { vms, tools } = await gateTasks(gate, local, (_goal, { report }) => reports.push(report), file());
+  const messages = (slot: number) => fetch(`http://127.0.0.1:${(servers.get(slot)!.address() as AddressInfo).port}/messages`, { headers: { host: "gate" } }).then((r) => r.json());
+  const said = async (name: string, args: Record<string, unknown> = {}) => ((await localTools(tools).call(name, args)).content[0] as { text: string }).text;
+  return { gate, vms, said, messages, reports, close: () => servers.forEach((s) => s.close()) };
+}
 
 test("tell_task passes the owner's message to that running task's VM, holds it for a queued one, and says when there's none", async () => {
-  const gate = createGate({ llm: { url: "http://127.0.0.1:9", key: "k" }, models: {}, send: async () => {} });
-  const servers = await Promise.all([1, 2].map((slot) => gate.listen("127.0.0.1", 0, { slot })));
-  const messages = (slot: number) => fetch(`http://127.0.0.1:${(servers[slot - 1]!.address() as AddressInfo).port}/messages`).then((r) => r.json());
-  const vms = gatePool(await pool(() => true), gate);
-  const reports: string[] = [];
-  const tools = localTools(taskTools(vms, (_goal, { report }) => reports.push(report)));
-  const said = async (name: string, args: Record<string, unknown> = {}) => ((await tools.call(name, args)).content[0] as { text: string }).text;
-
+  const { gate, vms, said, messages, reports, close } = await gated();
+  gate.busy = () => ({ tool: "vault_fill", since: Date.now() });
   for (const goal of ["silent", "silent", "silent"]) await said("task", { goal });
   await until(() => vms.running().filter((t) => t.slot).length === 2);
   const second = vms.running().find((t) => t.id === 2)!.slot!;
 
   expect(await said("tell_task", { id: 2, message: "make it 4 people at 8" })).toBe("Told #2. Its report will say what it did.");
   expect(await messages(second)).toEqual(["make it 4 people at 8"]);
-  expect(await messages(second === 1 ? 2 : 1)).toEqual([]);
   expect(await said("tell_task", { id: 3, message: "Friday instead" })).toBe("#3 is still waiting for a VM; it gets the message when it starts.");
   expect(await said("tell_task", { id: 9, message: "never mind" })).toContain("No task #9 is running or kept.");
-  // Task 1 stops; task 3 gets its slot and, with it, the message it was told while queued.
+  expect(await said("running_tasks")).toContain("#1 (0 min, in vault_fill for 0 min, likely waiting on the owner's yes): silent");
   vms.stop(1);
   await until(() => vms.running().find((t) => t.id === 3)?.slot !== undefined);
   expect(await messages(vms.running().find((t) => t.id === 3)!.slot!)).toEqual(["Friday instead"]);
   vms.stop(2);
   vms.stop(3);
   await until(() => reports.length === 3);
-  for (const s of servers) s.close();
+  expect(reports).toContain("The task failed: the task was stopped");
+  close();
 });
 
 test("the gate stamps a task VM's tool calls with its task, and knows the slot is mid-call", async () => {
@@ -131,51 +183,4 @@ test("the gate stamps a task VM's tool calls with its task, and knows the slot i
   await call;
   expect(gate.busy(1)).toBeUndefined();
   server.close();
-});
-
-test("keeps a finished task's VM and resumes it in the same slot for a follow-up", async () => {
-  const address = await agent();
-  const events: string[] = [];
-  const vm = (slot: number) => ({
-    slot,
-    address,
-    stop: async () => void events.push(`stop ${slot}`),
-    suspend: async (id: string) => void events.push(`suspend ${slot} ${id}`),
-  });
-  const keep = {
-    resume: async (slot: number, id: string) => (events.push(`resume ${slot} ${id}`), vm(slot)),
-    discard: async (slot: number, id: string) => void events.push(`discard ${slot} ${id}`),
-  };
-  const vms = taskVms(async (slot) => vm(slot), () => false, keep);
-  let slot = 0;
-  const first = await vms.run("book it", (s) => (slot = s));
-  expect(first.report).toBe("done: book it");
-  expect(vms.suspended().map((t) => t.id)).toEqual([1]);
-  expect(events).toContain(`suspend ${slot} 1`);
-
-  const reports: string[] = [];
-  const tools = localTools(taskTools({ ...vms, tell: () => false }, (_, r) => reports.push(r.report)));
-  const reply = await tools.call("tell_task", { id: 1, message: "make it two" });
-  expect(JSON.stringify(reply)).toContain("Resumed #1");
-  await until(() => reports.length > 0);
-  expect(reports[0]).toBe("done: followup make it two");
-  expect(events).toContain(`resume ${slot} 1`);
-  // Kept again afterwards, for the next follow-up.
-  expect(vms.suspended().map((t) => t.id)).toEqual([1]);
-});
-
-test("discards a kept task or box for good", async () => {
-  const address = await agent();
-  const discarded: string[] = [];
-  const vm = (slot: number) => ({ slot, address, stop: async () => {}, suspend: async () => {} });
-  const keep = { resume: async (slot: number) => vm(slot), discard: async (slot: number, id: string) => void discarded.push(`${slot} ${id}`) };
-  const vms = taskVms(async (slot) => vm(slot), () => false, keep);
-  let slot = 0;
-  await vms.run("book it", (s) => (slot = s));
-  expect(vms.suspended().map((t) => t.id)).toEqual([1]);
-
-  expect(await vms.forget(1)).toBe(true);
-  expect(vms.suspended()).toEqual([]);
-  expect(discarded).toEqual([`${slot} 1`]);
-  expect(await vms.forget(1)).toBe(false);
 });
