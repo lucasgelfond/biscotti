@@ -73,9 +73,8 @@ export function createGate(opts: {
   const byTool = { main: new Map<string, Tools>(), tasks: new Map<string, Tools>() };
   const proposals = new Map<number, string[]>();
   const observers: Observer[] = [];
-  // Plugins' backends (Plugin.llm), by the model names they answer; upstream ones apart.
+  // Plugins' backends (Plugin.llm), by the model names they answer.
   const backends = new Map<string, Llm>();
-  const upstreams = new Map<string, Llm>();
   const propose = localTools([
     {
       name: "propose",
@@ -175,9 +174,9 @@ export function createGate(opts: {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
     const name = slot ? (slotModels.get(slot) ?? "task") : body.model;
-    // The ways to answer, in order: a plugin's backend, an upstream plugin's, LLM_BASE_URL. One that failed recently
+    // The ways to answer, in order: a plugin's backend, then LLM_BASE_URL. One that failed recently
     // is skipped, unless it's the last.
-    const ways: { llm?: Llm; model: string }[] = [backends.get(name), upstreams.get(name)].flatMap((b) => (b ? [{ llm: b, model: b.models[name] }] : []));
+    const ways: { llm?: Llm; model: string }[] = [backends.get(name)].flatMap((b) => (b ? [{ llm: b, model: b.models[name] }] : []));
     if (opts.models[name]) ways.push({ model: opts.models[name] });
     const live = ways.filter((w, i) => i === ways.length - 1 || Date.now() >= (benched.get(w.llm!)?.get(name) ?? 0));
     if (!live.length) return void res.writeHead(400).end(`unknown model ${body.model}`);
@@ -271,7 +270,7 @@ export function createGate(opts: {
       if (tools.tasks) sets.tasks.push(tools.tasks);
     },
     observe: (observer: Observer) => void observers.push(observer),
-    serve: (llm: Llm) => Object.keys(llm.models).forEach((name) => (llm.upstream ? upstreams : backends).set(name, llm)),
+    serve: (llm: Llm) => Object.keys(llm.models).forEach((name) => backends.set(name, llm)),
     // What a task VM in `slot` proposed for the main agent, cleared as it's read.
     proposed(slot: number) {
       const said = proposals.get(slot) ?? [];

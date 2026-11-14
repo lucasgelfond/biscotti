@@ -16,7 +16,7 @@ export const newDataDir = () => mkdtempSync(join(tmpdir(), "biscotti-"));
 // A plugin's context with no gate behind it: every question is a yes unless `ask` says otherwise.
 export function testContext(overrides: Partial<Context> = {}): Context {
   const dir = newDataDir();
-  return { db: openDb(`${dir}/biscotti.db`, "test-key"), dir, env: (n) => n, ask: async () => true, deliver: async () => {}, send: async () => {}, ...overrides };
+  return { db: openDb(`${dir}/biscotti.db`, "test-key"), dir, env: (n) => n, ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {}, ...overrides };
 }
 
 // A headless Chrome showing `url`, its DevTools at the returned `url` once it's up.

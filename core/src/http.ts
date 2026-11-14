@@ -1,5 +1,5 @@
 import { chmodSync, chownSync, rmSync } from "node:fs";
-import { request, type Server } from "node:http";
+import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 // HTTP between biscotti's processes, over unix sockets.
 
@@ -35,13 +35,28 @@ export function call(socketPath: string, method: string, path: string, body?: st
   });
 }
 
-// The same over TCP, for a remote machine's vms service (reached over Tailscale).
-export function callHost(host: string, port: number, method: string, path: string, body?: string) {
-  return new Promise<string>((resolve, reject) => {
-    const req = request({ host, port, method, path, headers: { "Content-Type": "application/json" }, timeout: 10 * 60_000 }, (res) => {
-      readBody(res).then((text) => (res.statusCode! < 300 ? resolve(text) : reject(new Error(`${path}: ${res.statusCode} ${text}`))), reject);
-    });
-    req.on("timeout", () => req.destroy(new Error(`${path}: timed out`)));
-    req.on("error", reject).end(body);
+// The owner's API, for their apps: the routes plugins add (Context.route), on API_PORT on localhost. `tailscale serve`
+// publishes it on the tailnet (nix/setup.nix), which names the person on each request (Tailscale-User-Login). Only the
+// owner's login (API_OWNER, e.g. you@github) may use it; without API_OWNER, anyone on the tailnet signed in as a person
+// (not a tagged machine) may.
+export function ownerApi(port = Number(process.env.API_PORT ?? 7700)) {
+  const routes: [string, (req: IncomingMessage, res: ServerResponse) => unknown][] = [];
+  const server = createServer(async (req, res) => {
+    const login = req.headers["tailscale-user-login"];
+    const owner = process.env.API_OWNER;
+    if (!login || (owner && login !== owner)) return void res.writeHead(403).end();
+    const path = new URL(req.url ?? "/", "http://api").pathname;
+    const route = routes.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`));
+    if (!route) return void res.writeHead(404).end();
+    try {
+      await route[1](req, res);
+    } catch (err) {
+      if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: (err as Error).message }));
+    }
   });
+  return {
+    route: (prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => unknown) => void routes.push([prefix, handler]),
+    // Only once a plugin has added a route.
+    listen: () => (routes.length && port ? new Promise<Server>((resolve) => server.listen(port, "127.0.0.1", () => resolve(server))) : undefined),
+  };
 }

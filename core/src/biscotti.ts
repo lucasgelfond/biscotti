@@ -4,10 +4,8 @@ import crons from "./crons.ts";
 import { createGate, LOCKS, scrub } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import { localTools, type Channel, type Context, type Plugin } from "./plugin.ts";
-import { startApi } from "./api.ts";
-import { boardStore, taskBoard } from "./board.ts";
-import { pusher } from "./push.ts";
-import { gateTasks, taskEvents, type TaskEvent } from "./tasks.ts";
+import { ownerApi } from "./http.ts";
+import { gateTasks } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
 
 function env(name: string) {
@@ -30,18 +28,17 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     send: (s) => channel.send(outbound(s)),
     secrets: () => secrets(db),
   });
-  const repos: NonNullable<Context["repos"]> = {};
-  // Task VMs, where the vms service runs (vms-main.ts).
-  const store = boardStore(db);
+  // Task VMs, where the vms service runs (vms-main.ts); finished ones are kept, listed in the data directory.
   const vms = process.env.VMS_SOCKET
-    ? await gateTasks(gate, process.env.VMS_SOCKET, env("VM_DIR"), (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot), () => repos.bundle, store.lastId())
+    ? await gateTasks(gate, process.env.VMS_SOCKET, env("VM_DIR"), (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot), `${dir}/tasks.json`)
     : undefined;
+  const api = ownerApi();
   const send = async (text: string, image?: Buffer) => {
     if (image) await channel.send({ image });
     // Plugins' texts (a task's screenshot caption) can't pose as the gate's questions either.
     if (text) await channel.send(outbound(text.replace(LOCKS, "")));
   };
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, task: vms?.task, repos };
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, vms: vms?.vms, route: api.route };
   const observers = await Promise.all(plugins.flatMap((p) => (p.observe ? [p.observe(ctx)] : [])));
   for (const observer of observers) gate.observe(observer);
   for (const plugin of plugins) if (plugin.llm) gate.serve(await plugin.llm(ctx));
@@ -54,16 +51,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
 
   gate.add(memoryTools(db, recalls));
   if (vms) gate.add(localTools(vms.tools));
-  // The task API for the app and the multiplexer, and push notifications when a task reports (api.ts, push.ts).
-  if (vms && process.env.API_PORT !== "0") {
-    const push = pusher(dir);
-    const board = taskBoard(vms.kept, store);
-    taskEvents.on("event", (e: TaskEvent) => {
-      if (e.type === "report") void push.notify(`Task #${e.id} reported`, e.text ?? "", e.id);
-      if (e.type === "failed") void push.notify(`Task #${e.id} failed`, e.text ?? "", e.id);
-    });
-    await startApi(board, vms.actions, push, undefined, vms.boxes);
-  }
   const prompt = [readFileSync(new URL("../SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
 
   const turn = await connectAgent(sockets, { db, prompt, gate: gate.handle });
@@ -87,5 +74,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   }
 
   for (const plugin of plugins) await plugin.start?.(ctx);
+  await api.listen();
   return { db, channel, handle };
 }

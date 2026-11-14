@@ -1,7 +1,9 @@
 import { createReadStream, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { listen } from "./http.ts";
-import { discard, restore, resume, SLOTS, suspend, type Vm } from "./tasks.ts";
+import { discard, restore, resume, suspend, type FirecrackerVm } from "./firecracker.ts";
+
+const SLOTS = Array.from({ length: Number(process.env.VM_SLOTS ?? 2) }, (_, i) => i + 1);
 
 // The task VMs' service, in a container of its own: KVM, the slots' networks and the snapshot, and no keys, no data
 // and no network. The gate asks it, over a socket only the two share, to restore a VM in a slot or to stop one.
@@ -17,7 +19,7 @@ const uidBase = Number(process.env.TASK_UID_BASE ?? 1100);
 // Firecracker's sockets are its slot user's and group's (this service is in each slot's group), no one else's.
 process.umask(0o007);
 
-const running = new Map<number, Vm>();
+const running = new Map<number, FirecrackerVm>();
 async function stop(slot: number) {
   await running.get(slot)?.stop();
   running.delete(slot);

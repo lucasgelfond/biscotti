@@ -54,25 +54,12 @@ export function codeTask(ctx: Context, token: string): LocalTool {
     return pull(true).catch((err) => (/draft/i.test(err.message) ? pull(false) : Promise.reject(err)));
   }
 
-  if (ctx.repos) ctx.repos.bundle = async (repo: string, base?: string) => {
-    if (!REPO.test(repo)) throw new Error("the repo should be owner/name");
-    const dir = mkdtempSync(join(tmpdir(), "box-"));
-    try {
-      await git(dir, "clone", "-q", "--depth", "1000", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
-      await git(join(dir, "repo"), "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");
-      return readFileSync(join(dir, "in.bundle"));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  };
-
   async function run(repo: string, goal: string, base: string | undefined, dir: string) {
-    // Enough history for log and blame to help the coding agent.
-    await git(dir, "clone", "-q", "--depth", "1000", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
+    await git(dir, "clone", "-q", "--depth", "50", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
     const work = join(dir, "repo");
     const baseBranch = base ?? (await git(work, "rev-parse", "--abbrev-ref", "HEAD"));
     await git(work, "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");
-    const result = await ctx.task!(goal, { repo: readFileSync(join(dir, "in.bundle")), model: "code", timeoutMs: TIMEOUT_MS });
+    const result = await ctx.vms!.run(goal, { repo: readFileSync(join(dir, "in.bundle")), model: "code", timeoutMs: TIMEOUT_MS });
     if (!result.bundle) return `Code task on ${repo} made no commits.\n${result.report}`;
     const { stat } = await review(work, result.bundle);
     const branch = `biscotti/${goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}-${randomBytes(2).toString("hex")}`;
@@ -91,7 +78,7 @@ export function codeTask(ctx: Context, token: string): LocalTool {
       base: optional(str("Branch to start from; the repo's default branch if omitted.")),
     }),
     async run({ repo, goal, base }) {
-      if (!ctx.task) return text("Coding tasks need task VMs, which this machine doesn't have.");
+      if (!ctx.vms) return text("Coding tasks need task VMs, which this machine doesn't have.");
       if (typeof repo !== "string" || !REPO.test(repo)) return text("repo should be owner/name.");
       const dir = mkdtempSync(join(tmpdir(), "code-task-"));
       run(repo, String(goal), base ? String(base) : undefined, dir)

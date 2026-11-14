@@ -35,20 +35,3 @@ export const memories = sqliteTable("memories", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
-
-// Tasks and boxes as the task API lists them (board.ts), kept across restarts.
-export const tasks = sqliteTable("tasks", {
-  id: integer().primaryKey(),
-  kind: text().notNull().default("task"),
-  goal: text().notNull(),
-  status: text().notNull(),
-  slot: integer(),
-  where: text(),
-  repo: text(),
-  ssh: text({ mode: "json" }).$type<{ host: string; port: number; user: string }>(),
-  preview: text(),
-  report: text(),
-  steps: text({ mode: "json" }).$type<{ at: number; text?: string; tool?: string }[]>().notNull(),
-  started: integer().notNull(),
-  updated: integer().notNull(),
-});
