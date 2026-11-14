@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { createGate } from "../core/src/gate.ts";
-import { localTools, text, type Caller, type Host, type Vm } from "../core/src/plugin.ts";
+import { localTools, taskEvents, text, type Caller, type Host, type Vm } from "../core/src/plugin.ts";
 
 // The task pool's bookkeeping with stand-in VMs: what's running, stopping one, when a task counts as quiet, kept VMs
 // and leases. Read before tasks.ts loads.
@@ -102,7 +102,13 @@ test("a plugin holds a VM, keeps it, brings it back and deletes it, numbered wit
   await vms.addHost(await host([1], log));
   const { id, vm } = await vms.hold("VM on o/r");
   expect([id, vm.slot]).toEqual([1, 1]);
+  // Listed as kept by the time it says so, for the board.
+  let keptWhenSaid: number[] = [];
+  const onKept = (e: { type: string }) => e.type === "kept" && (keptWhenSaid = vms.kept().map((k) => k.id));
+  taskEvents.on("event", onKept);
   await vms.give(id);
+  taskEvents.off("event", onKept);
+  expect(keptWhenSaid).toEqual([1]);
   expect(vms.kept().map((k) => k.goal)).toEqual(["VM on o/r"]);
 
   expect((await vms.reclaim(id))?.slot).toBe(1);
