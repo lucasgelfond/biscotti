@@ -8,16 +8,17 @@ let
   inherit (import ./firecracker.nix { inherit pkgs self; }) firecracker faultAll;
   repo = "${self}";
   slots = lib.range 1 vms.slots;
-  # The gate listens for slot N's VM at 18000 + 100 + N (GATE_PORT_BASE + slot); the gate reaches VM port P of slot N
-  # here at REMOTE_PORTS[P] + N (core/src/plugin.ts).
-  remotePorts = { "4000" = 14000; "3211" = 13200; "6901" = 16900; "9223" = 19200; };
+  # This is node k (its instance's biscotti-node-index tag, written to /run/biscotti-node-index at boot). The gate
+  # listens for slot N's VM at 18000 + 100k + N; it reaches VM port P of slot N here at REMOTE_PORTS[P] + N.
+  remotePorts = { "4000" = 14000; "3211" = 13200; "6901" = 16900; "9223" = 19200; "22" = 12200; };
   forward = name: listen: to: {
     "biscotti-fwd-${name}" = {
-      after = [ "biscotti-net.service" "tailscaled.service" ];
-      wants = [ "biscotti-net.service" ];
+      after = [ "biscotti-net.service" "tailscaled.service" "biscotti-node-index.service" ];
+      wants = [ "biscotti-net.service" "biscotti-node-index.service" ];
       wantedBy = [ "multi-user.target" ];
+      # `to` may use $k, this node's number.
+      script = "k=$(cat /run/biscotti-node-index); exec ${pkgs.socat}/bin/socat TCP-LISTEN:${listen},fork,reuseaddr ${to}";
       serviceConfig = {
-        ExecStart = "${pkgs.socat}/bin/socat TCP-LISTEN:${listen},fork,reuseaddr ${to}";
         Restart = "always";
         RestartSec = 2;
       };
@@ -50,13 +51,24 @@ in
   # Each slot: its VM's gate traffic to the gate, and the gate's to its VM's ports. And the vms service's API.
   systemd.services = lib.mkMerge (
     [ (forward "vms" "7400" "UNIX-CONNECT:/run/biscotti-vms/vms.sock") ]
-    ++ map (n: forward "gate-${toString n}" "80,bind=10.200.${toString n}.1" "TCP:${node.gate}:${toString (18100 + n)}") slots
+    ++ map (n: forward "gate-${toString n}" "80,bind=10.200.${toString n}.1" "TCP:${node.gate}:$((18000 + 100 * k + ${toString n}))") slots
     ++ lib.concatMap (n: lib.mapAttrsToList (port: base: forward "${port}-${toString n}" (toString (base + n)) "TCP:10.200.${toString n}.2:${port}") remotePorts) slots
     ++ [ {
-      biscotti-node = {
-        after = [ "network-online.target" "docker.service" "tailscaled.service" "biscotti-net.service" ];
+      biscotti-node-index = {
+        after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
-        requires = [ "docker.service" "biscotti-net.service" ];
+        path = with pkgs; [ curl coreutils ];
+        serviceConfig = { Type = "oneshot"; RemainAfterExit = true; Restart = "on-failure"; RestartSec = 5; };
+        script = ''
+          token=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
+          curl -sf -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/tags/instance/biscotti-node-index > /run/biscotti-node-index.new
+          mv /run/biscotti-node-index.new /run/biscotti-node-index
+        '';
+      };
+      biscotti-node = {
+        after = [ "network-online.target" "docker.service" "tailscaled.service" "biscotti-net.service" "biscotti-node-index.service" ];
+        wants = [ "network-online.target" ];
+        requires = [ "docker.service" "biscotti-net.service" "biscotti-node-index.service" ];
         wantedBy = [ "multi-user.target" ];
         path = [ firecracker ] ++ (with pkgs; [ bash coreutils gnugrep gnused jq curl docker tailscale awscli2 e2fsprogs gnutar util-linux openssl iproute2 ]);
         serviceConfig = {
@@ -68,13 +80,14 @@ in
         };
         script = ''
           STATE=/var/lib/biscotti
-          # The first boot joins the tailnet with the one-time key the gate put in Parameter Store (its instance role
-          # may read only that). Later boots are already logged in.
+          # The first boot joins the tailnet with the one-time key the gate put in Parameter Store for node k. Later boots
+          # are already logged in.
+          k=$(cat /run/biscotti-node-index)
           if ! tailscale status >/dev/null 2>&1; then
             token=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
             region=$(curl -sf -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/placement/region)
-            key=$(aws ssm get-parameter --region "$region" --name /biscotti/node/tailscale-key --with-decryption --query Parameter.Value --output text)
-            tailscale up --auth-key="$key" --advertise-tags=tag:biscotti-node --hostname=${node.hostname or "biscotti-node"}
+            key=$(aws ssm get-parameter --region "$region" --name "/biscotti/node/$k/tailscale-key" --with-decryption --query Parameter.Value --output text)
+            tailscale up --auth-key="$key" --advertise-tags=tag:biscotti-node --hostname="biscotti-node-$k"
           fi
           for n in ${toString slots}; do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
 

@@ -54,6 +54,18 @@ export function codeTask(ctx: Context, token: string): LocalTool {
     return pull(true).catch((err) => (/draft/i.test(err.message) ? pull(false) : Promise.reject(err)));
   }
 
+  if (ctx.repos) ctx.repos.bundle = async (repo: string, base?: string) => {
+    if (!REPO.test(repo)) throw new Error("the repo should be owner/name");
+    const dir = mkdtempSync(join(tmpdir(), "box-"));
+    try {
+      await git(dir, "clone", "-q", "--depth", "1000", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
+      await git(join(dir, "repo"), "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");
+      return readFileSync(join(dir, "in.bundle"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
   async function run(repo: string, goal: string, base: string | undefined, dir: string) {
     // Enough history for log and blame to help the coding agent.
     await git(dir, "clone", "-q", "--depth", "1000", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");

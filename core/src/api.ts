@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { taskBoard } from "./board.ts";
+import type { boxes } from "./boxes.ts";
 import type { pusher } from "./push.ts";
 import { taskEvents, type TaskEvent } from "./tasks.ts";
 
@@ -19,6 +20,10 @@ import { taskEvents, type TaskEvent } from "./tasks.ts";
 //   POST /api/tasks/<id>/stop
 //   POST /api/tasks/<id>/move        carry a local task on in the cloud
 //   POST /api/devices                {token, sandbox}: this phone's push notifications
+//   GET  /api/boxes                  the open boxes
+//   POST /api/boxes                  {key, repo?, base?, setup?}: a box to ssh into, with its ssh address and Preview
+//   DELETE /api/boxes/<id>           close it (kept, to open again)
+//   POST /api/boxes/<id>/open        {key}: open a closed one again
 export interface Actions {
   start(goal: string, display?: "mobile" | "desktop"): Promise<number>;
   tell(id: number, message: string): string;
@@ -30,7 +35,9 @@ export interface Actions {
 
 const PORT = Number(process.env.API_PORT ?? 7700);
 
-export function startApi(board: ReturnType<typeof taskBoard>, actions: Actions, push?: ReturnType<typeof pusher>, port = PORT) {
+type Boxes = Pick<ReturnType<typeof boxes>, "open" | "close" | "reopen" | "list">;
+
+export function startApi(board: ReturnType<typeof taskBoard>, actions: Actions, push?: ReturnType<typeof pusher>, port = PORT, box?: Boxes) {
   const owner = process.env.API_OWNER;
   const json = (res: ServerResponse, status: number, body: unknown) =>
     res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end(JSON.stringify(body));
@@ -88,6 +95,23 @@ export function startApi(board: ReturnType<typeof taskBoard>, actions: Actions, 
       }
       if (req.method === "POST" && what === "tasks" && action === "stop") return json(res, 200, { stopped: actions.stop(id) });
       if (req.method === "POST" && what === "tasks" && action === "move") return json(res, 200, { result: actions.move(id) });
+      if (what === "boxes") {
+        if (!box) return json(res, 404, { error: "no boxes on this machine" });
+        if (req.method === "GET" && !n) return json(res, 200, { boxes: box.list() });
+        if (req.method === "POST" && !n) {
+          const { repo, base, key, setup } = await read(req);
+          if (typeof key !== "string") return json(res, 400, { error: "an ssh public key, please" });
+          const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+          return json(res, 200, await box.open({ repo: str(repo), base: str(base), key, setup: str(setup) }));
+        }
+        if (req.method === "DELETE" && n && !action) return json(res, 200, { closed: await box.close(id) });
+        if (req.method === "POST" && action === "open") {
+          const { key } = await read(req);
+          if (typeof key !== "string") return json(res, 400, { error: "an ssh public key, please" });
+          const opened = await box.reopen(id, key);
+          return opened ? json(res, 200, opened) : json(res, 404, { error: `no box #${id} kept` });
+        }
+      }
       if (req.method === "POST" && what === "devices") {
         const { token, sandbox } = await read(req);
         push?.register(String(token), Boolean(sandbox));
