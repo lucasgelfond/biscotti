@@ -323,6 +323,16 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
       release(vm.slot);
     }
   }
+  // A kept task or box deleted for good.
+  async function forget(id: number) {
+    const i = suspended.findIndex((t) => t.id === id);
+    if (i < 0 || !keep) return false;
+    const [kept] = suspended.splice(i, 1);
+    saveSuspended();
+    await keep.discard(kept.slot, String(id)).catch(() => {});
+    emit({ id, type: "done", text: "Discarded" });
+    return true;
+  }
   async function reclaim(id: number): Promise<Vm | undefined> {
     const i = suspended.findIndex((t) => t.id === id);
     if (i < 0 || !keep) return undefined;
@@ -346,6 +356,7 @@ export function taskVms(restore: (slot: number) => Promise<Vm>, busy: (slot: num
     give,
     drop,
     reclaim,
+    forget,
     nextId: () => ++ids,
     suspended: (): Suspended[] => [...suspended],
     running: (): Running[] => [...running.values()].map(({ stopped, ...task }) => task),

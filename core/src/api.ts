@@ -22,7 +22,7 @@ import { taskEvents, type TaskEvent } from "./tasks.ts";
 //   POST /api/devices                {token, sandbox}: this phone's push notifications
 //   GET  /api/boxes                  the open boxes
 //   POST /api/boxes                  {key, repo?, base?, setup?}: a box to ssh into, with its ssh address and Preview
-//   DELETE /api/boxes/<id>           close it (kept, to open again)
+//   DELETE /api/boxes/<id>           close it (kept, to open again); ?discard=1 deletes it for good
 //   POST /api/boxes/<id>/open        {key}: open a closed one again
 export interface Actions {
   start(goal: string, display?: "mobile" | "desktop"): Promise<number>;
@@ -35,7 +35,7 @@ export interface Actions {
 
 const PORT = Number(process.env.API_PORT ?? 7700);
 
-type Boxes = Pick<ReturnType<typeof boxes>, "open" | "close" | "reopen" | "list">;
+type Boxes = Pick<ReturnType<typeof boxes>, "open" | "close" | "reopen" | "list" | "discard">;
 
 export function startApi(board: ReturnType<typeof taskBoard>, actions: Actions, push?: ReturnType<typeof pusher>, port = PORT, box?: Boxes) {
   const owner = process.env.API_OWNER;
@@ -104,7 +104,10 @@ export function startApi(board: ReturnType<typeof taskBoard>, actions: Actions, 
           const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
           return json(res, 200, await box.open({ repo: str(repo), base: str(base), key, setup: str(setup) }));
         }
-        if (req.method === "DELETE" && n && !action) return json(res, 200, { closed: await box.close(id) });
+        if (req.method === "DELETE" && n && !action) {
+          if (url.searchParams.get("discard")) return json(res, 200, { discarded: await box.discard(id) });
+          return json(res, 200, { closed: await box.close(id) });
+        }
         if (req.method === "POST" && action === "open") {
           const { key } = await read(req);
           if (typeof key !== "string") return json(res, 400, { error: "an ssh public key, please" });

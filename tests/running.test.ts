@@ -163,3 +163,19 @@ test("keeps a finished task's VM and resumes it in the same slot for a follow-up
   // Kept again afterwards, for the next follow-up.
   expect(vms.suspended().map((t) => t.id)).toEqual([1]);
 });
+
+test("discards a kept task or box for good", async () => {
+  const address = await agent();
+  const discarded: string[] = [];
+  const vm = (slot: number) => ({ slot, address, stop: async () => {}, suspend: async () => {} });
+  const keep = { resume: async (slot: number) => vm(slot), discard: async (slot: number, id: string) => void discarded.push(`${slot} ${id}`) };
+  const vms = taskVms(async (slot) => vm(slot), () => false, keep);
+  let slot = 0;
+  await vms.run("book it", (s) => (slot = s));
+  expect(vms.suspended().map((t) => t.id)).toEqual([1]);
+
+  expect(await vms.forget(1)).toBe(true);
+  expect(vms.suspended()).toEqual([]);
+  expect(discarded).toEqual([`${slot} 1`]);
+  expect(await vms.forget(1)).toBe(false);
+});
