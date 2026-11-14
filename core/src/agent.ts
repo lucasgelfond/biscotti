@@ -37,14 +37,16 @@ export async function runAgent(sockets: string, dir: string) {
     }
   };
 
-  async function session() {
+  // The main agent's sessions ("main": the owner's texts; others by number), each with its own transcript; the gate
+  // tags each one's tool calls with it (its MCP URL), so what a session starts reports back to it.
+  async function session(id: string) {
     const models = { providers: { biscotti: { baseUrl: `${gateUrl}/llm`, api: "openai-completions", apiKey: "added-by-the-gate", models: [{ id: "main", reasoning: true, input: ["text", "image"], contextWindow: 200000, maxTokens: 32768 }] } } };
     writeFileSync(`${dir}/models.json`, JSON.stringify(models));
     const modelRuntime = await ModelRuntime.create({ authPath: `${dir}/auth.json`, modelsPath: `${dir}/models.json`, modelsStorePath: `${dir}/models-store.json` });
 
     const mcp = createMcpExtension({
       loadConfig: () => ({
-        servers: [{ name: "biscotti", source: "biscotti", scope: "extension", config: { url: `${gateUrl}/mcp`, exposure: "direct", timeout: 900 } }],
+        servers: [{ name: "biscotti", source: "biscotti", scope: "extension", config: { url: `${gateUrl}/mcp?session=${encodeURIComponent(id)}`, exposure: "direct", timeout: 900 } }],
         errors: [],
       }),
     });
@@ -61,7 +63,7 @@ export async function runAgent(sockets: string, dir: string) {
     });
     await resourceLoader.reload();
 
-    const saved = (await (await get("/transcript")).json()) as FileEntry[];
+    const saved = (await (await get(`/transcript?session=${encodeURIComponent(id)}`)).json()) as FileEntry[];
     const { session } = await createAgentSession({
       cwd: dir,
       agentDir: dir,
@@ -73,6 +75,11 @@ export async function runAgent(sockets: string, dir: string) {
       noTools: "builtin",
     });
     await session.bindExtensions({});
+    // What it's doing, for the owner's apps: each tool call as it starts and each message as it ends.
+    session.subscribe((event: { type: string }) => {
+      if (event.type !== "tool_execution_start" && event.type !== "message_end") return;
+      void fetch(`${gateUrl}/event?session=${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(event) }).catch(() => {});
+    });
 
     // Only what's new since the last save goes to the gate.
     let savedCount = saved.length;
@@ -81,7 +88,7 @@ export async function runAgent(sockets: string, dir: string) {
       const entries: FileEntry[] = [manager.getHeader()!, ...manager.getEntries()];
       const fresh = entries.slice(savedCount);
       savedCount = entries.length;
-      if (fresh.length) await fetch(`${gateUrl}/transcript`, { method: "POST", body: JSON.stringify(fresh) });
+      if (fresh.length) await fetch(`${gateUrl}/transcript?session=${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(fresh) });
     }
 
     return {
@@ -109,14 +116,16 @@ export async function runAgent(sockets: string, dir: string) {
       },
     };
   }
-  let agent = await session();
+  let sessions = new Map<string, ReturnType<typeof session>>([["main", session("main")]]);
+  const of = (id: string) => sessions.get(id) ?? (sessions.set(id, session(id)), sessions.get(id)!);
+  await of("main");
 
   const server = createServer(async (req, res) => {
     try {
       // A restarted gate may bring new tools and prompts: start over from the saved conversation.
-      if (req.url === "/reload") return void res.end(void (agent = await session()));
-      const { text } = JSON.parse(await readBody(req));
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await agent.reply(text) }));
+      if (req.url === "/reload") return void res.end(void ((sessions = new Map([["main", session("main")]])), await of("main")));
+      const { text, session: id = "main" } = JSON.parse(await readBody(req));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await (await of(String(id))).reply(text) }));
     } catch (err) {
       console.error(err);
       res.writeHead(500).end(String(err));

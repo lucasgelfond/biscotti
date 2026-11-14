@@ -18,8 +18,11 @@ export interface Context {
   env(name: string): string;
   // A yes-or-no question for the owner (no answer in 10 minutes is no).
   ask(question: string): Promise<boolean>;
-  // A message into the conversation (a wake, a task report); the reply goes to the owner.
-  deliver(text: string, image?: Buffer): Promise<void>;
+  // A message into one of the main agent's sessions (a wake, a task report; "main", the owner's texts, unless said):
+  // the reply goes to the owner there.
+  deliver(text: string, image?: Buffer, session?: string): Promise<void>;
+  // The owner's message in a main session, from one of their apps: the agent's reply (also emitted as its events).
+  converse?(session: string, message: string): Promise<string>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
   // Task VMs, where this machine has them.
@@ -86,7 +89,8 @@ export interface Kept {
   at: number;
 }
 
-export type RunOptions = TaskOptions & { id?: number; fits?: (slot: number) => boolean; extra?: Record<string, unknown> };
+// `parent`: the main session that started it, where its report goes.
+export type RunOptions = TaskOptions & { id?: number; fits?: (slot: number) => boolean; extra?: Record<string, unknown>; parent?: string };
 
 export interface Vms {
   // A task whose report comes back to the caller. `fits` limits the slots it may take; `id` carries on a kept task's
@@ -138,6 +142,8 @@ export interface Channel {
 // Who's calling a tool: the main agent, or the task VM in `slot`, running task number `task` (one per run, so what a
 // plugin keeps for a task, like an approval, ends with it).
 export interface Caller {
+  // For the main agent: which of its sessions ("main": the owner's texts; otherwise its number).
+  session?: string;
   slot?: number;
   task?: number;
   // What that task was asked: its goal, then the owner's later messages (tell_task).
