@@ -1,0 +1,8 @@
+{
+  "name": "@biscotti/switchyard",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*"
+  }
+}
