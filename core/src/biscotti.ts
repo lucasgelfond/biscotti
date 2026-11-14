@@ -52,8 +52,9 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
 
   const turn = await connectAgent(sockets, { db, prompt, gate: gate.handle });
 
-  async function deliver(text: string, image?: Buffer) {
-    const done = observers.map((o) => o.turn?.(outbound(text).text));
+  // `owner` is the owner's own message; anything else is something biscotti delivered (a report, a wake).
+  async function deliver(text: string, image?: Buffer, from: { owner?: boolean } = {}) {
+    const done = observers.map((o) => o.turn?.(outbound(text).text, from));
     try {
       const reply = (await turn(text))?.replace(LOCKS, "").trim();
       for (const end of done) end?.(reply && outbound(reply).text);
@@ -67,7 +68,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
 
   async function handle(message: { text: string }) {
     if (gate.answer(message.text)) return;
-    await deliver(message.text);
+    await deliver(message.text, undefined, { owner: true });
   }
 
   for (const plugin of plugins) await plugin.start?.(ctx);

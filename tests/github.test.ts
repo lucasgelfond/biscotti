@@ -13,10 +13,11 @@ test.skipIf(!hasToken)("reads from GitHub without asking", async () => {
   expect(sent.join("\n").toLowerCase()).toContain("lucasgelfond");
 });
 
-test.skipIf(!hasToken)("asks before a change, and makes none on a no", async () => {
+test.skipIf(!hasToken)("asks before a deletion, and makes none on a no", async () => {
   const { say, sent } = await boot(["github"]);
 
-  const replied = say("Open an issue on lucasgelfond/biscotti titled 'test from biscotti' with an empty body. Go ahead.");
+  // Deleting asks even on a repo the user just named: it's what their yes is for.
+  const replied = say("Delete README.md from lucasgelfond/biscotti on its main branch (the GitHub delete_file tool). Go ahead.");
   await expect.poll(() => sent.join("\n"), { timeout: 90_000 }).toContain("Reply yes or no");
   await say("no");
   await replied;
