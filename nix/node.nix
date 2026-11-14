@@ -1,16 +1,17 @@
-# An overflow machine: task VMs only, for a biscotti host's gate elsewhere on the tailnet (core/src/nodes.ts). No keys,
-# no data, no gate or agent: the VMs reach the model and tools through that gate over Tailscale, and the gate reaches
-# them through the forwards below. See installer/aws/NODE.md.
+# An external VM node: an EC2 machine running one task VM for a biscotti host's gate elsewhere on the tailnet
+# (plugins/external-vm-node). No keys, no data, no gate or agent: the VM reaches the model and tools through that gate
+# over Tailscale, and the gate reaches the VM's ports here, forwarded as they are.
 #
-# `node.gate`: the gate's Tailscale name. `vms`: slots, memory and work disk, as on the host (flake.nix).
+# `node.gate`: the gate's Tailscale name. `vms`: the VM's memory and work disk, as on the host (flake.nix).
 { lib, pkgs, self, vms, node, ... }:
 let
   inherit (import ./firecracker.nix { inherit pkgs self; }) firecracker faultAll;
   repo = "${self}";
-  slots = lib.range 1 vms.slots;
-  # This is node k (its instance's biscotti-node-index tag, written to /run/biscotti-node-index at boot). The gate
-  # listens for slot N's VM at 18000 + 100k + N; it reaches VM port P of slot N here at REMOTE_PORTS[P] + N.
-  remotePorts = { "4000" = 14000; "3211" = 13200; "6901" = 16900; "9223" = 19200; "22" = 12200; };
+  slots = [ 1 ];
+  # This is node k (its instance's biscotti-node-index tag, written to /run/biscotti-node-index at boot): slot 100 + k to
+  # the gate, which listens for its VM at 18000 + 100 + k. The VM's ports, as they are: task agent, cua-spacesd, noVNC,
+  # DevTools; its sshd at 2222 (this machine's own is on 22).
+  vmPorts = { "4000" = "4000"; "3211" = "3211"; "6901" = "6901"; "9223" = "9223"; "2222" = "22"; };
   forward = name: listen: to: {
     "biscotti-fwd-${name}" = {
       after = [ "biscotti-net.service" "tailscaled.service" "biscotti-node-index.service" ];
@@ -48,11 +49,11 @@ in
     "d /run/biscotti-vms 0700 root root -"
   ] ++ map (n: "d /var/lib/biscotti/work/${toString n} 0700 ${toString (1100 + n)} ${toString (1100 + n)} -") slots;
 
-  # Each slot: its VM's gate traffic to the gate, and the gate's to its VM's ports. And the vms service's API.
+  # The VM's gate traffic to the gate, the gate's to the VM's ports, and the vms service's API.
   systemd.services = lib.mkMerge (
     [ (forward "vms" "7400" "UNIX-CONNECT:/run/biscotti-vms/vms.sock") ]
-    ++ map (n: forward "gate-${toString n}" "80,bind=10.200.${toString n}.1" "TCP:${node.gate}:$((18000 + 100 * k + ${toString n}))") slots
-    ++ lib.concatMap (n: lib.mapAttrsToList (port: base: forward "${port}-${toString n}" (toString (base + n)) "TCP:10.200.${toString n}.2:${port}") remotePorts) slots
+    ++ [ (forward "gate" "80,bind=10.200.1.1" "TCP:${node.gate}:$((18100 + k))") ]
+    ++ lib.mapAttrsToList (listen: port: forward port listen "TCP:10.200.1.2:${port}") vmPorts
     ++ [ {
       biscotti-node-index = {
         after = [ "network-online.target" ];
@@ -80,16 +81,16 @@ in
         };
         script = ''
           STATE=/var/lib/biscotti
-          # The first boot joins the tailnet with the one-time key the gate put in Parameter Store for node k. Later boots
-          # are already logged in.
+          # The first boot joins the tailnet with the Tailscale OAuth client's secret (setup.sh put it in Parameter Store,
+          # which only these machines' role reads), used as a pre-approved key for the node tag. Later boots are already in.
           k=$(cat /run/biscotti-node-index)
           if ! tailscale status >/dev/null 2>&1; then
             token=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
             region=$(curl -sf -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/placement/region)
-            key=$(aws ssm get-parameter --region "$region" --name "/biscotti/node/$k/tailscale-key" --with-decryption --query Parameter.Value --output text)
-            tailscale up --auth-key="$key" --advertise-tags=tag:biscotti-node --hostname="biscotti-node-$k"
+            secret=$(aws ssm get-parameter --region "$region" --name /biscotti/node/tailscale --with-decryption --query Parameter.Value --output text)
+            tailscale up --auth-key="$secret?ephemeral=false&preauthorized=true" --advertise-tags=tag:biscotti-node --hostname="biscotti-node-$k"
           fi
-          for n in ${toString slots}; do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
+          tailscale serve --bg --https=10441 http://10.200.1.2:6901
 
           docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
           vm_source=$({ cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum; echo ${toString vms.memMiB} ${toString vms.workGiB}; } | sha256sum | cut -d' ' -f1)
@@ -109,7 +110,7 @@ in
             -v "$STATE/vm:/var/lib/biscotti/vm:ro" -v "$STATE/work:/var/lib/biscotti/work" -v /nix/store:/nix/store:ro \
             -v ${firecracker}/bin/firecracker:/usr/local/bin/firecracker:ro -v /run/biscotti-vms:/run/biscotti-vms \
             -e VM_DIR=/var/lib/biscotti/vm -e WORK_DIR=/var/lib/biscotti/work -e FIRECRACKER=/usr/local/bin/firecracker \
-            -e TASK_UID_BASE=1100 -e VM_SLOTS=${toString vms.slots} \
+            -e TASK_UID_BASE=1100 -e VM_SLOTS=1 \
             biscotti/agent node core/src/vms-main.ts
         '';
       };

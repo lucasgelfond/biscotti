@@ -1,0 +1,9 @@
+{
+  "name": "@biscotti/external-vm-node",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-ec2": "3.1161.0",
+    "@biscotti/core": "workspace:*"
+  }
+}

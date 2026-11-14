@@ -62,7 +62,7 @@ a saved login and check something) fast and cheaply. Use \`task\` for anything t
 comparing options across pages, several sites, or when browse comes back unsure. Browse can pick seats on a seat map.`,
 
   async tools(ctx) {
-    if (!ctx.task || !process.env.TYPESAFE_API_KEY) return localTools([]);
+    if (!ctx.vms || !process.env.TYPESAFE_API_KEY) return localTools([]);
     const decide = jev(process.env.TYPESAFE_API_KEY);
     return {
       ...localTools([
@@ -78,7 +78,7 @@ comparing options across pages, several sites, or when browse comes back unsure.
           async run({ goal, url, values }) {
             const errand = String(goal);
             void ctx
-              .task!(JSON.stringify({ goal: errand, url, values }), { runner: RUNNER, timeoutMs: 10 * 60_000 })
+              .vms!.run(JSON.stringify({ goal: errand, url, values }), { runner: RUNNER, timeoutMs: 10 * 60_000 })
               .then(({ report, screenshot }) => ctx.deliver(`Browse report (${errand}): ${report}`, screenshot))
               .catch((err: Error) => ctx.deliver(`Browse report (${errand}): browsing failed: ${err.message}`));
             return text("Browsing.");

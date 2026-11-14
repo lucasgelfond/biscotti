@@ -1,4 +1,5 @@
-import type { ServerResponse } from "node:http";
+import { EventEmitter } from "node:events";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -21,11 +22,95 @@ export interface Context {
   deliver(text: string, image?: Buffer): Promise<void>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
-  // A goal for a task VM, where this machine has them. With `repo` (a git bundle), the VM works on it in ~/repo and
-  // its new commits come back as `bundle`; `model` names one of the gate's models.
-  task?(goal: string, opts?: TaskOptions): Promise<TaskResult>;
-  // Set by a plugin that can read the owner's repos (GitHub): a repo as a git bundle, for boxes.
-  repos?: { bundle?(repo: string, base?: string): Promise<Buffer> };
+  // Task VMs, where this machine has them.
+  vms?: Vms;
+  // An HTTP route on the owner's API (API_PORT, published on the tailnet): `prefix` and everything under it, for the
+  // owner only (Tailscale-User-Login, API_OWNER).
+  route(prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => unknown): void;
+}
+
+// A task VM, in a slot of a host.
+export interface Vm {
+  slot: number;
+  stop(): Promise<void>;
+  // Pauses it and saves it (memory and disk) as `id`, freeing the slot; the host's `resume` brings it back.
+  suspend?(id: number): Promise<void>;
+}
+
+// Where task VMs run: this machine's vms service, or a plugin's machines (Vms.addHost). Slot numbers are the host's
+// own; this machine's are 1 to VM_SLOTS.
+export interface Host {
+  slots: number[];
+  restore(slot: number): Promise<Vm>;
+  resume?(slot: number, id: number): Promise<Vm>;
+  discard?(slot: number, id: number): Promise<void>;
+  // Where the gate reaches port `port` of the slot's VM (10.200.<slot>.2 otherwise), and where that VM reaches the
+  // gate (a listener that takes only `peer()`).
+  endpoint?(slot: number, port: number): { host: string; port: number };
+  gate?(slot: number): { host: string; port: number; peer(): string | undefined };
+  // The slot's live desktop.
+  watch?(slot: number): string | Promise<string>;
+  // A host that costs money to run: used only once every other host's slots are taken, and never kept warm.
+  overflow?: boolean;
+}
+
+// What happens to tasks and VMs, as events naming the task (or VM) number: for the owner's apps (the api plugin).
+export interface TaskEvent {
+  id: number;
+  type: "queued" | "started" | "step" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
+  at: number;
+  goal?: string;
+  slot?: number;
+  where?: "local" | "cloud";
+  text?: string;
+  tool?: string;
+  screenshot?: Buffer;
+  // Fields a plugin adds for its own VMs (ssh-vms).
+  [field: string]: unknown;
+}
+export const taskEvents = new EventEmitter<{ event: [TaskEvent] }>();
+taskEvents.setMaxListeners(100);
+export const emit = (event: Omit<TaskEvent, "at">) => taskEvents.emit("event", { ...event, at: Date.now() } as TaskEvent);
+
+export interface Running {
+  id: number;
+  goal: string;
+  slot?: number;
+  started: number;
+}
+// A finished or stopped task's VM, or a closed VM of a plugin's, kept (suspended) for later.
+export interface Kept {
+  id: number;
+  goal: string;
+  slot: number;
+  at: number;
+}
+
+export type RunOptions = TaskOptions & { id?: number; fits?: (slot: number) => boolean; extra?: Record<string, unknown> };
+
+export interface Vms {
+  // A task whose report comes back to the caller. `fits` limits the slots it may take; `id` carries on a kept task's
+  // number (a moved one); `extra` goes to the VM's task agent with the goal.
+  run(goal: string, opts?: RunOptions): Promise<TaskResult>;
+  // A number for a task or VM to come (`run`'s `id`), so a client can name it before it starts.
+  reserve(): number;
+  // A task like the main agent's task tool starts: its report goes to the main agent. Its number.
+  start(goal: string, opts?: RunOptions): number;
+  // The owner's message for a task: given to it running, held for it queued, or a kept one resumed with it.
+  tell(id: number, message: string): "told" | "queued" | "resumed" | "none";
+  stop(id: number): boolean;
+  running(): Running[];
+  kept(): Kept[];
+  // A VM of the caller's own (not a task), numbered like tasks, until it gives it back: kept for later (`give`),
+  // thrown away (`drop`), or deleted for good once kept (`forget`). `reclaim` brings a kept one back.
+  hold(goal: string, opts?: { model?: string; fits?: (slot: number) => boolean }): Promise<{ id: number; vm: Vm }>;
+  give(id: number): Promise<void>;
+  drop(id: number): Promise<void>;
+  reclaim(id: number, opts?: { model?: string }): Promise<Vm | undefined>;
+  forget(id: number): Promise<boolean>;
+  // The live desktop of a running task's or held VM's.
+  watch(id: number): Promise<string | undefined>;
+  addHost(host: Host): Promise<void>;
 }
 
 export interface TaskOptions {
@@ -82,11 +167,9 @@ export interface Observer {
 // A model backend in place of LLM_BASE_URL for some of the gate's models (`models`: main, task, code -> the backend's
 // model id). The gate scrubs, maps and observes the call as for any other; `complete` gets the OpenAI chat completions
 // request with `model` already mapped, and answers as an OpenAI-compatible API would (SSE when `stream` is set).
-// An `upstream` backend stands in for LLM_BASE_URL itself (a gateway in front of it): it serves its models where no
-// other backend does, and what falls back from one. A backend that answers 402, 429 or 503 is skipped for a while.
+// A backend that answers 402, 429 or 503 is skipped for a while, for LLM_BASE_URL.
 export interface Llm {
   models: Record<string, string>;
-  upstream?: boolean;
   complete(body: Record<string, unknown>, signal: AbortSignal, call: LlmCall): Promise<Response>;
 }
 
@@ -208,13 +291,7 @@ main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
 </style>
 <main>${PAGE_ART}${body}</main>`;
 
-// Where the gate reaches a port of the task VM in `slot`: slots 1 to 99 are this machine's (10.200.<slot>.2); slot
-// 100k + n is cloud machine k's (nodes.ts), which forwards one port per slot and VM port to its VMs.
-export const REMOTE_BASE = 100;
-export const REMOTE_PORTS: Record<number, number> = { 4000: 14000, 3211: 13200, 6901: 16900, 9223: 19200, 22: 12200 };
-// Cloud machine k's Tailscale name (nodes.ts fills it in).
-export const nodeHosts = new Map<number, string>();
-export const vmEndpoint = (slot: number, port: number) => {
-  const host = slot > REMOTE_BASE ? nodeHosts.get(Math.floor(slot / REMOTE_BASE)) : undefined;
-  return host ? { host, port: REMOTE_PORTS[port] + (slot % REMOTE_BASE) } : { host: `10.200.${slot}.2`, port };
-};
+// Where the gate reaches port `port` of the task VM in `slot`: its host's endpoint, or this machine's slot link.
+export const endpoints = new Map<number, (port: number) => { host: string; port: number }>();
+export const vmEndpoint = (slot: number, port: number) => endpoints.get(slot)?.(port) ?? { host: `10.200.${slot}.2`, port };
+

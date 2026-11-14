@@ -6,10 +6,19 @@ import { gateway, url as bifrostUrl } from "../bifrost/index.ts";
 import { status } from "../claude-code/claude.ts";
 import { backend as claudeCode, config as claudeConfig } from "../claude-code/index.ts";
 
-// Model routing by NVIDIA's Switchyard (compose.yaml), with TypeSafe's Jev as the judge: the gate's calls for
-// SWITCHYARD_ALIAS (and SWITCHYARD_ROLES) go to it, each with its session (the main agent's, or the task's), and it
-// picks one of four models per user turn: DeepSeek and Qwen through the gateway (Bifrost, when that's on), Opus and
-// Sonnet through Claude Code, which this plugin runs for it at a localhost port of its own (see README.md).
+// Model routing by NVIDIA's Switchyard (github.com/NVIDIA-NeMo/Switchyard, built from source by the Dockerfile: it
+// publishes no image), with TypeSafe's Jev as the judge. The gate's calls for SWITCHYARD_ROLES (e.g. task, or
+// main,task,code) and SWITCHYARD_ALIAS go to Switchyard at 127.0.0.1:4801, with a session per caller (the main agent,
+// or each task, so a task keeps its model). At each new user message Jev picks one of TIERS by name (the names are the
+// policy), and Switchyard serves that tier's first model, falling through the rest when one fails:
+// DeepSeek and Qwen through LLM_BASE_URL (or Bifrost, when that plugin is on), Opus and Sonnet through Claude Code,
+// which this plugin runs for Switchyard on 127.0.0.1:4802 (only Switchyard's key, derived from DB_KEY, gets in).
+// When Switchyard is down or every model fails, the gate falls back to LLM_BASE_URL.
+//
+// Turning it on: SWITCHYARD_ROLES and SWITCHYARD_QWEN_MODEL (the gateway's id for Qwen) in .env, "switchyard" in
+// biscotti.json (not alongside claude-code for the same roles), then restart setup and the gate. Jev is TypeSafe's
+// /v1/systemone with TYPESAFE_API_KEY; through OpenRouter, set SWITCHYARD_JEV_URL, SWITCHYARD_JEV_KEY and
+// SWITCHYARD_JEV_MODEL. Switchyard expects Jev's answers to carry `"type": "choice"` (not checked against the live API).
 
 type Env = Record<string, string | undefined>;
 
@@ -103,21 +112,6 @@ export function secrets(env: Env, bifrost = false) {
     SWITCHYARD_CLAUDE_KEY: claudeKey(env),
     SWITCHYARD_JEV_KEY: (env.SWITCHYARD_JEV_KEY || env.TYPESAFE_API_KEY)!,
   };
-}
-
-// TOML for config(): tables of strings, numbers, booleans, string lists and tables.
-export function toml(value: Record<string, unknown>): string {
-  const key = (k: string) => (/^[A-Za-z0-9_-]+$/.test(k) ? k : JSON.stringify(k));
-  const scalar = (v: unknown): string => (Array.isArray(v) ? `[${v.map(scalar).join(", ")}]` : typeof v === "string" ? JSON.stringify(v) : String(v));
-  const isTable = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-  const table = (path: string[], t: Record<string, unknown>): string[] => {
-    const entries = Object.entries(t).filter(([, v]) => v !== undefined);
-    const own = entries.filter(([, v]) => !isTable(v)).map(([k, v]) => `${key(k)} = ${scalar(v)}`);
-    const head = path.length && own.length ? [`[${path.map(key).join(".")}]`] : [];
-    const nested = entries.filter(([, v]) => isTable(v)).flatMap(([k, v]) => table([...path, k], v as Record<string, unknown>));
-    return [...(own.length ? [...head, ...own, ""] : []), ...nested];
-  };
-  return table([], value).join("\n");
 }
 
 // Switchyard's session for a call: the main agent's, or the task the VM in its slot runs, so a task keeps its model.

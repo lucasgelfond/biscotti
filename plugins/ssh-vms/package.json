@@ -1,0 +1,8 @@
+{
+  "name": "@biscotti/ssh-vms",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*"
+  }
+}

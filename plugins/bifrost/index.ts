@@ -1,8 +1,9 @@
 import type { Llm, Plugin } from "@biscotti/core";
 
-// Bifrost (compose.yaml) in front of LLM_BASE_URL: the gate's calls that no other plugin answers go through it, with
-// its retries and, per BIFROST_FALLBACKS, failover to other models or a second provider. When it's down, the gate
-// calls LLM_BASE_URL itself (see README.md).
+// Bifrost (github.com/maximhq/bifrost, compose.yaml) in front of LLM_BASE_URL: the gate's main, task and code calls go
+// through it, with its retries and, per BIFROST_FALLBACKS (Bifrost's model names, e.g. backup/<model>), failover to
+// other models or a second provider (BIFROST_BACKUP_URL, BIFROST_BACKUP_KEY). When it's down, the gate calls
+// LLM_BASE_URL itself. A plugin listed after it in biscotti.json that answers the same models (claude-code) wins.
 
 type Env = Record<string, string | undefined>;
 
@@ -55,7 +56,6 @@ export function backend(env: Env = process.env): Llm {
   const extra = env.LLM_EXTRA ? JSON.parse(env.LLM_EXTRA) : undefined;
   const fallbacks = list(env.BIFROST_FALLBACKS);
   return {
-    upstream: true,
     models: Object.fromEntries(Object.entries(models).flatMap(([name, model]) => (model ? [[name, gateway(model)]] : []))),
     async complete(body, signal) {
       return fetch(`${url(env)}/v1/chat/completions`, {
