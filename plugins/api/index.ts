@@ -9,7 +9,8 @@ import { sql } from "drizzle-orm";
 // plugin's VMs (ssh-vms), is a session, numbered as biscotti numbers them:
 //
 //   session/list     the board, newest first; each session's _meta.biscotti says what it is (Summary)
-//   session/new      a number for a task to come; its first prompt is the goal (its report goes to the main agent too)
+//   session/new      a number for a task to come; its first prompt is the goal (its report goes to the main agent too).
+//                    _meta.biscotti.display: "mobile" (a phone-shaped desktop: the iPhone app's) or "desktop"
 //   session/prompt   the goal, or the owner's message for a running or kept task; answered when the task reports
 //   session/cancel   stop it (its VM is kept)
 //   session/load     its history replayed; session/resume and session/close are accepted (every connection follows all)
@@ -118,6 +119,8 @@ export default {
     // Prompts waiting on a task's next report (or its failing or stopping).
     const waiting = new Map<number, ((stop: acp.StopReason) => void)[]>();
     let seq = 0;
+    // The desktop shape asked for at session/new, until the first prompt starts the task.
+    const displays = new Map<number, "mobile" | "desktop">();
 
     taskEvents.on("event", (e) => {
       const t = tasks.take(e);
@@ -149,7 +152,12 @@ export default {
         authMethods: [],
       }))
       .onRequest(acp.methods.agent.session.list, () => ({ sessions: [...tasks.rows.values()].sort((a, b) => b.updated - a.updated).map((t) => info(t, vms)) }))
-      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: String(vms.reserve()) }))
+      .onRequest(acp.methods.agent.session.new, ({ params }) => {
+        const id = vms.reserve();
+        const display = (params._meta?.biscotti as { display?: string } | undefined)?.display;
+        if (display === "mobile" || display === "desktop") displays.set(id, display);
+        return { sessionId: String(id) };
+      })
       .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
         const t = known(params.sessionId);
         const history = [
@@ -174,7 +182,7 @@ export default {
         const t = tasks.rows.get(id);
         if (t && t.kind !== "task") throw acp.RequestError.invalidParams(undefined, "this is a VM to ssh into; it takes no prompts");
         const done = reported(id);
-        if (!t) vms.start(message, { id });
+        if (!t) vms.start(message, { id, display: displays.get(id) }), displays.delete(id);
         else if (vms.tell(id, message) === "none") throw acp.RequestError.invalidParams(undefined, `task #${id} isn't running or kept`);
         return { stopReason: await done };
       })

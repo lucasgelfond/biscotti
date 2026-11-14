@@ -3,8 +3,7 @@ import { appendFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { Llm, LlmCall, Plugin } from "@biscotti/core";
 import { gateway, url as bifrostUrl } from "../bifrost/index.ts";
-import { status } from "../claude-code/claude.ts";
-import { backend as claudeCode, config as claudeConfig } from "../claude-code/index.ts";
+import { backend as claudeCode, claude, getClaudeStatus } from "../claude-code/index.ts";
 
 // Model routing by NVIDIA's Switchyard (github.com/NVIDIA-NeMo/Switchyard, built from source by the Dockerfile: it
 // publishes no image), with TypeSafe's Jev as the judge. The gate's calls for SWITCHYARD_ROLES (e.g. task, or
@@ -221,7 +220,7 @@ export default {
     return llm;
   },
   async start() {
-    const s = await status(claudeConfig(process.env));
+    const s = await getClaudeStatus({ ...process.env, PI_CLAUDE_CODE_COMMAND: claude() });
     if (!s.loggedIn) console.error(`switchyard: Claude Code isn't usable, so its tiers fall through to the API models. ${s.detail}`);
   },
 } satisfies Plugin;

@@ -2,53 +2,67 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// A stand-in `claude` executable: `auth status` says what `loggedIn` says, and `-p` acknowledges each history frame
-// as Claude Code does, then replays `reply` (stream-json lines) for the frame it should answer, and keeps running (as
-// Claude Code would, to act on a tool call) until it's stopped. What it was run with lands in `log`.
-export function fakeClaude(reply: unknown[], opts: { loggedIn?: boolean } = {}) {
+// A stand-in `claude` for pi-claude-code, after its own tests' fake: `auth status` says what `loggedIn` says; `-p`
+// answers the initialize control request, then each user frame with `reply` (Anthropic stream events; a string is a
+// failing `result` with that text). Each run's environment lands in `log`.
+export function fakeClaude(reply: Record<string, unknown>[] | string, opts: { loggedIn?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "fake-claude-"));
   const log = join(dir, "log.jsonl");
   const command = join(dir, "claude");
-  writeFileSync(join(dir, "reply.json"), JSON.stringify(reply));
   writeFileSync(log, "");
   writeFileSync(
     command,
     `#!${process.execPath}
-const { appendFileSync, readFileSync } = require("node:fs");
-const log = (entry) => appendFileSync(${JSON.stringify(log)}, JSON.stringify(entry) + "\\n");
+const { appendFileSync } = require("node:fs");
+const readline = require("node:readline");
 const args = process.argv.slice(2);
-if (args[0] === "auth") {
+if (args.includes("auth")) {
   console.log(JSON.stringify({ loggedIn: ${opts.loggedIn ?? true}, authMethod: "claude.ai", subscriptionType: "max" }));
   process.exit(${opts.loggedIn === false ? 1 : 0});
 }
-log({ args, env: process.env, system: readFileSync(args[args.indexOf("--system-prompt-file") + 1], "utf8"),
-  tools: JSON.parse(readFileSync(JSON.parse(args[args.indexOf("--mcp-config") + 1]).mcpServers.gate.args[1], "utf8")) });
-const out = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
-out({ type: "system", subtype: "init", tools: [] });
-let buffer = "";
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  let i;
-  while ((i = buffer.indexOf("\\n")) >= 0) {
-    const frame = JSON.parse(buffer.slice(0, i));
-    buffer = buffer.slice(i + 1);
-    log({ frame });
-    if (frame.type !== "user") continue;
-    if (frame.shouldQuery === false) out({ type: "result", subtype: "success", is_error: false, num_turns: 0 });
-    else for (const line of JSON.parse(readFileSync(${JSON.stringify(join(dir, "reply.json"))}, "utf8"))) out(line);
+appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args, env: process.env }) + "\\n");
+const reply = ${JSON.stringify(reply)};
+const usage = { input_tokens: 3, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+const out = (o) => console.log(JSON.stringify(o));
+readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line", (line) => {
+  const frame = JSON.parse(line);
+  if (frame.type === "control_request" && frame.request?.subtype === "initialize")
+    return out({ type: "control_response", response: { subtype: "success", request_id: frame.request_id, response: { models: [] } } });
+  if (frame.type !== "user") return;
+  if (typeof reply === "string") return out({ type: "result", subtype: "success", is_error: true, result: reply, usage });
+  const content = [];
+  for (const event of reply) {
+    out({ type: "stream_event", event });
+    if (event.type === "content_block_start") content.push({ ...event.content_block });
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") content[event.index].text = (content[event.index].text ?? "") + event.delta.text;
+    if (event.type === "content_block_delta" && event.delta.type === "input_json_delta") content[event.index].input = JSON.parse(event.delta.partial_json);
   }
+  const stop = reply.find((e) => e.type === "message_delta")?.delta?.stop_reason ?? "end_turn";
+  out({ type: "assistant", message: { id: "m_fake", role: "assistant", content, stop_reason: stop, usage } });
+  out({ type: "result", subtype: stop === "tool_use" ? "error_max_turns" : "success", is_error: stop === "tool_use", usage });
 });
-setInterval(() => {}, 1000);
 `,
   );
   chmodSync(command, 0o755);
-  const entries = () =>
-    readFileSync(log, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l));
-  return { command, entries };
+  return { command, runs: () => readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as { args: string[]; env: Record<string, string> }) };
 }
 
-// Claude Code's stream-json for a reply of Anthropic stream events (with --include-partial-messages).
-export const streamed = (events: Record<string, unknown>[]) => events.map((event) => ({ type: "stream_event", event, session_id: "s", parent_tool_use_id: null }));
+const usage = { input_tokens: 3, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+// A reply that says `text`.
+export const says = (text: string) => [
+  { type: "message_start", message: { id: "m_fake", role: "assistant", content: [], usage } },
+  { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage },
+  { type: "message_stop" },
+];
+// A reply that calls the caller's tool `name` with `input`.
+export const calls = (name: string, input: object) => [
+  { type: "message_start", message: { id: "m_fake", role: "assistant", content: [], usage } },
+  { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: `mcp__pi__${name}`, input: {} } },
+  { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "tool_use" }, usage },
+  { type: "message_stop" },
+];

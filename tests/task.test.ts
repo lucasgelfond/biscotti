@@ -4,13 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { createGate } from "../core/src/gate.ts";
-import { restore, SLOTS, taskVms } from "../core/src/tasks.ts";
+import { restore } from "../core/src/firecracker.ts";
+import { SLOTS, taskVms } from "../core/src/tasks.ts";
 
 // Runs on the Pi, with the live agent stopped (it holds the slots and the gate's ports).
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const onThePi = existsSync("/dev/kvm") && existsSync(`${VM_DIR}/desktop.snap`);
-const vms = onThePi ? taskVms((slot) => restore(VM_DIR, FIRECRACKER, slot, 1100 + slot)) : undefined;
+const started: number[] = [];
+const vms = onThePi ? taskVms([], { onStart: (slot) => started.push(slot) }) : undefined;
+await vms?.addHost({ slots: SLOTS, restore: (slot) => restore(VM_DIR, FIRECRACKER, slot, 1100 + slot) });
 
 if (onThePi) {
   const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: process.env.TASK_MODEL! }, send: async () => {} });
@@ -20,7 +23,7 @@ if (onThePi) {
 test.skipIf(!onThePi)("runs a task in a fresh VM and returns its report and final screen", async () => {
   const goal = "Run `uname -m` and `cat /etc/os-release` in a shell. Report the machine architecture and the distro's ID.";
 
-  const { report, screenshot } = await vms!.run(goal);
+  const { report, screenshot } = await vms!.run(goal).result;
 
   expect(report).toMatch(/aarch64|x86_64/);
   expect(report.toLowerCase()).toContain("debian");
@@ -28,22 +31,22 @@ test.skipIf(!onThePi)("runs a task in a fresh VM and returns its report and fina
 });
 
 test.skipIf(!onThePi)("starts every task from a clean VM", async () => {
-  await vms!.run("Create the file /tmp/left-behind with the text hello. Report done.");
+  await vms!.run("Create the file /tmp/left-behind with the text hello. Report done.").result;
 
-  const { report } = await vms!.run("Does /tmp/left-behind exist? Check with `ls`, then answer only EXISTS or MISSING.");
+  const { report } = await vms!.run("Does /tmp/left-behind exist? Check with `ls`, then answer only EXISTS or MISSING.").result;
 
   expect(report).toContain("MISSING");
 });
 
 test.skipIf(!onThePi)("runs three tasks at once, each in its own slot", async () => {
-  const slots: number[] = [];
+  started.length = 0;
   const goal = (n: number) => `Run \`echo task-${n}\` in a shell and report exactly what it printed.`;
 
-  const started = Date.now();
-  const reports = await Promise.all([1, 2, 3].map((n) => vms!.run(goal(n), (slot) => slots.push(slot))));
-  const seconds = (Date.now() - started) / 1000;
+  const began = Date.now();
+  const reports = await Promise.all([1, 2, 3].map((n) => vms!.run(goal(n)).result));
+  const seconds = (Date.now() - began) / 1000;
 
-  expect([...slots].sort()).toEqual([1, 2, 3]);
+  expect([...started].sort()).toEqual([1, 2, 3]);
   reports.forEach(({ report }, i) => expect(report).toContain(`task-${i + 1}`));
   expect(seconds).toBeLessThan(90);
 });
@@ -53,7 +56,7 @@ test.skipIf(!onThePi)("keeps a VM restored ahead of time, so a short task finish
   await new Promise((r) => setTimeout(r, 2000));
 
   const started = Date.now();
-  const { report } = await vms!.run("Reply with just the word ready. Use no tools.");
+  const { report } = await vms!.run("Reply with just the word ready. Use no tools.").result;
   const seconds = (Date.now() - started) / 1000;
 
   expect(report.toLowerCase()).toContain("ready");
@@ -78,7 +81,7 @@ test.skipIf(!onThePi)("fixes a bug in a repo it's given and returns the commits"
   const repo = buggyRepo();
   const goal = "greet() in greet.js should greet with a comma and an exclamation mark: greet('Ada') is 'Hello, Ada!'. Fix it, and check with npm test.";
 
-  const { bundle } = await vms!.run(goal, undefined, { repo: repo.bundle });
+  const { bundle } = await vms!.run(goal, { repo: repo.bundle }).result;
 
   expect(bundle).toBeDefined();
   writeFileSync(`${repo.dir}.out.bundle`, bundle!);

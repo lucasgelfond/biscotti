@@ -5,7 +5,7 @@ import { createGate, LOCKS, scrub } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import { localTools, type Channel, type Context, type Plugin } from "./plugin.ts";
 import { ownerApi } from "./http.ts";
-import { gateTasks } from "./tasks.ts";
+import { gateTasks, localHost } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
 
 function env(name: string) {
@@ -30,7 +30,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   });
   // Task VMs, where the vms service runs (vms-main.ts); finished ones are kept, listed in the data directory.
   const vms = process.env.VMS_SOCKET
-    ? await gateTasks(gate, process.env.VMS_SOCKET, env("VM_DIR"), (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot), `${dir}/tasks.json`)
+    ? await gateTasks(gate, localHost(process.env.VMS_SOCKET, env("VM_DIR")), (goal, { report, screenshot }) => deliver(`Task report (${goal}):\n${report}`, screenshot), `${dir}/tasks.json`)
     : undefined;
   const api = ownerApi();
   const send = async (text: string, image?: Buffer) => {

@@ -10,7 +10,8 @@ import { createInterface } from "node:readline";
 import { createGate } from "../../core/src/gate.ts";
 import { openDb } from "../../core/src/memory.ts";
 import type { Context, Plugin } from "../../core/src/plugin.ts";
-import { restore, SLOTS } from "../../core/src/tasks.ts";
+import { restore } from "../../core/src/firecracker.ts";
+import { SLOTS } from "../../core/src/tasks.ts";
 import vault from "../../core/src/vault.ts";
 import { RUNNER } from "../../plugins/jev-quick-browse/index.ts";
 import { observer, otlp, tracerFor } from "../../plugins/phoenix/index.ts";
@@ -202,7 +203,7 @@ const phoenix = process.env.CU_PHOENIX ? (() => {
 // quick_browse too, or …,switchyard for routed models. Tasks run lean (CU_LEAN=0 for the full context).
 const scratch = mkdtempSync(join(tmpdir(), "cu-"));
 // The owner says yes to whatever a task asks (a vault fill on a site): what is graded is what the task does with it.
-const ctx: Context = { db: openDb(process.env.CU_DB ?? `${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => true, deliver: async () => {}, send: async () => {}, task: async () => ({ report: "" }) };
+const ctx: Context = { db: openDb(process.env.CU_DB ?? `${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {} };
 gate.add(await vault.tools!(ctx));
 for (const name of (process.env.CU_PLUGINS ?? "secure-fill,vision,lessons").split(",").filter(Boolean)) {
   const plugin: Plugin = (await import(`../../plugins/${name}/index.ts`)).default;
