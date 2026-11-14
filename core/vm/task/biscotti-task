@@ -351,11 +351,10 @@ async function setUpBox({ key, repo, setup }, socket) {
   try {
     // Every VM starts from the same image and snapshot, so the box makes its own host keys the first time it's set up
     // (they live on its work disk, so a kept box keeps them) and sshd reloads them.
+    // (As root: this agent runs as cua, which has sudo.)
     if (!existsSync("/etc/ssh/biscotti-box")) {
-      for (const type of ["ed25519", "ecdsa", "rsa"]) rmSync(`/etc/ssh/ssh_host_${type}_key`, { force: true }), rmSync(`/etc/ssh/ssh_host_${type}_key.pub`, { force: true });
-      execFileSync("ssh-keygen", ["-A"], { stdio: "ignore" });
-      writeFileSync("/etc/ssh/biscotti-box", "");
-      execFileSync("pkill", ["-HUP", "-x", "sshd"], { stdio: "ignore" });
+      const script = "rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && ssh-keygen -A && touch /etc/ssh/biscotti-box && pkill -HUP -x sshd";
+      execFileSync("sudo", ["-n", "sh", "-c", script], { stdio: "ignore" });
       // Answer once sshd serves the new key, so the owner's first ssh sees the key the box reports.
       const pub = readFileSync("/etc/ssh/ssh_host_ed25519_key.pub", "utf8").split(" ")[1];
       for (let i = 0; i < 50; i++) {
