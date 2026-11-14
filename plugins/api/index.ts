@@ -18,8 +18,9 @@ import { sql } from "drizzle-orm";
 //
 // What a task does comes as session/update: the goal and the owner's messages (user_message_chunk), each tool call
 // (tool_call), what it says and its report, with its screenshot (agent_message_chunk), and session_info_update as its
-// status changes. Every connection gets every session's updates (one owner, a few devices), so a board needs no
-// polling; a client shows the sessions it cares about. Plugins add methods of
+// status changes. Every connection is sent every session's updates (one owner, a few devices); over HTTP they reach
+// only the sessions whose streams it opened, so each change also comes as _biscotti/session {session: SessionInfo} on
+// the connection's own stream, for a board without polling. Plugins add methods of
 // their own (`extension`), named _biscotti/…; this one has _biscotti/watch {sessionId} -> {url}, the live desktop.
 
 // What the board knows of a session (in _meta.biscotti).
@@ -37,7 +38,8 @@ export interface Summary {
 interface Row extends Summary {
   id: number;
   goal: string;
-  steps: { at: number; text?: string; tool?: string }[];
+  // What it did and said, and (`owner`) what the owner told it.
+  steps: { at: number; text?: string; tool?: string; owner?: true }[];
   started: number;
   updated: number;
 }
@@ -74,7 +76,8 @@ function board(ctx: Context) {
       t.status = STATUS[e.type] ?? (e.type === "failed" && t.status !== "moving" ? "failed" : t.status);
       if (e.type === "report") t.report = e.text;
       if (e.type === "report" && e.screenshot) screenshots.set(e.id, e.screenshot.toString("base64"));
-      if (e.text && ["step", "resumed", "moving", "failed"].includes(e.type)) t.steps.push({ at: e.at, text: e.text, tool: e.tool });
+      if (e.text && ["step", "moving", "failed"].includes(e.type)) t.steps.push({ at: e.at, text: e.text, tool: e.tool });
+      if (e.text && (e.type === "told" || e.type === "resumed")) t.steps.push({ at: e.at, text: e.text, owner: true });
       t.steps.splice(0, Math.max(0, t.steps.length - STEPS));
       for (const old of [...rows.keys()].slice(0, Math.max(0, rows.size - ROWS))) (rows.delete(old), screenshots.delete(old));
       try {
@@ -102,7 +105,7 @@ const say = (text: string): acp.ContentBlock => ({ type: "text", text });
 // What an event (or a stored step) shows a session's follower.
 function updates(e: Pick<TaskEvent, "id" | "type" | "text" | "tool" | "goal">, n: number, screenshot?: string): acp.SessionUpdate[] {
   if (e.type === "queued" && e.goal) return [{ sessionUpdate: "user_message_chunk", content: say(e.goal) }];
-  if (e.type === "resumed" && e.text) return [{ sessionUpdate: "user_message_chunk", content: say(e.text) }];
+  if ((e.type === "resumed" || e.type === "told") && e.text) return [{ sessionUpdate: "user_message_chunk", content: say(e.text) }];
   if (e.type === "step" && e.tool) return [{ sessionUpdate: "tool_call", toolCallId: `${e.id}-${n}`, title: `${e.tool} ${e.text ?? ""}`.trim(), kind: "other", status: "completed", rawInput: e.text }];
   if (e.type === "step" && e.text) return [{ sessionUpdate: "agent_message_chunk", content: say(e.text) }];
   if (e.type === "report") return [{ sessionUpdate: "agent_message_chunk", content: say(e.text ?? "") }, ...(screenshot ? [{ sessionUpdate: "agent_message_chunk" as const, content: { type: "image" as const, data: screenshot, mimeType: "image/png" } }] : [])];
@@ -127,7 +130,12 @@ export default {
       const sessionId = String(e.id);
       const content = updates(e, ++seq, tasks.screenshots.get(e.id));
       const status: acp.SessionUpdate = { sessionUpdate: "session_info_update", title: t.goal.split("\n")[0].slice(0, 200), updatedAt: new Date(t.updated).toISOString(), _meta: { biscotti: info(t, vms)._meta!.biscotti } };
-      for (const client of connections) for (const update of [...content, status]) void client.notify(acp.methods.client.session.update, { sessionId, update }).catch(() => {});
+      for (const client of connections) {
+        for (const update of [...content, status]) void client.notify(acp.methods.client.session.update, { sessionId, update }).catch(() => {});
+        // Also on the connection's own stream (a session's updates go only to that session's stream, over HTTP), so a
+        // board learns of every session as it starts and changes without following each one.
+        void client.notify("_biscotti/session", { session: info(t, vms) }).catch(() => {});
+      }
       const stop: acp.StopReason | undefined = e.type === "report" ? "end_turn" : e.type === "failed" ? (/stopped/.test(e.text ?? "") ? "cancelled" : "end_turn") : undefined;
       if (stop) for (const resolve of waiting.get(e.id)?.splice(0) ?? []) resolve(stop);
     });
@@ -162,7 +170,7 @@ export default {
         const t = known(params.sessionId);
         const history = [
           ...updates({ id: t.id, type: "queued", goal: t.goal }, 0),
-          ...t.steps.flatMap((s, i) => updates({ id: t.id, type: "step", text: s.text, tool: s.tool }, i)),
+          ...t.steps.flatMap((s, i) => updates({ id: t.id, type: s.owner ? "told" : "step", text: s.text, tool: s.tool }, i)),
           ...(t.report ? updates({ id: t.id, type: "report", text: t.report }, t.steps.length, tasks.screenshots.get(t.id)) : []),
         ];
         for (const update of history) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId, update });

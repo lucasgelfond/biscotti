@@ -37,9 +37,11 @@ test("a client starts a task as a session, follows it, lists it, and its report 
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/acp`;
 
   const updates: acp.SessionNotification[] = [];
+  const board: { session: acp.SessionInfo }[] = [];
   const result = await acp
     .client({ name: "test" })
     .onNotification(acp.methods.client.session.update, ({ params }) => void updates.push(params))
+    .onNotification("_biscotti/session", (p) => p as { session: acp.SessionInfo }, ({ params }) => void board.push(params))
     .connectWith(createHttpStream(url), async (ctx) => {
       const init = await ctx.request(acp.methods.agent.initialize, { protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
       const { sessionId } = await ctx.request(acp.methods.agent.session.new, { cwd: "/", mcpServers: [] });
@@ -64,4 +66,6 @@ test("a client starts a task as a session, follows it, lists it, and its report 
   const said = updates.flatMap((u) => (u.update.sessionUpdate === "agent_message_chunk" ? [u.update.content] : []));
   expect(said).toContainEqual({ type: "text", text: "done: book a table" });
   expect(said).toContainEqual({ type: "image", data: Buffer.from("png").toString("base64"), mimeType: "image/png" });
+  // The board's own stream: every change of every session, without following it.
+  expect(board.map((b) => b.session._meta?.biscotti)).toContainEqual(expect.objectContaining({ status: "kept" }));
 });

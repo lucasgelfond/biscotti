@@ -422,6 +422,7 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
     },
     tell(id, message) {
       const task = pool.running().find((t) => t.id === id);
+      if (task) emit({ id, type: "told", text: message });
       if (task?.slot !== undefined) return (gate.tell(task.slot, message), "told");
       if (task) return (waiting.set(id, [...(waiting.get(id) ?? []), message]), "queued");
       const k = pool.kept().find((t) => t.id === id);
