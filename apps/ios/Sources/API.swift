@@ -45,6 +45,18 @@ struct API {
     private struct List: Decodable { var tasks: [TaskItem] }
 
     func tasks() async throws -> [TaskItem] { try await get("tasks", as: List.self).tasks }
+
+    /// Whether the gate answers, within a few seconds.
+    func ping() async throws {
+        let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url("tasks"), timeoutInterval: 8))
+        try check(response, data)
+    }
+
+    /// The error says the gate couldn't be reached at all (rather than that it answered with an error).
+    static func unreachable(_ error: Error) -> Bool {
+        let codes: [URLError.Code] = [.cannotFindHost, .dnsLookupFailed, .cannotConnectToHost, .timedOut, .notConnectedToInternet]
+        return (error as? URLError).map { codes.contains($0.code) } ?? false
+    }
     func task(_ id: Int) async throws -> TaskItem { try await get("tasks/\(id)", as: TaskItem.self) }
     func screenshotURL(_ id: Int) -> URL { url("tasks/\(id)/screenshot") }
     func watch(_ id: Int) async throws -> URL? {

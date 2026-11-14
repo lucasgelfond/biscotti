@@ -3,7 +3,12 @@ import SwiftUI
 /// First run: where the gate is.
 struct SetupView: View {
     var store: Store
-    @State private var host = ""
+    @State private var host: String
+
+    init(store: Store) {
+        self.store = store
+        _host = State(initialValue: store.host)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -24,7 +29,46 @@ struct SetupView: View {
         .padding(32)
     }
 
-    private func connect() { if API(host: host) != nil { store.host = host } }
+    private func connect() {
+        guard API(host: host) != nil else { return }
+        store.editingHost = false
+        store.host = host
+    }
+}
+
+/// First thing on launch, and whenever the gate stops answering: it's only on the tailnet, so turn Tailscale on.
+struct TailscaleView: View {
+    var store: Store
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Turn on Tailscale").font(.hero).padding(.bottom, 8)
+            Text("Your biscotti is only reachable on your tailnet, so connect Tailscale, then come back.")
+                .foregroundStyle(.secondary)
+            Text(store.host).font(.footnote.monospaced()).foregroundStyle(.tertiary)
+            Spacer()
+            Button(action: openTailscale) { Text("Open Tailscale").frame(maxWidth: .infinity) }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+            Button { store.restart() } label: {
+                Group { if store.checking { ProgressView() } else { Text("Retry") } }.frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered).controlSize(.large).disabled(store.checking)
+            Button("Change address") { store.editingHost = true }
+                .font(.footnote).frame(maxWidth: .infinity)
+        }
+        .padding(32)
+    }
+
+    /// Its URL scheme, or its App Store page when it isn't installed.
+    private func openTailscale() {
+        #if os(macOS)
+        let appStore = URL(string: "https://apps.apple.com/app/id1475387142")!
+        #else
+        let appStore = URL(string: "https://apps.apple.com/app/id1470499037")!
+        #endif
+        openURL(URL(string: "tailscale://")!) { opened in if !opened { openURL(appStore) } }
+    }
 }
 
 /// The tasks: working, kept for follow-ups, and done. Long-press (or right-click) a task for what you can do with it.
@@ -44,6 +88,7 @@ struct TasksView: View {
                 section("Done", store.finished)
             }
             .overlay {
+                if store.tasks.isEmpty && !store.connected && store.error == nil { ProgressView() }
                 if store.tasks.isEmpty && store.connected {
                     ContentUnavailableView("No tasks yet", systemImage: "sparkles", description: Text("Start one here, or text your biscotti."))
                 }
