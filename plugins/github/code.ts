@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { input, optional, str, text, type Context, type LocalTool } from "@biscotti/core";
+import { audit } from "./approvals.ts";
 
 // Coding tasks with no token in the VM: a git bundle in, its commits out; the gate checks them, pushes a new biscotti/
-// branch and opens a draft pull request. Never merged.
+// branch and opens a draft pull request. Never merged. Both go ahead on their own, with an audit line each: the branch
+// is always a new one, never the default.
 
 const TIMEOUT_MS = 90 * 60_000;
 const MAX_BUNDLE = 50 * 1024 * 1024;
@@ -64,7 +66,9 @@ export function codeTask(ctx: Context, token: string): LocalTool {
     const { stat } = await review(work, result.bundle);
     const branch = `biscotti/${goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}-${randomBytes(2).toString("hex")}`;
     await git(work, "push", "-q", "origin", `biscotti-work:refs/heads/${branch}`);
+    audit({ repo, operation: "push branch", branch });
     const pr = await openPullRequest(repo, baseBranch, branch, goal, result.report);
+    audit({ repo, operation: "open draft pull request", branch });
     return `Code task on ${repo}: draft pull request ${pr.html_url} (${stat}). Text the user the link; don't merge it.\n${result.report}`;
   }
 
