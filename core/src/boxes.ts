@@ -13,6 +13,8 @@ export interface Box {
   repo?: string;
   where: "local" | "cloud";
   ssh: { host: string; port: number; user: string };
+  // The VM's ssh host key (every VM from one image shares it), for the client's known_hosts.
+  hostKey?: string;
   preview?: string;
   opened: number;
 }
@@ -39,7 +41,7 @@ const emit = (event: Omit<TaskEvent, "at">) => taskEvents.emit("event", { ...eve
 
 function prepare(vm: Vm, message: { key?: string; repo?: Buffer; setup?: string }, onLine?: (line: string) => void) {
   const { host, port } = vm.address ?? vmEndpoint(vm.slot, 4000);
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<string | undefined>((resolve, reject) => {
     const socket = connect({ host, port }, () =>
       socket.end(JSON.stringify({ box: { key: message.key, repo: message.repo?.toString("base64"), setup: message.setup } })),
     );
@@ -48,7 +50,7 @@ function prepare(vm: Vm, message: { key?: string; repo?: Buffer; setup?: string 
     createInterface({ input: socket, crlfDelay: Infinity })
       .on("error", () => {})
       .on("line", (line) => {
-        let event: { type?: string; ok?: boolean; error?: string; line?: string };
+        let event: { type?: string; ok?: boolean; error?: string; line?: string; hostKey?: string };
         try {
           event = JSON.parse(line);
         } catch {
@@ -58,7 +60,7 @@ function prepare(vm: Vm, message: { key?: string; repo?: Buffer; setup?: string 
         if (event.type === "box") {
           done = true;
           clearTimeout(timer);
-          if (event.ok) resolve();
+          if (event.ok) resolve(event.hostKey);
           else reject(new Error(event.error ?? "the box couldn't be set up"));
         }
       });
@@ -88,11 +90,12 @@ export function boxes(
     return bundle(repo, base);
   }
 
-  async function describe(id: number, vm: Vm, repo?: string): Promise<Box> {
+  async function describe(id: number, vm: Vm, repo?: string, hostKey?: string): Promise<Box> {
     return {
       id,
       slot: vm.slot,
       repo,
+      hostKey,
       where: where(vm.slot),
       ssh: sshEndpoint(vm.slot),
       preview: opts.watch ? await Promise.resolve(opts.watch(vm.slot)).catch(() => undefined) : undefined,
@@ -130,8 +133,8 @@ export function boxes(
       const warm = request.repo && request.repo === warmRepo && !request.base && !request.setup ? ready.shift() : undefined;
       if (warm) {
         void warmUp();
-        await prepare(warm.vm, { key: request.key });
-        const box = await describe(warm.id, warm.vm, request.repo);
+        const hostKey = await prepare(warm.vm, { key: request.key });
+        const box = await describe(warm.id, warm.vm, request.repo, hostKey);
         open.set(warm.id, { box, vm: warm.vm, goal });
         emit({ id: warm.id, type: "started", goal, slot: warm.vm.slot, where: box.where, ...details(box), text: "Opened (warm)" });
         return box;
@@ -140,17 +143,18 @@ export function boxes(
       emit({ id, type: "queued", goal, kind: "box", repo: request.repo });
       const repo = request.repo ? await checkout(request.repo, request.base) : undefined;
       const vm = await pool.hold();
+      let hostKey: string | undefined;
       try {
         claim(vm, id, goal);
         emit({ id, type: "started", goal, slot: vm.slot, where: where(vm.slot), text: "Setting up" });
-        await prepare(vm, { key: request.key, repo, setup: request.setup }, (line) => emit({ id, type: "step", tool: "setup", text: line.slice(0, 300) }));
+        hostKey = await prepare(vm, { key: request.key, repo, setup: request.setup }, (line) => emit({ id, type: "step", tool: "setup", text: line.slice(0, 300) }));
       } catch (err) {
         unclaim(vm.slot);
         await pool.drop(vm).catch(() => {});
         emit({ id, type: "failed", text: (err as Error).message });
         throw err;
       }
-      const box = await describe(id, vm, request.repo);
+      const box = await describe(id, vm, request.repo, hostKey);
       open.set(id, { box, vm, goal });
       emit({ id, type: "step", ...details(box), text: "Ready" });
       return box;
@@ -171,8 +175,8 @@ export function boxes(
       const vm = await pool.reclaim(id);
       if (!vm) return undefined;
       claim(vm, id, goal);
-      await prepare(vm, { key });
-      const box = await describe(id, vm, /^Box on (.+)$/.exec(goal)?.[1]);
+      const hostKey = await prepare(vm, { key });
+      const box = await describe(id, vm, /^Box on (.+)$/.exec(goal)?.[1], hostKey);
       open.set(id, { box, vm, goal });
       emit({ id, type: "resumed", slot: vm.slot, where: box.where, ...details(box), text: "Reopened" });
       return box;
