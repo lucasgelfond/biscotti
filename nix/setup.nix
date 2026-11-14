@@ -6,6 +6,8 @@
   systemd.tmpfiles.rules = [
     "d /var/lib/biscotti 0700 root root -"
     "d /var/lib/biscotti/data 0700 root root -"
+    # Claude Code's login and settings, for the claude-code plugin.
+    "d /var/lib/biscotti/claude 0700 root root -"
     # The gate's and the agent's sockets: only the agent (uid 1000) and root get in.
     "d /run/biscotti 0700 1000 1000 -"
     # The gate's and the vms service's.
@@ -112,7 +114,8 @@
         for p in $plugins; do [ -f "${repo}/plugins/$p/compose.yaml" ] && echo "  - ${repo}/plugins/$p/compose.yaml"; done
         echo "services:"
         echo "  gate:"
-        echo "    environment: { VM_SLOTS: \"${toString vms.slots}\" }"
+        echo "    environment: { VM_SLOTS: \"${toString vms.slots}\"$(has claude-code && echo ', CLAUDE_CONFIG_DIR: /var/lib/biscotti/claude') }"
+        if has claude-code; then echo "    volumes: [ /var/lib/biscotti/claude:/var/lib/biscotti/claude ]"; fi
         echo "  vms:"
         echo "    volumes: [ /nix/store:/nix/store:ro ]"
         echo "    environment: { VM_SLOTS: \"${toString vms.slots}\"''${huge:+, UFFD_HANDLER: ${faultAll}/bin/fault-all} }"
