@@ -41,6 +41,18 @@
     '';
   };
 
+  # The Pi's Wi-Fi (brcmfmac) saves power by default, which holds packets for seconds at a time: off, each time
+  # wpa_supplicant (re)starts.
+  systemd.services.biscotti-wifi-awake = {
+    description = "Wi-Fi power saving off";
+    after = [ "wpa_supplicant.service" ];
+    wantedBy = [ "wpa_supplicant.service" ];
+    partOf = [ "wpa_supplicant.service" ];
+    path = [ pkgs.iw ];
+    serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
+    script = "for dev in /sys/class/net/wl*; do iw dev \"$(basename \"$dev\")\" set power_save off; done";
+  };
+
   # Set the Wi-Fi regulatory domain before connecting, so DFS 5 GHz channels work on a cold boot.
   hardware.wirelessRegulatoryDatabase = true;
   boot.extraModprobeConfig = "options cfg80211 ieee80211_regdom=US";
@@ -57,7 +69,7 @@
       {
         echo "biscotti status, $(date -u)"; echo
         echo "== network"; ip -br addr; ip route; echo
-        echo "== wi-fi"; iw dev wlan0 link; echo
+        echo "== wi-fi"; for dev in /sys/class/net/wl*; do iw dev "$(basename "$dev")" link; done; echo
         echo "== tailscale"; tailscale status 2>&1 | head -5; echo
         echo "== failed units"; systemctl --failed --no-legend; echo
         echo "== setup"; systemctl is-active biscotti-setup; journalctl -b -u biscotti-setup -n 40 --no-pager -o short-monotonic | sed -E 's#https://login.tailscale.com/[^ ]*#<login link>#'
