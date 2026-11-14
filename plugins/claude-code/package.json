@@ -1,0 +1,9 @@
+{
+  "name": "@biscotti/claude-code",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.325",
+    "@biscotti/core": "workspace:*"
+  }
+}

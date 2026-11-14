@@ -6,6 +6,7 @@
   "packageManager": "pnpm@10.29.1",
   "pnpm": {
     "ignoredBuiltDependencies": [
+      "@anthropic-ai/claude-code",
       "@google/genai",
       "better-sqlite3",
       "better-sqlite3-multiple-ciphers",
