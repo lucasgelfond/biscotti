@@ -60,6 +60,12 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  plugins/bifrost:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+
   plugins/channels/spectrum:
     dependencies:
       '@biscotti/core':
@@ -169,6 +175,12 @@ importers:
         version: link:../../core
 
   plugins/secure-fill:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+
+  plugins/switchyard:
     dependencies:
       '@biscotti/core':
         specifier: workspace:*
