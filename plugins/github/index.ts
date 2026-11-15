@@ -47,8 +47,9 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
   },
 
   // Once a token is saved to the vault, restart (the service restarts us, and the agent reloads) to load GitHub's tools.
+  // Connected, every hour: a VM still around whose pull request was merged or closed is deleted.
   async start(ctx) {
-    if (token(ctx)) return;
+    if (token(ctx)) return void setInterval(() => void cleanUp(ctx), Number(process.env.PR_CHECK_MS ?? 3600_000)).unref();
     const timer = setInterval(() => {
       if (!token(ctx)) return;
       clearInterval(timer);
@@ -56,3 +57,16 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
     }, 10_000);
   },
 } satisfies Plugin;
+
+const PULL = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/;
+export async function cleanUp(ctx: Context, api = "https://api.github.com") {
+  for (const v of ctx.vms?.alive() ?? []) {
+    const [, repo, n] = v.pr?.match(PULL) ?? [];
+    if (!repo) continue;
+    const res = await fetch(`${api}/repos/${repo}/pulls/${n}`, { headers: { Authorization: `Bearer ${token(ctx)}`, Accept: "application/vnd.github+json" } }).catch(() => undefined);
+    const pull = res?.ok ? ((await res.json()) as { state: string; merged_at: string | null }) : undefined;
+    if (pull?.state !== "closed") continue;
+    console.log(`VM #${v.id}: ${v.pr} was ${pull.merged_at ? "merged" : "closed"}, so it's deleted`);
+    await ctx.vms!.remove(v.id);
+  }
+}

@@ -268,7 +268,12 @@ export default {
         if (tasks.rows.get(id)?.kind === "main") cancelled.add(id), void ctx.interrupt?.(sid(id)).catch(() => {});
         else vms.stop(id);
       })
-      .onRequest("_biscotti/watch", (p) => p as { sessionId: string }, async ({ params }) => ({ url: (await vms.watch(idOf(params.sessionId))) ?? null }))
+      // Asking to see it keeps it open once its task is done.
+      .onRequest("_biscotti/watch", (p) => p as { sessionId: string }, async ({ params }) => {
+        const id = idOf(params.sessionId);
+        await vms.keep(id);
+        return { url: (await vms.watch(id)) ?? null };
+      })
       .onRequest("*", async ({ method, params, signal }) => {
         const handler = extensions.get(method);
         if (!handler) throw acp.RequestError.methodNotFound(method);

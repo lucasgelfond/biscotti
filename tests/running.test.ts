@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type AddressInfo, type Server } from "node:net";
 import { tmpdir } from "node:os";
@@ -12,7 +12,8 @@ import { localTools, taskEvents, text, type Caller, type Host, type Vm } from ".
 // The task pool's bookkeeping with stand-in VMs: what's running, stopping one, when a task counts as quiet, kept VMs
 // and leases. Read before tasks.ts loads.
 process.env.TASK_IDLE_MS = "400";
-const { taskVms, gateTasks } = await import("../core/src/tasks.ts");
+process.env.VM_USE_CHECK_MS = "30";
+const { taskVms, gateTasks, vmCheck, sessions } = await import("../core/src/tasks.ts");
 
 // A task agent: "silent" says nothing, "wait <ms>" says nothing for that long and then reports, anything else is
 // reported at once. A follow-up is reported as "followup <message>".
@@ -77,23 +78,106 @@ test("a task in a tool call (like waiting on the owner's yes) isn't quiet; one t
   await expect(vms.run("silent").result).rejects.toThrow("the task went quiet");
 });
 
-test("keeps a finished task's VM, resumes it in its slot for a follow-up, and numbering carries on after a restart", async () => {
+test("a finished task's VM is deleted, and numbering carries on after a restart", async () => {
   const log: string[] = [];
   const saved = file();
   const vms = taskVms([], {}, saved);
   await vms.addHost(await host([1], log));
-  expect((await vms.run("book it").result).report).toBe("done: book it");
-  expect(vms.kept().map((k) => k.id)).toEqual([1]);
-  expect(log).toContain("suspend 1 1");
-
-  const followup = vms.resume(1, "make it two");
-  expect(followup && (await followup).report).toBe("done: followup make it two");
-  expect(log).toContain("resume 1 1");
-  expect(vms.kept().map((k) => k.id)).toEqual([1]);
+  expect((await vms.run("find flights").result).report).toBe("done: find flights");
+  expect(log).toContain("stop 1");
+  expect(log.some((l) => l.startsWith("suspend"))).toBe(false);
+  expect(vms.alive()).toEqual([]);
+  expect(vms.resume(1, "book the second one")).toBe(false);
 
   const again = taskVms([], {}, saved);
-  expect(again.kept().map((k) => k.id)).toEqual([1]);
   expect(again.reserve()).toBe(2);
+});
+
+test("a task kept open stays running once done, takes a follow-up in the same VM, and is deleted when told", async () => {
+  const log: string[] = [];
+  const vms = taskVms([], {}, file());
+  await vms.addHost(await host([1, 2], log));
+  const { id, result } = vms.run("fix the bug", { keep: true });
+  await result;
+  expect(log).not.toContain(`stop ${vms.slotOf(id)}`);
+  expect(vms.alive()).toMatchObject([{ id, asleep: false, goal: "fix the bug" }]);
+  vms.note(id, { pr: "https://github.com/o/r/pull/7" });
+  expect(vms.alive()[0].pr).toBe("https://github.com/o/r/pull/7");
+
+  const slot = vms.slotOf(id);
+  const followup = vms.resume(id, "and the docs");
+  expect(followup && (await followup).report).toBe("done: followup and the docs");
+  expect(vms.slotOf(id)).toBe(slot);
+  expect(log.some((l) => l.startsWith("resume"))).toBe(false);
+  expect(vms.alive().map((v) => v.id)).toEqual([id]);
+
+  expect(await vms.remove(id)).toBe(true);
+  expect(log).toContain(`stop ${slot}`);
+  expect(vms.alive()).toEqual([]);
+});
+
+test("asking to keep a running task keeps it open; asking for an asleep one wakes it; a plugin's VM put back is listed asleep", async () => {
+  const log: string[] = [];
+  const vms = taskVms([], {}, file());
+  await vms.addHost(await host([1, 2], log));
+  const { id, result } = vms.run("wait 200");
+  expect(await vms.keep(id)).toBe(true);
+  await result;
+  expect(vms.alive().map((v) => [v.id, v.asleep])).toEqual([[id, false]]);
+  await vms.remove(id);
+
+  const box = await vms.hold("VM on o/r");
+  await vms.give(box.id);
+  expect(vms.alive().map((v) => [v.id, v.asleep])).toEqual([[box.id, true]]);
+  expect(await vms.keep(box.id)).toBe(true);
+  expect(log).toContain(`resume ${vms.slotOf(box.id)} ${box.id}`);
+  expect(vms.alive().map((v) => [v.id, v.asleep])).toEqual([[box.id, false]]);
+  // Reopened by its plugin as it is.
+  expect((await vms.reclaim(box.id))?.slot).toBe(vms.slotOf(box.id));
+  expect(await vms.keep(999)).toBe(false);
+  expect(await vms.remove(999)).toBe(false);
+});
+
+test("an open VM counts as used while someone's on it", async () => {
+  let on = false;
+  const vms = taskVms([], {}, file());
+  await vms.addHost(await host([1], [], { active: () => on }));
+  const { id } = await vms.hold("VM on o/r");
+  const opened = vms.alive()[0].used;
+  await new Promise((r) => setTimeout(r, 120));
+  expect(vms.alive()[0].used).toBe(opened);
+  on = true;
+  await until(() => vms.alive()[0].used > opened);
+  await vms.give(id, false);
+});
+
+test("the daily check lists what's still around, what each is and which are idle over a day", () => {
+  const now = Date.UTC(2026, 10, 15, 15);
+  expect(vmCheck([], now)).toBeUndefined();
+  const check = vmCheck(
+    [
+      { id: 31, goal: "Repo: o/r. Fix\nthe login bug", asleep: true, used: now - 3 * 86400_000, pr: "https://github.com/o/r/pull/9" },
+      { id: 47, goal: "VM on o/site", asleep: false, used: now - 20 * 60_000 },
+    ],
+    now,
+  )!;
+  expect(check).toContain("- #31 (asleep, last used 3 days ago, idle over a day, pull request https://github.com/o/r/pull/9): Repo: o/r. Fix the login bug");
+  expect(check).toContain("- #47 (open, last used 20 min ago): VM on o/site");
+  expect(check).toContain("delete_vms");
+});
+
+test("ssh and desktop sessions on a slot's VM are counted from the host's TCP table", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tcp-"));
+  // 10.200.1.2:22 and 10.200.1.2:6901 established, a closed one and the VM's own connection to the gate (10.200.1.1:80).
+  const table = `  sl  local_address rem_address   st
+   0: 0100007F:B3C2 0201C80A:0016 01 00000000:00000000
+   1: 0100007F:B3C3 0201C80A:1AF5 01 00000000:00000000
+   2: 0100007F:B3C4 0201C80A:0016 06 00000000:00000000
+   3: 0101C80A:0050 0201C80A:CE86 01 00000000:00000000
+`;
+  writeFileSync(join(dir, "tcp"), table);
+  expect(sessions(1, [join(dir, "tcp")])).toBe(2);
+  expect(sessions(2, [join(dir, "tcp")])).toBe(0);
 });
 
 test("a plugin holds a VM, keeps it, brings it back and deletes it, numbered with the tasks", async () => {
@@ -189,7 +273,7 @@ test("tell_task passes the owner's message to that running task's VM, holds it f
   expect(await said("tell_task", { id: 2, message: "make it 4 people at 8" })).toBe("Told #2. Its report will say what it did.");
   expect(await messages(second)).toEqual(["make it 4 people at 8"]);
   expect(await said("tell_task", { id: 3, message: "Friday instead" })).toBe("#3 is still waiting for a VM; it gets the message when it starts.");
-  expect(await said("tell_task", { id: 9, message: "never mind" })).toContain("No task #9 is running or kept.");
+  expect(await said("tell_task", { id: 9, message: "never mind" })).toContain("No task #9 is running or still around");
   expect(await said("running_tasks")).toContain("#1 (0 min, in vault_fill for 0 min, likely waiting on the owner's yes): silent");
   vms.stop(1);
   await until(() => vms.running().find((t) => t.id === 3)?.slot !== undefined);

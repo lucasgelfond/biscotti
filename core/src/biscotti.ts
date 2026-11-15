@@ -31,7 +31,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   });
   // Task VMs, where the vms service runs (vms-main.ts); finished ones are kept, listed in the data directory.
   const vms = process.env.VMS_SOCKET
-    ? await gateTasks(gate, localHost(process.env.VMS_SOCKET, env("VM_DIR")), (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`)
+    ? await gateTasks(gate, localHost(process.env.VMS_SOCKET, env("VM_DIR")), (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`, (text) => deliver(text))
     : undefined;
   const api = ownerApi();
   const send = async (text: string, image?: Buffer) => {

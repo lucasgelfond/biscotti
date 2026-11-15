@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { emit, endpoints, secret, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
+import { emit, endpoints, secret, taskEvents, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
 import { extension } from "../api/index.ts";
 
 // ssh VMs: a task VM the owner works in over ssh with their own pi (core/vm/task/box-pi), from Concourse or the app,
@@ -109,13 +109,16 @@ export default {
     // Put to sleep when its slot is needed (tasks.ts), the one opened or reopened longest ago first; a warm one no one
     // has opened yet goes before any, thrown away, and one still being set up stays.
     const sleep = (id: () => number) => ({
-      used: () => open.get(id())?.opened ?? (ready.some((r) => r.id === id()) ? 0 : Infinity),
+      used: () => (open.has(id()) ? Math.max(open.get(id())!.opened, vms.alive().find((v) => v.id === id())?.used ?? 0) : ready.some((r) => r.id === id()) ? 0 : Infinity),
       async sleep() {
         const i = ready.findIndex((r) => r.id === id());
         if (i >= 0) return void (ready.splice(i, 1), await vms.drop(id()));
         if (!(await close(id()))) throw new Error(`VM #${id()} is still being set up`);
       },
     });
+
+    // One deleted elsewhere (delete_vms, the daily check) is no longer open.
+    taskEvents.on("event", (e) => void (e.type === "done" && open.delete(e.id)));
 
     function warmUp() {
       while (ready.length + warming < warmCount) {

@@ -55,6 +55,8 @@ export interface Host {
   gate?(slot: number): { host: string; port: number; peer(): string | undefined };
   // The slot's live desktop.
   watch?(slot: number): string | Promise<string>;
+  // Whether someone's on the slot's VM (an ssh or desktop session).
+  active?(slot: number): boolean | Promise<boolean>;
   // A host that costs money to run: used only once every other host's slots are taken, and never kept warm.
   overflow?: boolean;
 }
@@ -89,10 +91,23 @@ export interface Kept {
   goal: string;
   slot: number;
   at: number;
+  // The pull request its work became (vms.note).
+  pr?: string;
 }
 
-// `parent`: the main session that started it, where its report goes.
-export type RunOptions = TaskOptions & { id?: number; fits?: (slot: number) => boolean; extra?: Record<string, unknown>; parent?: string };
+// A VM still around once its task is done: open (running: kept open, or a plugin's, like an ssh VM) or asleep (kept on
+// disk), with when it was last used (an ssh or desktop session on it, or its agent working) and its pull request.
+export interface Alive {
+  id: number;
+  goal: string;
+  asleep: boolean;
+  used: number;
+  pr?: string;
+}
+
+// `parent`: the main session that started it, where its report goes. A task's VM is deleted once it's done, unless
+// `keep` (or vms.keep) keeps it open.
+export type RunOptions = TaskOptions & { id?: number; fits?: (slot: number) => boolean; extra?: Record<string, unknown>; parent?: string; keep?: boolean };
 
 export interface Vms {
   // A task whose report comes back to the caller. `fits` limits the slots it may take; `id` carries on a kept task's
@@ -118,6 +133,14 @@ export interface Vms {
   forget(id: number): Promise<boolean>;
   // The live desktop of a running task's or held VM's.
   watch(id: number): Promise<string | undefined>;
+  // A task's VM kept open once it's done (it's deleted otherwise), or an asleep one woken and kept open; false when
+  // there's no such task or VM.
+  keep(id: number): Promise<boolean>;
+  // The VMs still around (open or asleep), and deleting one for good (a running task's once it's done).
+  alive(): Alive[];
+  remove(id: number): Promise<boolean>;
+  // What a task's or VM's work became.
+  note(id: number, note: { pr?: string }): void;
   addHost(host: Host): Promise<void>;
 }
 

@@ -10,6 +10,7 @@ import { testContext } from "./support.ts";
 // The task API as an ACP agent, over its HTTP transport, with a stand-in pool whose tasks call a tool and report.
 test("a client starts a task as a session, follows it, lists it, and its report ends the prompt", async () => {
   let next = 40;
+  const keptOpen: number[] = [];
   const vms = {
     reserve: () => ++next,
     start(goal: string, opts?: { id?: number }) {
@@ -27,6 +28,7 @@ test("a client starts a task as a session, follows it, lists it, and its report 
     stop: () => true,
     kept: () => [{ id: next, goal: "", slot: 1, at: 0 }],
     watch: async () => "https://desktop",
+    keep: async (id: number) => (keptOpen.push(id), true),
   } as unknown as Vms;
 
   let handler: (req: IncomingMessage, res: ServerResponse) => unknown = () => {};
@@ -58,6 +60,8 @@ test("a client starts a task as a session, follows it, lists it, and its report 
   expect(result.prompted.stopReason).toBe("end_turn");
   expect(result.sessions[0]).toMatchObject({ sessionId: "41", title: "book a table", _meta: { biscotti: { kind: "sandbox", status: "kept", report: "done: book a table" } } });
   expect(result.watch).toEqual({ url: "https://desktop" });
+  // Asking to see it keeps it open.
+  expect(keptOpen).toEqual([Number(result.sessionId)]);
   expect(result.echo).toEqual({ a: 1 });
   const kinds = updates.filter((u) => u.sessionId === "41").map((u) => u.update.sessionUpdate);
   expect(kinds).toContain("user_message_chunk");

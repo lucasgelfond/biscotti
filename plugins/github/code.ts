@@ -4,10 +4,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { input, optional, str, text, type Context, type LocalTool } from "@biscotti/core";
+import { bool, input, optional, str, text, type Context, type LocalTool } from "@biscotti/core";
 
 // Coding tasks with no token in the VM: a git bundle in, its commits out; the gate checks them, pushes a new biscotti/
-// branch and opens a draft pull request. Never merged.
+// branch and opens a draft pull request. Never merged. The VM is deleted once done unless the owner asked to keep it
+// (e.g. to see a preview); a kept one is deleted once its pull request is merged or closed (index.ts).
 
 const TIMEOUT_MS = 90 * 60_000;
 const MAX_BUNDLE = 50 * 1024 * 1024;
@@ -54,18 +55,20 @@ export function codeTask(ctx: Context, token: string): LocalTool {
     return pull(true).catch((err) => (/draft/i.test(err.message) ? pull(false) : Promise.reject(err)));
   }
 
-  async function run(repo: string, goal: string, base: string | undefined, dir: string, parent?: string) {
+  async function run(repo: string, goal: string, base: string | undefined, dir: string, parent?: string, keep?: boolean) {
     await git(dir, "clone", "-q", "--depth", "50", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
     const work = join(dir, "repo");
     const baseBranch = base ?? (await git(work, "rev-parse", "--abbrev-ref", "HEAD"));
     await git(work, "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");
-    const result = await ctx.vms!.run(goal, { repo: readFileSync(join(dir, "in.bundle")), model: "code", timeoutMs: TIMEOUT_MS, parent });
+    const id = ctx.vms!.reserve();
+    const result = await ctx.vms!.run(goal, { id, repo: readFileSync(join(dir, "in.bundle")), model: "code", timeoutMs: TIMEOUT_MS, parent, keep });
     if (!result.bundle) return `Code task on ${repo} made no commits.\n${result.report}`;
     const { stat } = await review(work, result.bundle);
     const branch = `biscotti/${goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}-${randomBytes(2).toString("hex")}`;
     await git(work, "push", "-q", "origin", `biscotti-work:refs/heads/${branch}`);
     const pr = await openPullRequest(repo, baseBranch, branch, goal, result.report);
-    return `Code task on ${repo}: draft pull request ${pr.html_url} (${stat}). Text the user the link; don't merge it.\n${result.report}`;
+    ctx.vms!.note(id, { pr: pr.html_url });
+    return `Code task #${id} on ${repo}: draft pull request ${pr.html_url} (${stat})${keep ? "; its VM stays open" : ""}. Text the user the link; don't merge it.\n${result.report}`;
   }
 
   return {
@@ -76,12 +79,13 @@ export function codeTask(ctx: Context, token: string): LocalTool {
       repo: str("owner/name, e.g. lucasgelfond/biscotti."),
       goal: str("The change, complete on its own: the coding agent sees only this and the code."),
       base: optional(str("Branch to start from; the repo's default branch if omitted.")),
+      keep: optional(bool("Keep its VM open once it's done, only when the owner asks to keep it or to look at the result live (a preview). Otherwise it's deleted once done.")),
     }),
-    async run({ repo, goal, base }, caller) {
+    async run({ repo, goal, base, keep }, caller) {
       if (!ctx.vms) return text("Coding tasks need task VMs, which this machine doesn't have.");
       if (typeof repo !== "string" || !REPO.test(repo)) return text("repo should be owner/name.");
       const dir = mkdtempSync(join(tmpdir(), "code-task-"));
-      run(repo, String(goal), base ? String(base) : undefined, dir, caller.session)
+      run(repo, String(goal), base ? String(base) : undefined, dir, caller.session, keep === true)
         .catch((err: Error) => `Code task on ${repo} failed: ${err.message}`)
         .then((report) => ctx.deliver(`Code task report: ${report}`, undefined, caller.session))
         .finally(() => rmSync(dir, { recursive: true, force: true }));
