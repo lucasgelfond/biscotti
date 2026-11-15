@@ -54,4 +54,8 @@ export interface AgentEvent {
   toolName?: string;
   args?: unknown;
   message?: { role: string; content: { type: string; text?: string; thinking?: string }[] };
+  // A "status" event's: the model, the thinking level, and the context used of its window (tokens).
+  model?: string;
+  thinking?: string;
+  context?: { tokens: number | null; contextWindow: number };
 }

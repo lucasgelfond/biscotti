@@ -66,6 +66,8 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
       if (e.type === "tool_execution_start" && e.toolName) emit({ id, type: "step", tool: e.toolName, text: JSON.stringify(e.args ?? {}).slice(0, 160) });
       const said = e.type === "message_end" && e.message?.role === "assistant" ? e.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n") : "";
       if (said) emit({ id, type: "step", text: outbound(said.replace(LOCKS, "")).text.slice(0, 4000) });
+      // The model by the name its provider gives it (the agent knows it as "main").
+      if (e.type === "status") emit({ id, type: "status", model: e.model === "main" ? env("MODEL") : e.model, thinking: e.thinking, used: e.context?.tokens ?? undefined, size: e.context?.contextWindow });
     },
   });
 
@@ -89,7 +91,8 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   // The owner in one of their apps (not their texts): the agent answers there, and texts only if asked to.
   async function converse(session: string, message: string) {
     emit({ id: number(session), type: "told", text: message });
-    await deliver(session === "main" ? message : `(In the owner's app: your reply shows there, not as a text.)\n${message}`, undefined, session);
+    const command = message.trim().startsWith("/");
+    await deliver(session === "main" || command ? message : `(In the owner's app: your reply shows there, not as a text.)\n${message}`, undefined, session);
   }
 
   async function handle(message: { text: string }) {

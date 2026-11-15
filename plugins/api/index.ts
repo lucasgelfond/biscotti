@@ -42,6 +42,11 @@ export interface Summary {
   report?: string;
   parent?: string;
   source?: unknown;
+  // A main session's model, thinking level and context use (tokens), as of its last turn.
+  model?: string;
+  thinking?: string;
+  used?: number;
+  size?: number;
 }
 interface Row extends Summary {
   id: number;
@@ -93,7 +98,7 @@ function board(ctx: Context) {
       let t = rows.get(e.id);
       if (!t) rows.set(e.id, (t = { id: e.id, kind: "sandbox", goal: "", status: "queued", started: e.at, updated: e.at, steps: [] }));
       t.updated = e.at;
-      for (const field of ["goal", "kind", "repo", "ssh", "hostKey", "preview", "slot", "where", "parent", "source"] as const) if (e[field] !== undefined) (t as unknown as Record<string, unknown>)[field] = e[field];
+      for (const field of ["goal", "kind", "repo", "ssh", "hostKey", "preview", "slot", "where", "parent", "source", "model", "thinking", "used", "size"] as const) if (e[field] !== undefined) (t as unknown as Record<string, unknown>)[field] = e[field];
       // A main session is titled by what the owner first said in it.
       if (e.type === "told" && t.kind === "main" && t.goal === "New session" && e.text) t.goal = e.text;
       if (e.type === "told") t.status = "running";
@@ -136,8 +141,19 @@ function updates(e: Pick<TaskEvent, "id" | "type" | "text" | "tool" | "goal">, n
   if (e.type === "step" && e.text) return [{ sessionUpdate: "agent_message_chunk", content: say(e.text), messageId }];
   if (e.type === "report") return [{ sessionUpdate: "agent_message_chunk", content: say(e.text ?? ""), messageId }, ...(screenshot ? [{ sessionUpdate: "agent_message_chunk" as const, content: { type: "image" as const, data: screenshot, mimeType: "image/png" }, messageId }] : [])];
   if (e.type === "failed" || e.type === "moving") return [{ sessionUpdate: "agent_message_chunk", content: say(e.text ?? e.type), messageId }];
+  if (e.type === "status") return status(e as Record<string, unknown>);
   return [];
 }
+// A main session's model and thinking level (config options, for display) and its context use.
+function status(e: { model?: unknown; thinking?: unknown; used?: unknown; size?: unknown }): acp.SessionUpdate[] {
+  const select = (id: string, name: string, category: "model" | "thought_level", value: string) => ({ id, name, category, type: "select" as const, currentValue: value, options: [{ value, name: value }] });
+  return [
+    ...(typeof e.used === "number" && typeof e.size === "number" ? [{ sessionUpdate: "usage_update" as const, used: e.used, size: e.size }] : []),
+    { sessionUpdate: "config_option_update", configOptions: [...(typeof e.model === "string" ? [select("model", "Model", "model", e.model)] : []), ...(typeof e.thinking === "string" ? [select("thinking", "Thinking", "thought_level", e.thinking)] : [])] },
+  ];
+}
+// What a main session takes besides messages.
+const COMMANDS: acp.SessionUpdate = { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Summarize the conversation so far, to free its context" }] };
 
 export default {
   async start(ctx) {
@@ -198,7 +214,10 @@ export default {
         if (asked.kind === "sandbox") {
           if (asked.display === "mobile" || asked.display === "desktop") displays.set(id, asked.display);
           if (asked.source !== undefined) sources.set(id, asked.source);
-        } else emit({ id, type: "done", kind: "main", goal: "New session", ...(asked.source !== undefined && { source: asked.source }) });
+        } else {
+          emit({ id, type: "done", kind: "main", goal: "New session", ...(asked.source !== undefined && { source: asked.source }) });
+          void client.notify(acp.methods.client.session.update, { sessionId: String(id), update: COMMANDS }).catch(() => {});
+        }
         return { sessionId: String(id) };
       })
       .onRequest(acp.methods.agent.session.load, async ({ params, client }) => {
@@ -209,6 +228,7 @@ export default {
           ...t.steps.flatMap((s, i) => updates({ id: t.id, type: s.owner ? "told" : "step", text: s.text, tool: s.tool }, i)),
           ...(t.report ? updates({ id: t.id, type: "report", text: t.report }, t.steps.length, tasks.screenshots.get(t.id)) : []),
         ];
+        if (t.kind === "main") history.push(COMMANDS, ...status(t));
         for (const update of history) await client.notify(acp.methods.client.session.update, { sessionId: params.sessionId, update });
         return {};
       })

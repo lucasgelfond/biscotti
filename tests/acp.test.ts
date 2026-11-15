@@ -81,6 +81,7 @@ test("a client starts a main session, talks to the agent there, and its steps an
     emit({ id, type: "told", text: message });
     emit({ id, type: "step", tool: "search_repositories", text: '{"query":"biscotti"}' });
     emit({ id, type: "step", text: "Opening a PR on lucasgelfond/biscotti." });
+    emit({ id, type: "status", model: "anthropic/claude-opus-5-5", thinking: "medium", used: 12000, size: 200000 });
     emit({ id, type: "replied" });
   };
   let handler: (req: IncomingMessage, res: ServerResponse) => unknown = () => {};
@@ -106,5 +107,8 @@ test("a client starts a main session, talks to the agent there, and its steps an
   expect(result.prompted.stopReason).toBe("end_turn");
   expect(result.session).toMatchObject({ title: "make a PR on biscotti", _meta: { biscotti: { kind: "main", status: "done", source: { app: "concourse", device: "phone" } } } });
   const mine = updates.filter((u) => u.sessionId === "71").map((u) => u.update);
-  expect(mine.map((u) => u.sessionUpdate)).toEqual(expect.arrayContaining(["user_message_chunk", "tool_call", "agent_message_chunk"]));
+  expect(mine.map((u) => u.sessionUpdate)).toEqual(expect.arrayContaining(["user_message_chunk", "tool_call", "agent_message_chunk", "available_commands_update", "usage_update", "config_option_update"]));
+  expect(mine.find((u) => u.sessionUpdate === "usage_update")).toMatchObject({ used: 12000, size: 200000 });
+  expect(mine.find((u) => u.sessionUpdate === "config_option_update")).toMatchObject({ configOptions: [{ category: "model", currentValue: "anthropic/claude-opus-5-5" }, { category: "thought_level", currentValue: "medium" }] });
+  expect(result.session?._meta?.biscotti).toMatchObject({ model: "anthropic/claude-opus-5-5", used: 12000 });
 });
