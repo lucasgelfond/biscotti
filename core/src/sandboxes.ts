@@ -59,7 +59,7 @@ export function sandboxes(opts: {
       of(session).map((row) => ({
         key: String(row.id),
         title: record(row).title,
-        working: row.status === "running" || row.status === "queued" || row.status === "moving",
+        working: row.status === "running" || row.status === "queued",
         modifiedAt: new Date(row.updated).toISOString(),
         ...(conversations.has(row.id) && { conversation: conversations.get(row.id) }),
         _meta: { biscotti: record(row) },

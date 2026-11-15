@@ -259,8 +259,8 @@ export function taskVms(
         emit({ id, type: opts.followup ? "resumed" : "started", slot: v.slot, where: where(v.slot), ...(opts.followup && { text: said }) });
         hooks.onStart?.(v.slot, id, said, opts.model);
         if (!hooks.run) throw new Error("nothing runs tasks here");
-        const { repo, runner, model, display = DISPLAY, followup, extra } = opts;
-        const lines = hooks.run(v.slot, { id, goal: said, followup, model, display, runner, coding: Boolean(repo), ...extra }, opts, entry.stopped.signal);
+        const { repo, runner, model, display = DISPLAY, followup } = opts;
+        const lines = hooks.run(v.slot, { id, goal: said, followup, model, display, runner, coding: Boolean(repo) }, opts, entry.stopped.signal);
         const ran = await readRun(lines, opts, () => !!hooks.busy?.(v.slot), entry.stopped.signal);
         const result = hooks.onReport?.(v.slot, ran) ?? ran;
         emit({ id, type: "report", text: result.report });
@@ -547,7 +547,7 @@ export async function gateTasks(
     {
       async run(slot, task, opts, stopped) {
         if (!agent) throw new Error("no agent runs tasks here");
-        const hostKey = await prepareVm({ slot, stop: async () => {} }, { key: agent.key(), repo: task.followup || task.moved ? undefined : opts.repo });
+        const hostKey = await prepareVm({ slot, stop: async () => {} }, { key: agent.key(), repo: task.followup ? undefined : opts.repo });
         if (hostKey) agent.trust(task.id, hostKey);
         stopped.throwIfAborted();
         return agent.run(task, stopped);

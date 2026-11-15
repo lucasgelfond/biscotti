@@ -10,7 +10,7 @@ export interface Row {
   // "sandbox": a task, started by a main session (`parent`); "vm": one the owner works in over ssh (ssh-vms).
   kind: string;
   goal: string;
-  status: "queued" | "running" | "moving" | "kept" | "done" | "failed";
+  status: "queued" | "running" | "kept" | "done" | "failed";
   slot?: number;
   where?: string;
   repo?: string;
@@ -26,7 +26,7 @@ export interface Row {
 }
 
 const ROWS = 100;
-const STATUS: Partial<Record<TaskEvent["type"], Row["status"]>> = { queued: "queued", started: "running", resumed: "running", moved: "running", moving: "moving", kept: "kept", done: "done" };
+const STATUS: Partial<Record<TaskEvent["type"], Row["status"]>> = { queued: "queued", started: "running", resumed: "running", kept: "kept", done: "done" };
 const FIELDS = ["goal", "kind", "repo", "ssh", "hostKey", "preview", "site", "slot", "where", "parent"] as const;
 
 export type Board = ReturnType<typeof board>;
@@ -56,7 +56,7 @@ export function board(db: Db, vms: Vms) {
     if (!t) rows.set(e.id, (t = { id: e.id, kind: "sandbox", goal: "", status: "queued", started: e.at, updated: e.at }));
     t.updated = e.at;
     for (const field of FIELDS) if (e[field] !== undefined) (t as unknown as Record<string, unknown>)[field] = e[field];
-    t.status = STATUS[e.type] ?? (e.type === "failed" && t.status !== "moving" ? "failed" : t.status);
+    t.status = STATUS[e.type] ?? (e.type === "failed" ? "failed" : t.status);
     if (e.type === "report") t.report = e.text;
     for (const old of [...rows.keys()].slice(0, Math.max(0, rows.size - ROWS))) rows.delete(old);
     try {

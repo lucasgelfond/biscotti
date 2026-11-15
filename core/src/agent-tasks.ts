@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import type { Context } from "@earendil-works/chord/context";
 import { inputFrom } from "pi-durable-ahp";
@@ -47,48 +48,11 @@ const BROWSER = new Set(
 );
 const PLAYWRIGHT = ["playwright-mcp", "--cdp-endpoint", "http://127.0.0.1:9222", "--caps", "vision", "--snapshot-mode", "none"];
 
-export const PROMPT = `You are a task agent in a disposable Debian VM with internet access. Chromium is open on the desktop (DISPLAY=:1; sudo works); the requester may be watching it live.
 
-Tools:
-- Websites: the browser tools drive that Chromium. Work from browser_snapshot (the page's accessibility tree with element refs): click, type and select by ref. That is faster and more reliable than pixels. Actions don't return the page, so take a snapshot (or a screenshot) when you need to see it, e.g. after a group of actions.
-- Code: browser_run_code_unsafe runs Playwright code against the page (\`async (page) => { … }\`, the VM is disposable). Prefer it for anything a script does better than clicks: filling a whole form, reading a table or every listing at once, waiting for a result, or a group of steps you're sure of. Return what you need to see.
-- Seeing: take a screenshot (browser_take_screenshot) whenever the layout matters: seat maps, charts, canvases, images, anything the snapshot doesn't explain, and to check a result. zoom shows a region of the page up close, for small text or to check exactly where something is.
-- Pixels: for things the snapshot has no ref for (canvases, seat maps, maps, custom widgets), take a screenshot, zoom to check where the element is, and click it with browser_mouse_click_xy. Screenshots, zoom and browser_mouse_click_xy share the page's coordinates.
-- Other apps and the shell: bash (DISPLAY=:1 for anything with a window).
-- The biscotti tools: share_screenshot texts the requester what's on screen now, with a caption (use it for each thing they asked to see: listings, options, a seat map); web search; and the owner's vault. For logins and cards, vault_list, click the first input (by ref), then vault_fill: it types the saved values itself, so you never see them (each waits for the owner's approval). To reset a password or make an account, click the new-password input and call vault_new_password (confirm: true when there's a confirm box): it makes the password, types it and saves it. If the requester's request spells out the password they want, pass it as password. Never make up, type or report a password yourself.
 
-How to work:
-- Decide what done looks like (e.g. "the confirmation page shows an order number"), then work toward it.
-- Before each step, say in a line or two: did the last step do what you expected (check the page, not your intent)? What's next and why? Then act.
-- Batch: do several actions per turn when you're sure of them (several tool calls at once, or one code call), then check once with a snapshot or screenshot.
-- If a step didn't work, say why, and try a different way. After two failures of the same approach, change the approach (keyboard instead of clicking, code instead of refs, pixels instead of the snapshot, another page). Never repeat the same failed action.
-- Dropdowns and date pickers: try keyboard, select by ref, or code.
-- Stay in one tab unless a site opens another. Close popups and cookie banners first.
-- Before paying, booking or sending anything the goal didn't clearly ask for, stop and report instead. If you're unsure whether a submission went through, check (the page, a confirmation, the account) and never submit it again.
-- Seat maps, charts and other drawn things (canvas, SVG, images): once the map is up, take one screenshot and describe it from that image (zoom for detail): which sections are open, roughly how full, and the best seats left. Don't inspect the page's code to read it, and don't select seats unless the goal asks.
-- If the site doesn't list what the goal asks for (a film not playing there, a product not sold), say so in the report right away rather than searching around for it.
-- Be quick: the requester is waiting on a text. Aim to finish in about 3 minutes, and keep going past that while you're making progress. If a site blocks you (a bot check, a login wall), stop and report what you found and what blocked you.
-- Before you finish, check the result itself against the goal: the confirmation on screen, the value in the field, every item the goal named. Not your own last action.
-- The requester may message you mid-task ("[The requester, mid-task] …"). Their latest message wins over the goal where they differ. First check what you've already done (a booking made, an order placed, a form sent): don't do it twice, and undo or change it if they ask. Then carry on toward what they want now, and say in your report what you did about each message.
-
-End with a short report of what you did and found, with the facts the requester needs (prices, times, confirmation numbers) and the URL of the page you ended on. Leave the relevant view on screen: the report and a screenshot of the final screen are all the requester sees.`;
-
-const CODING = `This is a coding task, not an errand: ignore the browsing guidelines' 3-minute target and take the time the change needs.
-
-The repository is checked out in ~/repo with no remote: you can't push, and don't try. It's a jj (Jujutsu) repo colocated with git: use jj for version control (jj st, jj diff, jj describe -m, jj new), not git commands that write. Your changes go to a branch on GitHub for the owner to look at; nothing is merged.
-
-Work like this:
-1. Orient: read the README and any contributor or agent notes (AGENTS.md, CLAUDE.md, CONTRIBUTING), find how the project installs, builds and tests (package.json scripts, Makefile, pyproject, CI config under .github/), and read the code the change touches. Search with rg and fd rather than reading whole trees.
-2. Set up: install dependencies the way the project does (its lockfile's package manager; a venv for Python). If setup fails, say exactly what failed rather than working around it silently.
-3. Change: make the smallest change that fully does the goal, in the code's own style. Add or update tests for behavior you change. When you know several edits or files to write, make them in one turn (several tool calls at once), not one per turn.
-4. Check: run the tests, type checker, linter or build the project has, fix what you broke, and run them again. Run installs, builds and tests in the foreground, piped through tail if they're chatty: the bash tool waits for them (up to 30 minutes), so never background them and poll with sleep, which only adds waiting. Only servers and watchers go in the background (with & and a log file).
-5. Describe your changes with clear messages (jj describe -m, then jj new to start the next one). Whatever's left in the working copy at the end is committed for you. Never merge or rebase onto other branches.
-
-Installed: git, node 22 with npm and pnpm, python3 with venv and pip, gcc and make (build-essential), rg, fd, jq, sqlite3, and Docker with docker compose (dockerd is running; use it for the services the project needs, such as a database, or its own compose file); sudo works for anything else (apt-get install).
-
-End with a short report: what changed and why, the commands you ran to check it and their results (pass/fail counts), and anything you couldn't do or verify.
-
-The goal is the first message.`;
+// A task's instructions, and a coding task's besides.
+const PROMPT = readFileSync(new URL("../TASK.md", import.meta.url), "utf8");
+const CODING = readFileSync(new URL("../CODING.md", import.meta.url), "utf8");
 
 // The desktop's shape for a task the owner watches from their phone: portrait and phone-sized, so sites lay out as
 // they do on a phone. Chromium is maximized to fill it.
@@ -132,8 +96,6 @@ export interface TaskRun {
   display?: string;
   // A plugin's own runner instead of the agent: its files, run with node, the goal on stdin; what it prints is the report.
   runner?: Record<string, string>;
-  // Moved here from another machine part-way through: the task's home folder as it was there.
-  moved?: { tar: string; base?: string };
 }
 
 type Line = Record<string, unknown> & { type: string };
@@ -313,29 +275,6 @@ Done means: the report answers everything the goal asks, with the facts it needs
     return verdict.done === false && verdict.missing ? String(verdict.missing).slice(0, 500) : undefined;
   }
 
-  // After a run, a separate call (as in Reflexion) revises what the next task on each site should know, given the
-  // lessons the run started with and what happened; the gate's lessons plugin keeps the result.
-  async function reflect(id: number, goal: string, steps: string, report: string, known: string) {
-    const content = await ask([
-      {
-        role: "user",
-        content: `A browser agent ran a task. Decide what the next agent on the same website should know: a quirk that cost time, an approach that failed and the one that worked, where something is. Be specific to the site (which control, which page, what to do instead), one sentence each. Nothing about this task's particulars (dates, names, prices) and nothing generic ("take screenshots").
-
-Lessons the run started with: ${known || "(none)"}
-Keep the ones that held up, fix or drop any this run showed were wrong, merge repeats, and add what's new: at most 3 per site.
-
-Goal: ${goal}
-Report: ${report.slice(0, 1500) || "(none)"}
-Steps:
-${steps}
-
-Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..."]}]}, listing each site whose lessons should change (with its full new list), or {"sites": []} if none should.`,
-      },
-    ]);
-    const sites = (JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as { sites?: unknown[] }).sites;
-    if (Array.isArray(sites) && sites.length) await gateTool(id, "save_lessons", { sites: sites.slice(0, 3) });
-  }
-
   // The gate's tools for tasks, the browser's and the VM's shell and files, for task conversations only. The gate's and
   // the browser's are listed from the first task's VM that has a browser (they're the same for every VM).
   const coding = createCodingTools();
@@ -482,20 +421,14 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
         return;
       }
       const harness = opts.harness();
-      // Lessons from earlier tasks on the goal's sites; none without the lessons plugin, and then no reflecting.
-      const lessons = task.followup || task.coding || task.moved ? undefined : await gateTool(id, "lessons_for", { goal: task.goal }).catch(() => undefined);
+      // Lessons from earlier tasks on the goal's sites (the lessons plugin's).
+      const lessons = task.followup || task.coding ? undefined : await gateTool(id, "lessons_for", { goal: task.goal }).catch(() => undefined);
       const instructions = [PROMPT, ...(task.coding ? [CODING] : []), ...(lessons ? [lessons] : [])].join("\n\n");
       const conversation = await conversationOf(id, task.model ?? "task", instructions, registry);
       const key = String(conversation.id);
-      // A task moved here from another machine: its home folder as it was there.
-      if (task.moved) {
-        const env = await vm(id).env;
-        await env.writeFile("/tmp/moved.tgz", Buffer.from(task.moved.tar, "base64"), ctx);
-        await sh(id, "tar xzf /tmp/moved.tgz -C ~ && rm /tmp/moved.tgz", 600);
-      }
       let doc = (await harness.snapshot(TaskDoc, conversation.id, ctx)) ?? { id };
       if (task.coding && !doc.base) {
-        const base = task.moved?.base ?? (await sh(id, `git -C ~/${REPO} rev-parse HEAD`)).out;
+        const base = (await sh(id, `git -C ~/${REPO} rev-parse HEAD`)).out;
         await harness.commit(async (tx) => void ((await tx.doc(TaskDoc, conversation.id)).base = base), ctx);
         doc = { ...doc, base };
       }
@@ -507,8 +440,6 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
       const watch = await conversation.watch(ctx);
       const seen = new Set(watch.value.entries.map((e) => String(e.id)));
       const open = new Map<string, { name: string; since: number }>();
-      const steps: string[] = [];
-      let report = "";
       watch.start(async (c) => {
         if (c.kind !== "value") return;
         for (const entry of c.value.entries as unknown as { id: unknown; model?: Message[] }[]) {
@@ -520,15 +451,13 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
               if (p.type !== "toolCall") continue;
               open.set(p.id!, { name: p.name!, since: Date.now() });
               send({ type: "tool_execution_start", toolCallId: p.id, toolName: p.name, args: p.arguments });
-              steps.push(`${p.name} ${JSON.stringify(p.arguments ?? {}).slice(0, 160)}`);
             }
             const text = textOf(m);
-            if (text) (send(said(text)), (report = text), steps.push(`said: ${text.slice(0, 300)}`));
+            if (text) send(said(text));
           }
           if (m?.role === "toolResult" && m.toolCallId) {
             open.delete(m.toolCallId);
             send({ type: "tool_execution_end", toolCallId: m.toolCallId, isError: Boolean(m.isError) });
-            if (m.isError) steps.push(`  error: ${textOf(m).slice(0, 200)}`);
           }
         }
       });
@@ -561,11 +490,9 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
         if (doc.interrupted) await harness.commit(async (tx) => void ((await tx.doc(TaskDoc, conversation.id)).interrupted = false), ctx);
         const content = task.followup
           ? `[The requester, following up${interrupted ? " on a run that was interrupted (it went quiet, ran out of time or was stopped; check what it got done)" : ""}] ${task.goal}`
-          : task.moved
-            ? "[This task was moved here from another machine part-way through. Your home folder is as it was there, without caches such as node_modules, virtualenvs and Docker's data: reinstall or restart what you need. Open pages and running programs didn't come along.] Carry on with the goal."
-            : task.goal;
-        // The goal is the main agent's, a follow-up the owner's, a move biscotti's.
-        const from = task.followup ? "user" : task.moved ? "systemNotification" : "agent";
+          : task.goal;
+        // The goal is the main agent's, a follow-up the owner's.
+        const from = task.followup ? "user" : "agent";
         const submission = await conversation.submit({ type: "input", content, requestId: `task-${id}-${Date.now()}`, ...inputFrom(from) }, ctx);
         await submission.wait(ctx);
         // A message that came as the run ended starts it again.
@@ -577,7 +504,6 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
         watch.stop?.();
         live.delete(key);
       }
-      if (lessons !== undefined) await reflect(id, goalNow(state), steps.slice(-80).join("\n"), report, lessons).catch(() => {});
       if (doc.base) {
         // Everything since the base, every time: the gate pushes the whole branch.
         const bundled = await sh(id, COMMITS(doc.base), 300);

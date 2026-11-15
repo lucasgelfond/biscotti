@@ -1,9 +1,7 @@
 import { lookup } from "node:dns/promises";
-import { connect } from "node:net";
 import { networkInterfaces } from "node:os";
-import { createInterface } from "node:readline";
 import { DescribeInstancesCommand, EC2Client, RunInstancesCommand, StartInstancesCommand, StopInstancesCommand } from "@aws-sdk/client-ec2";
-import { appMethod, emit, vmEndpoint, type Host, type Plugin, type Vm, type Vms } from "@biscotti/core";
+import { type Host, type Plugin, type Vm } from "@biscotti/core";
 
 // External VM nodes: EC2 machines (nested virtualization) that each run one task VM, used only once this machine's
 // slots are taken. They're launched from the `biscotti-node` launch template (setup.sh), at most NODE_MAX, started when
@@ -13,15 +11,12 @@ import { appMethod, emit, vmEndpoint, type Host, type Plugin, type Vm, type Vms 
 //
 // Settings: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (the biscotti-gate IAM user setup.sh makes), NODE_MAX
 // (4), TAILNET_HOST (this machine's Tailscale name, for the tailnet's).
-//
-// The apps' tasks.move method {sessionId} carries a task on in an external VM: its files,
-// commits and conversation (a VM's memory can't move between CPUs, so open pages and running processes don't come).
+
 
 const VMS_PORT = 7400;
 const IDLE_MS = Number(process.env.NODE_IDLE_MIN ?? 15) * 60_000;
 // A new node builds its VM image and snapshot first.
 const UP_TIMEOUT_MS = 30 * 60_000;
-const MAX_PACK = 1_500_000_000;
 
 export function nodes(): Host | undefined {
   const region = process.env.AWS_REGION;
@@ -102,49 +97,11 @@ export function nodes(): Host | undefined {
   };
 }
 
-// A task moved from this machine into an external VM: stopped if it's running, its home folder (without caches like
-// node_modules) and conversation taken out of its kept VM, then carried on there.
-async function move(vms: Vms, external: number[], id: number) {
-  if (vms.stop(id)) for (let i = 0; i < 600 && vms.running().some((t) => t.id === id); i++) await new Promise((r) => setTimeout(r, 100));
-  const kept = vms.kept().find((t) => t.id === id);
-  if (!kept) throw new Error(`task #${id} isn't kept here to move`);
-  if (external.includes(kept.slot)) throw new Error(`task #${id} is already in the cloud`);
-  emit({ id, type: "moving", text: "Packing it up" });
-  const vm = await vms.reclaim(id);
-  if (!vm) throw new Error(`task #${id} isn't kept here to move`);
-  let packed: { tar: string; transcript: string; base?: string };
-  try {
-    packed = await new Promise((resolve, reject) => {
-      const { host, port } = vmEndpoint(vm.slot, 4000);
-      const socket = connect({ host, port }, () => socket.end(JSON.stringify({ export: true })));
-      let received = 0;
-      let got: typeof packed | undefined;
-      socket.on("data", (d: Buffer) => (received += d.length) > MAX_PACK && socket.destroy(new Error("the task's files are too big to move")));
-      createInterface({ input: socket, crlfDelay: Infinity }).on("error", () => {}).on("line", (line) => {
-        try {
-          const e = JSON.parse(line);
-          if (e.type === "export") got = { tar: e.tar, transcript: e.transcript ?? "", base: e.base };
-        } catch {}
-      });
-      socket.on("error", reject).on("close", () => (got ? resolve(got) : reject(new Error("the VM sent nothing to move"))));
-    });
-  } finally {
-    await vms.drop(id);
-  }
-  emit({ id, type: "moving", text: `Packed ${Math.round((packed.tar.length * 3) / 4 / 1e6)} MB; starting it in the cloud` });
-  vms.start(kept.goal, { id, fits: (slot) => external.includes(slot), extra: { moved: packed } });
-}
-
 export default {
   async start(ctx) {
     const host = nodes();
     if (!ctx.vms || !host) return;
     const vms = ctx.vms;
     await vms.addHost(host);
-    appMethod("tasks.move", async ({ sessionId }) => {
-      const id = Number(sessionId);
-      void move(vms, host.slots, id).catch((err) => emit({ id, type: "failed", text: `Moving it failed: ${err.message}` }));
-      return { moving: true };
-    });
   },
 } satisfies Plugin;

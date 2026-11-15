@@ -70,7 +70,7 @@ export interface Host {
 // plugins (push notifications).
 export interface TaskEvent {
   id: number;
-  type: "queued" | "started" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
+  type: "queued" | "started" | "report" | "kept" | "done" | "failed" | "resumed";
   at: number;
   goal?: string;
   slot?: number;
@@ -121,15 +121,13 @@ export interface Alive {
 export type RunOptions = TaskOptions & {
   id?: number;
   fits?: (slot: number) => boolean;
-  extra?: Record<string, unknown>;
   parent?: string;
   keep?: boolean;
   after?: (result: TaskResult) => Promise<TaskResult>;
 };
 
 export interface Vms {
-  // A task whose report comes back to the caller. `fits` limits the slots it may take; `id` carries on a kept task's
-  // number (a moved one); `extra` goes to the VM's task agent with the goal.
+  // A task whose report comes back to the caller. `fits` limits the slots it may take; `id` is one `reserve` gave.
   run(goal: string, opts?: RunOptions): Promise<TaskResult>;
   // A number for a task or VM to come (`run`'s `id`), so a client can name it before it starts.
   reserve(): number;
