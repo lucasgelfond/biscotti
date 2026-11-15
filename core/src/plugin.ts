@@ -42,13 +42,21 @@ export interface Vm {
   suspend?(id: number): Promise<void>;
 }
 
-// Where task VMs run: this machine's vms service, or a plugin's machines (Vms.addHost). Slot numbers are the host's
-// own; this machine's are 1 to VM_SLOTS.
+// Where task VMs run: this machine's vms service, or a plugin's machines (Vms.addHost): Firecracker here or on EC2,
+// a Mac's. Every one is asked the same things; only `restore` is required. Slot numbers are the host's own; this
+// machine's are 1 to VM_SLOTS.
 export interface Host {
+  // What kind of machine, for asking for one by kind ("local", "cloud", "mac", …): "cloud" for an overflow host,
+  // "local" otherwise, by default.
+  label?: string;
   slots: number[];
   restore(slot: number): Promise<Vm>;
   resume?(slot: number, id: number): Promise<Vm>;
   discard?(slot: number, id: number): Promise<void>;
+  // Sets the slot's VM up: a key authorized for ssh (the gate's, for pi-env, or the owner's), a repo checked out (a git
+  // bundle), a setup command run; each optional. Answers with its ssh host key. By default the VM image's own setup
+  // (prepareVm, core/vm/task/biscotti-task).
+  prepare?(slot: number, setup: Setup): Promise<string | undefined>;
   // Where the gate reaches port `port` of the slot's VM (10.200.<slot>.2 otherwise), and where that VM reaches the
   // gate (a listener that takes only `peer()`).
   endpoint?(slot: number, port: number): { host: string; port: number };
@@ -74,7 +82,7 @@ export interface TaskEvent {
   at: number;
   goal?: string;
   slot?: number;
-  where?: "local" | "cloud";
+  where?: string;
   text?: string;
   // Fields a plugin adds for its own VMs (ssh-vms).
   [field: string]: unknown;
@@ -142,13 +150,19 @@ export interface Vms {
   // thrown away (`drop`), or deleted for good once kept (`forget`). `reclaim` brings a kept one back.
   // One with `sleep` may be put to sleep (`sleep.sleep()`, which gives it back) when every slot is held and another
   // needs one: the one whose `sleep.used()` is oldest.
-  hold(goal: string, opts?: { model?: string; fits?: (slot: number) => boolean; sleep?: Sleep }): Promise<{ id: number; vm: Vm }>;
+  // `where`: a host's label ("local", "cloud", …), any by default.
+  hold(goal: string, opts?: { model?: string; where?: string; fits?: (slot: number) => boolean; sleep?: Sleep }): Promise<{ id: number; vm: Vm }>;
   give(id: number): Promise<void>;
   drop(id: number): Promise<void>;
   reclaim(id: number, opts?: { model?: string; sleep?: Sleep }): Promise<Vm | undefined>;
   forget(id: number): Promise<boolean>;
   // Where port `port` of a running task's or held VM's VM is reached.
   endpoint(id: number, port: number): { host: string; port: number } | undefined;
+  // A running task's or held VM's VM set up (Host.prepare), and the label of the host it's on.
+  prepare(id: number, setup: Setup): Promise<string | undefined>;
+  where(id: number): string | undefined;
+  // The labels of the hosts there are.
+  labels(): string[];
   // pi-env's daemon in a running task's VM, for the main agent (agent-tasks.ts).
   env(id: number, args: string[], socket: Duplex): Promise<void>;
   // The live desktop of a running task's or held VM's, and its web server (a preview).
@@ -361,11 +375,17 @@ main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
 export const endpoints = new Map<number, (port: number) => { host: string; port: number }>();
 export const vmEndpoint = (slot: number, port: number) => endpoints.get(slot)?.(port) ?? { host: `10.200.${slot}.2`, port };
 
+export interface Setup {
+  key?: string;
+  repo?: Buffer;
+  setup?: string;
+}
+
 // How long a VM's setup (a checkout, a setup command) may take.
 const PREPARE_TIMEOUT_MS = 30 * 60_000;
 // The VM's task agent (core/vm/task/biscotti-task) sets it up: the key authorized, the repo checked out, the setup
 // command run. It answers with the VM's host key.
-export function prepareVm(vm: Vm, message: { key?: string; repo?: Buffer; setup?: string }) {
+export function prepareVm(vm: Pick<Vm, "slot">, message: Setup) {
   const { host, port } = vmEndpoint(vm.slot, 4000);
   return new Promise<string | undefined>((resolve, reject) => {
     const socket = connect({ host, port }, () => socket.end(JSON.stringify({ box: { key: message.key, repo: message.repo?.toString("base64"), setup: message.setup } })));

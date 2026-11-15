@@ -85,6 +85,7 @@ export function nodes(): Host | undefined {
   if (!here) console.error("no Tailscale address here: external VM nodes can't reach the gate");
 
   return {
+    label: "cloud",
     slots: Array.from({ length: max }, (_, i) => 101 + i),
     overflow: true,
     restore: (slot) => onNode(slot, "/vms/1"),

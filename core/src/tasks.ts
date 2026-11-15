@@ -27,6 +27,7 @@ import {
   type Sleep,
   type Vm,
   type Vms,
+  type Setup,
   prepareVm,
 } from "./plugin.ts";
 
@@ -110,7 +111,7 @@ export function taskVms(
   const free: number[] = [];
   const waiting: { fits: (slot: number) => boolean; resolve: (slot: number) => void }[] = [];
   const rank = (slot: number) => (hostOf.get(slot)!.overflow ? 1e9 : 0) + slot;
-  const where = (slot: number) => (hostOf.get(slot)?.overflow ? "cloud" : "local");
+  const where = (slot: number) => hostOf.get(slot)?.label ?? (hostOf.get(slot)?.overflow ? "cloud" : "local");
 
   const saved: { last: number; kept: Kept[] } = file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { last: 0, kept: [] };
   const kept = saved.kept;
@@ -316,9 +317,13 @@ export function taskVms(
     running: (): Running[] => [...running.values()].map(({ stopped, ...t }) => t),
     kept: (): Kept[] => [...kept],
     slotOf: (id: number) => running.get(id)?.slot ?? held.get(id)?.vm.slot,
-    async hold(goal: string, opts: { model?: string; fits?: (slot: number) => boolean; sleep?: Sleep } = {}) {
+    where,
+    labels: () => [...new Set([...hostOf.keys()].map(where))],
+    // The slot's VM set up, by its host (Host.prepare) or else by the VM image's own setup.
+    prepare: (slot: number, setup: Setup) => (hostOf.get(slot)?.prepare ? hostOf.get(slot)!.prepare!(slot, setup) : prepareVm({ slot }, setup)),
+    async hold(goal: string, opts: { model?: string; where?: string; fits?: (slot: number) => boolean; sleep?: Sleep } = {}) {
       const id = ((last = Math.max(last, ...kept.map((k) => k.id)) + 1), save(), last);
-      const vm = await fresh(opts.fits);
+      const vm = await fresh(opts.where ? (slot) => where(slot) === opts.where && (opts.fits?.(slot) ?? true) : opts.fits);
       held.set(id, { vm, goal, sleep: opts.sleep });
       used.set(id, Date.now());
       hooks.onStart?.(vm.slot, id, goal, opts.model);
@@ -547,7 +552,7 @@ export async function gateTasks(
     {
       async run(slot, task, opts, stopped) {
         if (!agent) throw new Error("no agent runs tasks here");
-        const hostKey = await prepareVm({ slot, stop: async () => {} }, { key: agent.key(), repo: task.followup ? undefined : opts.repo });
+        const hostKey = await pool.prepare(slot, { key: agent.key(), repo: task.followup ? undefined : opts.repo });
         if (hostKey) agent.trust(task.id, hostKey);
         stopped.throwIfAborted();
         return agent.run(task, stopped);
@@ -612,6 +617,16 @@ export async function gateTasks(
       const slot = pool.slotOf(id);
       return slot === undefined ? undefined : await pool.host(slot)?.watch?.(slot);
     },
+    async prepare(id, setup) {
+      const slot = pool.slotOf(id);
+      if (slot === undefined) throw new Error(`no VM #${id} is running`);
+      return pool.prepare(slot, setup);
+    },
+    where: (id) => {
+      const slot = pool.slotOf(id);
+      return slot === undefined ? undefined : pool.where(slot);
+    },
+    labels: pool.labels,
     endpoint(id, port) {
       const slot = pool.slotOf(id);
       return slot === undefined ? undefined : vmEndpoint(slot, port);

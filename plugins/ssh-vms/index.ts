@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { appMethod, emit, endpoints, prepareVm, secret, taskEvents, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
+import { appMethod, emit, secret, taskEvents, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
 
 // ssh VMs: a task VM the owner works in over ssh with their own pi (core/vm/task/box-pi), from Concourse or the app,
 // rather than one run of the task agent. Closed, it's kept (suspended) to open again. SSH_VM_WARM_REPO (owner/name),
@@ -14,8 +14,8 @@ import { appMethod, emit, endpoints, prepareVm, secret, taskEvents, vmEndpoint, 
 // (closed and kept on disk, to open again). Each is on the board (kind "vm", its ssh address, host key and
 // preview), and these are the apps' methods for them (core's appMethod):
 //
-//   vms.open    {key, repo?, base?, setup?, where?}: one to ssh into -> SshVm. `where`: "local" (this machine's VMs) or
-//               "cloud" (an external VM node's); either, by default
+//   vms.open    {key, repo?, base?, setup?, where?}: one to ssh into -> SshVm. `where`: a kind of machine, by its
+//               host's label ("local" for this machine's VMs, "cloud" for an external node's, …); any, by default
 //   vms.reopen  {sessionId, key}: a closed one open again, adding that key -> SshVm
 //   vms.close   {sessionId, discard?}: closed (kept, to open again), or deleted for good
 
@@ -23,7 +23,8 @@ interface SshVm {
   id: number;
   slot: number;
   repo?: string;
-  where: "local" | "cloud";
+  // The label of the machine it's on (Host.label).
+  where?: string;
   ssh: { host: string; port: number; user: string };
   // The VM's own ssh host key, for the client's known_hosts.
   hostKey?: string;
@@ -33,11 +34,10 @@ interface SshVm {
 
 const KEY = /^(ssh|ecdsa|sk)-[\w@.-]+ [A-Za-z0-9+/=]+( .*)?$/;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
-const where = (slot: number) => (endpoints.has(slot) ? "cloud" : "local");
 // This machine's VMs' sshd is on the tailnet at 2200 + slot (`tailscale serve`, nix/setup.nix); another host's is its
 // endpoint for port 22.
-const sshOf = (slot: number) =>
-  endpoints.has(slot) || !process.env.TAILNET_HOST ? { ...vmEndpoint(slot, 22), user: "cua" } : { host: process.env.TAILNET_HOST, port: 2200 + slot, user: "cua" };
+const sshOf = (slot: number, where?: string) =>
+  where !== "local" || !process.env.TAILNET_HOST ? { ...vmEndpoint(slot, 22), user: "cua" } : { host: process.env.TAILNET_HOST, port: 2200 + slot, user: "cua" };
 
 // The owner's repo as a git bundle, with GitHub's token (the github plugin's).
 async function bundle(ctx: Context, repo: string, base?: string) {
@@ -71,8 +71,8 @@ export default {
       slot: vm.slot,
       repo,
       hostKey,
-      where: where(vm.slot),
-      ssh: sshOf(vm.slot),
+      where: vms.where(id),
+      ssh: sshOf(vm.slot, vms.where(id)),
       preview: await vms.watch(id).catch(() => undefined),
       opened: Date.now(),
     });
@@ -101,7 +101,7 @@ export default {
             let id = 0;
             held = await vms.hold(`VM on ${warmRepo}`, { model: "code", sleep: sleep(() => id) });
             id = held.id;
-            await prepareVm(held.vm, { repo: await bundle(ctx, warmRepo!), setup: warmSetup });
+            await vms.prepare(held.id, { repo: await bundle(ctx, warmRepo!), setup: warmSetup });
             ready.push(held);
           } catch (err) {
             console.error(`warming a VM of ${warmRepo}: ${(err as Error).message}`);
@@ -116,20 +116,19 @@ export default {
     }
     warmUp();
 
-    async function openVm(request: { key: string; repo?: string; base?: string; setup?: string; where?: "local" | "cloud" }) {
-      const fits = request.where ? (slot: number) => where(slot) === request.where : undefined;
-      if (request.where === "cloud" && !endpoints.size) throw new Error("there's no cloud machine set up (the external-vm-node plugin)");
+    async function openVm(request: { key: string; repo?: string; base?: string; setup?: string; where?: string }) {
+      if (request.where && !vms.labels().includes(request.where)) throw new Error(`there's no ${request.where} machine set up${request.where === "cloud" ? " (the external-vm-node plugin)" : ""}`);
       if (!KEY.test(request.key.trim())) throw new Error("that isn't an ssh public key");
       const warm = request.repo && request.repo === warmRepo && !request.base && !request.setup && request.where !== "cloud" ? ready.shift() : undefined;
       if (warm) warmUp();
       const goal = `VM${request.repo ? ` on ${request.repo}` : ""}`;
       const repo = !warm && request.repo ? await bundle(ctx, request.repo, request.base) : undefined;
       let held = 0;
-      const { id, vm } = warm ?? (await vms.hold(goal, { model: "code", fits, sleep: sleep(() => held) }));
+      const { id, vm } = warm ?? (await vms.hold(goal, { model: "code", where: request.where, sleep: sleep(() => held) }));
       held = id;
       try {
         emit({ id, type: "queued", kind: "vm", goal, repo: request.repo });
-        const hostKey = await prepareVm(vm, { key: request.key, repo, setup: warm ? undefined : request.setup });
+        const hostKey = await vms.prepare(id, { key: request.key, repo, setup: warm ? undefined : request.setup });
         const s = await describe(id, vm, request.repo, hostKey);
         open.set(id, s);
         shown(s, warm ? "Ready (warm)" : "Ready");
@@ -150,7 +149,7 @@ export default {
     const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
     appMethod("vms.open", async ({ key, repo, base, setup, where: at }, signal) => {
       if (typeof key !== "string") throw new Error("an ssh public key, please");
-      const s = await openVm({ key, repo: str(repo), base: str(base), setup: str(setup), where: at === "local" || at === "cloud" ? at : undefined });
+      const s = await openVm({ key, repo: str(repo), base: str(base), setup: str(setup), where: str(at) });
       // One whose asker went away before it was ready (an app sent to the background) is closed, so it's kept to
       // open again rather than left open with no one on it.
       if (signal.aborted) await close(s.id);
@@ -163,7 +162,7 @@ export default {
       const repo = already?.repo ?? vms.kept().find((k) => k.id === id)?.goal.match(/ on (.+)$/)?.[1];
       const vm = already ? undefined : await vms.reclaim(id, { model: "code", sleep: sleep(() => id) });
       if (!already && !vm) throw new Error(`no VM #${id} kept`);
-      const hostKey = await prepareVm(vm ?? { slot: already!.slot, stop: async () => {} }, { key });
+      const hostKey = await vms.prepare(id, { key });
       const s = already ? { ...already, hostKey: hostKey ?? already.hostKey, opened: Date.now() } : await describe(id, vm!, repo, hostKey);
       open.set(id, s);
       if (!already) shown(s, "Reopened");
