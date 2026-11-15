@@ -77,10 +77,10 @@ export async function runAgent(sockets: string, dir: string) {
     await session.bindExtensions({});
     // Its model, thinking level and how full its context is, for the owner's apps, after each turn.
     const status = () =>
-      void fetch(`${gateUrl}/event?session=${encodeURIComponent(id)}`, {
+      fetch(`${gateUrl}/event?session=${encodeURIComponent(id)}`, {
         method: "POST",
         body: JSON.stringify({ type: "status", model: session.model?.id, thinking: session.thinkingLevel, context: session.getContextUsage() }),
-      }).catch(() => {});
+      }).then(() => {}, () => {});
     // What it's doing, for the owner's apps: each tool call as it starts and each message as it ends.
     session.subscribe((event: { type: string }) => {
       if (event.type !== "tool_execution_start" && event.type !== "message_end") return;
@@ -111,7 +111,7 @@ export async function runAgent(sockets: string, dir: string) {
             await session.compact();
           } finally {
             await save();
-            status();
+            await status();
           }
           return "Compacted: the conversation so far is summarized, freeing its context.";
         }
@@ -120,7 +120,7 @@ export async function runAgent(sockets: string, dir: string) {
           await session.prompt(text);
         } finally {
           await save();
-          status();
+          await status();
         }
         // Everything said this turn, including text written before a later tool call.
         return session.sessionManager
