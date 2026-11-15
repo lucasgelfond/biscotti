@@ -33,8 +33,8 @@ import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
 const ctx = BACKGROUND_CONTEXT;
 const MAIN_MODEL = { provider: "biscotti", modelId: "main" } as const;
 
-// Which conversation each session is, and its title.
-const Sessions = defineDoc<{ ids: Record<string, string>; titles?: Record<string, string> }>({
+// Which conversation each session is, its title, and when it was made.
+const Sessions = defineDoc<{ ids: Record<string, string>; titles?: Record<string, string>; created?: Record<string, string> }>({
   kind: "biscotti.sessions",
   version: 1,
   scope: "session",
@@ -186,7 +186,11 @@ export async function runAgent(sockets: string, _dir?: string) {
               ? await harness.root(ctx, { agent: { model: MAIN_MODEL } })
               : await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: MAIN_MODEL } }, ctx);
           const id = String(handle.id);
-          await harness.commit(async (tx) => void ((await tx.doc(Sessions)).ids[session] = id), ctx);
+          await harness.commit(async (tx) => {
+            const doc = await tx.doc(Sessions);
+            doc.ids[session] = id;
+            doc.created = { ...doc.created, [session]: new Date().toISOString() };
+          }, ctx);
           // A new session, for the apps' catalogues.
           void catalogue().then((all) => host.notify(ROOT, "root/sessionAdded", { summary: all.find((s) => s.resource === `ahp-session:/${session}`) }));
         }
@@ -284,11 +288,14 @@ export async function runAgent(sockets: string, _dir?: string) {
   const meta = (session: string) => ({ biscotti: { kind: "main", ...(session === "main" && { source: "imessage" }) } });
   let summaries: Record<string, unknown>[] = [];
   async function catalogue() {
-    const { ids, titles } = await sessions();
+    const { ids, titles, created } = await sessions();
     summaries = Object.keys(ids).map((session) => {
       const chat = host.get<{ status: number; modifiedAt: string }>(`${CHAT}${session}`);
-      return { resource: `${SESSION}${session}`, provider: "biscotti", title: titleOf(session, titles), status: chat?.status ?? 1, createdAt: new Date(0).toISOString(), modifiedAt: chat?.modifiedAt ?? new Date(0).toISOString(), defaultChat: `${CHAT}${session}`, _meta: meta(session) };
+      const made = created?.[session] ?? new Date(0).toISOString();
+      return { resource: `${SESSION}${session}`, provider: "biscotti", title: titleOf(session, titles), status: chat?.status ?? 1, createdAt: made, modifiedAt: chat?.modifiedAt ?? made, defaultChat: `${CHAT}${session}`, _meta: meta(session) };
     });
+    // Newest first.
+    summaries.sort((a, b) => String(b.modifiedAt).localeCompare(String(a.modifiedAt)));
     return summaries;
   }
   async function openSession(session: string) {

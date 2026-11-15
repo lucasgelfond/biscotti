@@ -32,5 +32,7 @@ Object.assign(process.env, {
   MODEL: "stand-in/model",
   TASK_MODEL: "stand-in/model",
   DB_KEY: "test-key",
+  // No owner API on a port: tests and the dev host reach the agent's socket directly.
+  API_PORT: "0",
 });
 export const standInModel = model;
