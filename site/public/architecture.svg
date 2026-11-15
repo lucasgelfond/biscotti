@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 50 1750 830" width="1750" height="830">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 50 1790 830" width="1790" height="830">
   <!-- biscotti's architecture, drawn like a terminal diagram. Dashed boxes are plugins; gray ones are for later. -->
   <style>
     text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; letter-spacing: -0.01em; fill: #000; }
@@ -30,7 +30,7 @@
       <path d="M0 0V8" style="stroke: #2f5fb3; stroke-opacity: 0.22; shape-rendering: auto"/>
     </pattern>
   </defs>
-  <rect x="0" y="50" width="1750" height="830" style="fill: #fff; stroke: none"/>
+  <rect x="0" y="50" width="1790" height="830" style="fill: #fff; stroke: none"/>
 
   <!-- outside -->
   <rect x="40" y="128" width="220" height="64"/><text class="l" x="150" y="168">iMessage</text>
@@ -39,12 +39,12 @@
   <rect x="40" y="440" width="220" height="72"/><text class="l" x="150" y="484">zellij-agents</text>
 
   <!-- NixOS frame -->
-  <rect x="300" y="110" width="1110" height="730"/>
+  <rect x="300" y="110" width="1150" height="730"/>
   <text class="h" x="322" y="145">NixOS behind Tailscale</text>
   <text class="n" x="600" y="145">(running on Raspberry Pi or virtualized on Mac / the cloud)</text>
 
   <!-- core -->
-  <rect class="d" x="320" y="172" width="1070" height="508" style="fill: url(#hatch)"/>
+  <rect class="d" x="320" y="172" width="1110" height="508" style="fill: url(#hatch)"/>
   <text class="h" x="340" y="203">core</text>
 
   <rect class="b" x="340" y="220" width="150" height="90"/>
@@ -60,14 +60,14 @@
   <rect class="d b vm" x="768" y="470" width="124" height="170"/>
   <rect class="d b vm" x="908" y="470" width="124" height="170"/>
 
-  <rect class="b" x="1090" y="220" width="280" height="440"/><text class="l" x="1230" y="258">gate</text>
-  <rect class="b" x="1106" y="280" width="248" height="104"/>
-  <text class="s" x="1230" y="303">encrypted SQLite</text>
-  <rect class="b" x="1110" y="314" width="58" height="56"/><text class="s" x="1139" y="347">crons</text>
-  <rect class="b" x="1172" y="314" width="58" height="56"/><text class="s" x="1201" y="347">memory</text>
-  <rect class="b" x="1234" y="314" width="58" height="56"/><text class="s" x="1263" y="347">VMs</text>
-  <rect class="b" x="1296" y="314" width="58" height="56"/><text class="s" x="1325" y="347">vault</text>
-  <rect class="d b" x="1106" y="404" width="248" height="56"/><text class="s" x="1230" y="437">secure-fill</text>
+  <rect class="b" x="1090" y="220" width="320" height="440"/><text class="l" x="1250" y="258">gate</text>
+  <rect class="b" x="1106" y="280" width="288" height="104"/>
+  <text class="s" x="1250" y="303">encrypted SQLite</text>
+  <rect class="b" x="1112" y="314" width="66" height="56"/><text class="s" x="1145" y="347">crons</text>
+  <rect class="b" x="1182" y="314" width="66" height="56"/><text class="s" x="1215" y="347">memory</text>
+  <rect class="b" x="1252" y="314" width="66" height="56"/><text class="s" x="1285" y="347">VMs</text>
+  <rect class="b" x="1322" y="314" width="66" height="56"/><text class="s" x="1355" y="347">vault</text>
+  <rect class="d b" x="1106" y="404" width="288" height="56"/><text class="s" x="1250" y="437">secure-fill</text>
 
   <!-- plugins -->
   <text class="h" x="340" y="728">plugins</text>
@@ -75,25 +75,25 @@
   <rect class="d" x="560" y="748" width="200" height="56"/><text class="l" x="660" y="783">embeddings</text>
 
   <!-- the two ways out: the tailnet (our own machines and model routing) and the cloud -->
-  <text class="h" x="1460" y="96">Tailscale</text>
-  <rect x="1460" y="110" width="250" height="120"/><text class="l" x="1585" y="142">llm routing</text>
-  <rect x="1480" y="154" width="210" height="30" style="fill: url(#hatch)"/><text class="s" x="1585" y="174">pi-claude-code</text>
-  <rect class="d later" x="1480" y="192" width="101" height="30"/><text class="s later" x="1530" y="212">Bifrost</text>
-  <rect class="d later" x="1589" y="192" width="101" height="30"/><text class="s later" x="1640" y="212">Switchyard</text>
-  <rect class="vm" x="1460" y="246" width="250" height="90" style="fill: url(#fchatch)"/>
-  <text class="s fc" x="1585" y="280">Firecracker</text>
-  <text class="l" x="1585" y="314">EC2 overflow</text>
+  <text class="h" x="1500" y="96">Tailscale</text>
+  <rect x="1500" y="110" width="250" height="120"/><text class="l" x="1625" y="142">llm provider</text>
+  <rect x="1520" y="154" width="210" height="30" style="fill: url(#hatch)"/><text class="s" x="1625" y="174">pi-claude-code</text>
+  <rect class="d later" x="1520" y="192" width="101" height="30"/><text class="s later" x="1570" y="212">Bifrost</text>
+  <rect class="d later" x="1629" y="192" width="101" height="30"/><text class="s later" x="1680" y="212">Switchyard</text>
+  <rect class="vm" x="1500" y="246" width="250" height="90" style="fill: url(#fchatch)"/>
+  <text class="s fc" x="1625" y="280">Firecracker</text>
+  <text class="l" x="1625" y="314">EC2 overflow</text>
   <g style="opacity: 0.5">
-    <rect x="1460" y="352" width="250" height="64" style="fill: url(#machatch); stroke: #2f5fb3; stroke-dasharray: 6 5"/>
-    <text class="l" x="1585" y="392">macOS</text>
+    <rect x="1500" y="352" width="250" height="64" style="fill: url(#machatch); stroke: #2f5fb3; stroke-dasharray: 6 5"/>
+    <text class="l" x="1625" y="392">macOS</text>
   </g>
 
-  <text class="h" x="1460" y="456">cloud</text>
-  <rect x="1460" y="470" width="250" height="64"/><text class="l" x="1585" y="510">llm provider</text>
-  <rect class="d" x="1460" y="550" width="250" height="64"/><text class="l" x="1585" y="590">Gmail</text>
-  <rect class="d" x="1460" y="630" width="250" height="64"/><text class="l" x="1585" y="670">Google Calendar</text>
-  <rect class="d" x="1460" y="710" width="250" height="64"/><text class="l" x="1585" y="750">GitHub</text>
-  <rect class="d" x="1460" y="790" width="250" height="64"/><text class="l" x="1585" y="830">Exa</text>
+  <text class="h" x="1500" y="456">cloud</text>
+  <rect x="1500" y="470" width="250" height="64"/><text class="l" x="1625" y="510">llm provider</text>
+  <rect class="d" x="1500" y="550" width="250" height="64"/><text class="l" x="1625" y="590">Gmail</text>
+  <rect class="d" x="1500" y="630" width="250" height="64"/><text class="l" x="1625" y="670">Google Calendar</text>
+  <rect class="d" x="1500" y="710" width="250" height="64"/><text class="l" x="1625" y="750">GitHub</text>
+  <rect class="d" x="1500" y="790" width="250" height="64"/><text class="l" x="1625" y="830">Exa</text>
 
   <!-- wires; pi-durable and the VMs reach everything outside, and their state, only through the gate -->
   <path d="M150 192V220" marker-start="url(#a)" marker-end="url(#a)"/>
@@ -102,14 +102,14 @@
   <path d="M260 476H326V300H340" marker-start="url(#a)" marker-end="url(#a)"/>
   <path d="M490 265H530" marker-start="url(#a)" marker-end="url(#a)"/>
   <path d="M710 265H750" marker-end="url(#a)"/>
-  <path d="M620 220V194H1230V220" marker-end="url(#a)"/>
+  <path d="M620 220V194H1250V220" marker-end="url(#a)"/>
   <path d="M1050 440H1090" marker-end="url(#a)"/>
-  <path d="M1370 240H1415V170H1460" marker-end="url(#a)"/>
-  <path d="M1370 291H1460" marker-end="url(#a)"/>
-  <path class="d" d="M1370 384H1460" marker-end="url(#a)" style="opacity: 0.5"/>
-  <path d="M1370 502H1460" marker-end="url(#a)"/>
-  <path d="M1370 582H1460" marker-end="url(#a)"/>
-  <path d="M1370 650H1415V662H1460" marker-end="url(#a)"/>
-  <path d="M1415 662V742H1460" marker-end="url(#a)"/>
-  <path d="M1415 742V822H1460" marker-end="url(#a)"/>
+  <path d="M1410 240H1455V170H1500" marker-end="url(#a)"/>
+  <path d="M1410 291H1500" marker-end="url(#a)"/>
+  <path class="d" d="M1410 384H1500" marker-end="url(#a)" style="opacity: 0.5"/>
+  <path d="M1410 502H1500" marker-end="url(#a)"/>
+  <path d="M1410 582H1500" marker-end="url(#a)"/>
+  <path d="M1410 650H1455V662H1500" marker-end="url(#a)"/>
+  <path d="M1455 662V742H1500" marker-end="url(#a)"/>
+  <path d="M1455 742V822H1500" marker-end="url(#a)"/>
 </svg>
