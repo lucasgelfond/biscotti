@@ -396,7 +396,8 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
   const pool = taskVms(
     [],
     {
-      busy: (slot) => !!gate.busy(slot),
+      // In a tool call (e.g. waiting on the owner's yes) or waiting on the model: not going quiet.
+      busy: (slot) => !!gate.busy(slot) || gate.thinking(slot),
       onStart(slot, id, goal, model) {
         gate.assign(slot, id, goal);
         gate.route(slot, model);

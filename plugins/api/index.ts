@@ -126,11 +126,13 @@ const say = (text: string): acp.ContentBlock => ({ type: "text", text });
 // What an event (or a stored step) shows a session's follower.
 function updates(e: Pick<TaskEvent, "id" | "type" | "text" | "tool" | "goal">, n: number, screenshot?: string): acp.SessionUpdate[] {
   if (e.type === "queued" && e.goal) return [{ sessionUpdate: "user_message_chunk", content: say(e.goal) }];
-  if ((e.type === "resumed" || e.type === "told") && e.text) return [{ sessionUpdate: "user_message_chunk", content: say(e.text) }];
+  if ((e.type === "resumed" || e.type === "told") && e.text) return [{ sessionUpdate: "user_message_chunk", content: say(e.text), messageId: `${e.id}-${n}-owner` }];
   if (e.type === "step" && e.tool) return [{ sessionUpdate: "tool_call", toolCallId: `${e.id}-${n}`, title: `${e.tool} ${e.text ?? ""}`.trim(), kind: "other", status: "completed", rawInput: e.text }];
-  if (e.type === "step" && e.text) return [{ sessionUpdate: "agent_message_chunk", content: say(e.text) }];
-  if (e.type === "report") return [{ sessionUpdate: "agent_message_chunk", content: say(e.text ?? "") }, ...(screenshot ? [{ sessionUpdate: "agent_message_chunk" as const, content: { type: "image" as const, data: screenshot, mimeType: "image/png" } }] : [])];
-  if (e.type === "failed" || e.type === "moving") return [{ sessionUpdate: "agent_message_chunk", content: say(e.text ?? e.type) }];
+  // Each is a whole message, with its own id, so a client doesn't join two in a row.
+  const messageId = `${e.id}-${n}`;
+  if (e.type === "step" && e.text) return [{ sessionUpdate: "agent_message_chunk", content: say(e.text), messageId }];
+  if (e.type === "report") return [{ sessionUpdate: "agent_message_chunk", content: say(e.text ?? ""), messageId }, ...(screenshot ? [{ sessionUpdate: "agent_message_chunk" as const, content: { type: "image" as const, data: screenshot, mimeType: "image/png" }, messageId }] : [])];
+  if (e.type === "failed" || e.type === "moving") return [{ sessionUpdate: "agent_message_chunk", content: say(e.text ?? e.type), messageId }];
   return [];
 }
 

@@ -170,7 +170,18 @@ export function createGate(opts: {
 
   // Each plugin backend's models that failed recently, until when (see FALLBACK_STATUSES).
   const benched = new Map<Llm, Map<string, number>>();
+  // Model calls under way, by slot: a task waiting on the model (a slow or unreachable provider) isn't going quiet.
+  const thinking = new Map<number, number>();
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
+    if (!slot) return answerLlm(req, res);
+    thinking.set(slot, (thinking.get(slot) ?? 0) + 1);
+    try {
+      await answerLlm(req, res, slot);
+    } finally {
+      thinking.set(slot, thinking.get(slot)! - 1);
+    }
+  }
+  async function answerLlm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
     const name = slot ? (slotModels.get(slot) ?? "task") : body.model;
@@ -264,6 +275,7 @@ export function createGate(opts: {
     },
     // The slot's oldest tool call in progress, if any.
     busy: (slot: number) => calls.get(slot)?.[0],
+    thinking: (slot: number) => (thinking.get(slot) ?? 0) > 0,
     // The main agent's requests (the model, its tools), for a listener of the caller's choosing.
     handle: handler(),
     add(tools: Tools) {
