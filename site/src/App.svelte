@@ -32,7 +32,7 @@
 
   <details open>
     <summary>Design</summary>
-    <div class="arch" role="img" aria-label="biscotti's architecture: iMessage through Photon to Pi on NixOS behind Tailscale. The core holds Pi, Croner, an encrypted SQLite store (crons, memory, vault), Firecracker VMs for computer use (Debian with Cua and noVNC) and the gate, through which every call to the llm provider, Gmail, Google Calendar, GitHub and Exa goes. Plugins: artifacts, embeddings, Executor.sh.">{@html architecture}</div>
+    <div class="arch" role="img" aria-label="biscotti's architecture: iMessage through Photon, Concourse and zellij-agents all reach AHP, inside NixOS behind Tailscale. The core holds pi-durable, which keeps its crons, memory and VMs in encrypted SQLite and runs tools in Firecracker VMs (Debian with Cua, voxl and pi-env), and the gate, which holds the vault and secure-fill and through which every call to the llm provider (with pi-claude-code), Gmail, Google Calendar, GitHub, Exa and the EC2 overflow goes. Plugins: artifacts, embeddings; Bifrost and Switchyard later.">{@html architecture}</div>
   </details>
 
   <details open>
