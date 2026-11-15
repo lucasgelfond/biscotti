@@ -41,6 +41,9 @@ export function vmEnv(dir: string) {
     // either side ends. It starts in the VM's login shell, for the PATH a shell there has.
     async pipe(id: number, at: { host: string; port: number }, args: string[], socket: Duplex) {
       if (!args.every((a) => /^[\w-]+$/.test(a))) throw new Error("bad pi-env arguments");
+      // The agent may hang up while the daemon is being sent: then nothing starts.
+      let gone = false;
+      socket.once("close", () => (gone = true));
       const t = target(id, at);
       let file = deployed.get(id);
       if (!file) {
@@ -48,6 +51,7 @@ export function vmEnv(dir: string) {
         file = await deployDaemon(t, remote, packagedDaemon(remote));
         deployed.set(id, file);
       }
+      if (gone || socket.destroyed) return;
       socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: pi-env\r\nConnection: Upgrade\r\n\r\n");
       const quoted = `'${file.replaceAll("'", "'\\''")}'`;
       const child = spawn("ssh", [...sshArguments(t), `exec "$SHELL" -lc 'exec "$0" "$@"' ${quoted}`, ...args], { stdio: ["pipe", "pipe", "pipe"] });

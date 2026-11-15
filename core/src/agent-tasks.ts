@@ -220,7 +220,15 @@ export function agentTasks(opts: {
   function vm(id: number) {
     let found = vms.get(id);
     if (!found) {
-      const connection = new Connection({ command: opts.daemon(id), onLog: (text) => console.error(`pi-env #${id}: ${text.trim()}`) });
+      // A connection starts again on its next request once lost or closed: only while the task's run is under way, so
+      // nothing left over from a run (a tool's cleanup) reaches for a VM the gate has put away.
+      const connection = new Connection({
+        command: async () => {
+          if (!active.has(id)) throw new Error(`task #${id}'s run is over`);
+          return opts.daemon(id);
+        },
+        onLog: (text) => console.error(`pi-env #${id}: ${text.trim()}`),
+      });
       const env = connection.info().then((info) => new RemoteExecutionEnv({ connection, id: `pi-env:biscotti-vm-${id}`, cwd: info.home }));
       found = { connection, env };
       env.catch(() => vms.delete(id));
