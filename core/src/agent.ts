@@ -98,6 +98,8 @@ export async function runAgent(sockets: string, dir: string) {
     }
 
     return {
+      // Stops the turn under way, if there is one.
+      stop: () => session.abort(),
       // Undefined when the message steered a reply already underway.
       async reply(message: string): Promise<string | undefined> {
         const text = `[${new Date().toString()}] ${message}`;
@@ -142,6 +144,7 @@ export async function runAgent(sockets: string, dir: string) {
       // A restarted gate may bring new tools and prompts: start over from the saved conversation.
       if (req.url === "/reload") return void res.end(void ((sessions = new Map([["main", session("main")]])), await of("main")));
       const { text, session: id = "main" } = JSON.parse(await readBody(req));
+      if (req.url === "/stop") return void res.end(void (await (await sessions.get(String(id)))?.stop()));
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await (await of(String(id))).reply(text) }));
     } catch (err) {
       console.error(err);

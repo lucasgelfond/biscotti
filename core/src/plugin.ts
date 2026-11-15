@@ -23,6 +23,8 @@ export interface Context {
   deliver(text: string, image?: Buffer, session?: string): Promise<void>;
   // The owner's message in a main session (from one of their apps): the agent answers there, as events.
   converse?(session: string, message: string): Promise<void>;
+  // Stops a main session's turn under way.
+  interrupt?(session: string): Promise<void>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
   // Task VMs, where this machine has them.

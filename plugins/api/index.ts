@@ -260,7 +260,11 @@ export default {
         else if (vms.tell(id, message) === "none") throw acp.RequestError.invalidParams(undefined, `task #${id} isn't running or kept`);
         return { stopReason: await done };
       })
-      .onNotification(acp.methods.agent.session.cancel, ({ params }) => void vms.stop(idOf(params.sessionId)))
+      .onNotification(acp.methods.agent.session.cancel, ({ params }) => {
+        const id = idOf(params.sessionId);
+        if (tasks.rows.get(id)?.kind === "main") void ctx.interrupt?.(sid(id)).catch(() => {});
+        else vms.stop(id);
+      })
       .onRequest("_biscotti/watch", (p) => p as { sessionId: string }, async ({ params }) => ({ url: (await vms.watch(idOf(params.sessionId))) ?? null }))
       .onRequest("*", async ({ method, params, signal }) => {
         const handler = extensions.get(method);

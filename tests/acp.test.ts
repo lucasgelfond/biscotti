@@ -112,3 +112,51 @@ test("a client starts a main session, talks to the agent there, and its steps an
   expect(mine.find((u) => u.sessionUpdate === "config_option_update")).toMatchObject({ configOptions: [{ category: "model", currentValue: "anthropic/claude-opus-5-5" }, { category: "thought_level", currentValue: "medium" }] });
   expect(result.session?._meta?.biscotti).toMatchObject({ model: "anthropic/claude-opus-5-5", used: 12000 });
 });
+
+// A follower of a main session (another device) sees it go working and back to idle when someone else prompts it.
+test("a session's follower sees its status change when another client prompts it", async () => {
+  let next = 90;
+  const vms = { reserve: () => ++next, kept: () => [], watch: async () => undefined } as unknown as Vms;
+  const converse = async (session: string, message: string) => {
+    const id = Number(session);
+    emit({ id, type: "told", text: message });
+    await new Promise((r) => setTimeout(r, 200));
+    emit({ id, type: "step", text: "hi" });
+    emit({ id, type: "replied" });
+  };
+  let handler: (req: IncomingMessage, res: ServerResponse) => unknown = () => {};
+  await api.start!(testContext({ vms, converse, route: (_prefix, h) => (handler = h) }));
+  const server = createServer((req, res) => void handler(req, res)).listen(0, "127.0.0.1");
+  await new Promise((r) => server.once("listening", r));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/acp`;
+  const init = { protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} };
+
+  // One client makes the session; a second follows it (session/load) while the first prompts it.
+  const seen: string[] = [];
+  let sessionId = "";
+  let followed!: () => void;
+  const following = new Promise<void>((r) => (followed = r));
+  const follower = acp
+    .client({ name: "follower" })
+    .onNotification(acp.methods.client.session.update, ({ params }) => {
+      const u = params.update;
+      if (params.sessionId === sessionId && u.sessionUpdate === "session_info_update") seen.push(String((u._meta?.biscotti as { status?: string })?.status));
+      if (params.sessionId === sessionId && u.sessionUpdate === "agent_message_chunk") seen.push("text");
+    })
+    .connectWith(createHttpStream(url), async (ctx) => {
+      await ctx.request(acp.methods.agent.initialize, init);
+      while (!sessionId) await new Promise((r) => setTimeout(r, 10));
+      await ctx.request(acp.methods.agent.session.load, { sessionId, cwd: "/", mcpServers: [] });
+      followed();
+      while (!seen.includes("done")) await new Promise((r) => setTimeout(r, 20));
+    });
+  await acp.client({ name: "prompter" }).connectWith(createHttpStream(url), async (ctx) => {
+    await ctx.request(acp.methods.agent.initialize, init);
+    sessionId = (await ctx.request(acp.methods.agent.session.new, { cwd: "/", mcpServers: [] })).sessionId;
+    await following;
+    await ctx.request(acp.methods.agent.session.prompt, { sessionId, prompt: [{ type: "text", text: "hello" }] });
+  });
+  await follower;
+  server.close();
+  expect(seen).toEqual(expect.arrayContaining(["running", "text", "done"]));
+});

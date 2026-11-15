@@ -35,8 +35,10 @@ export async function connectAgent(sockets: string, opts: { db: Db; prompt: stri
   await call(`${sockets}/agent.sock`, "POST", "/reload").catch(() => {});
 
   // One turn of the agent in `session`: its reply, or undefined when the message steered one already underway. The
-  // agent may still be starting.
-  return async function turn(message: string, session = "main"): Promise<string | undefined> {
+  // agent may still be starting. `turn.stop` stops the session's turn under way.
+  turn.stop = (session: string) => call(`${sockets}/agent.sock`, "POST", "/stop", JSON.stringify({ session })).then(() => {});
+  return turn;
+  async function turn(message: string, session = "main"): Promise<string | undefined> {
     for (let attempt = 0; ; attempt++) {
       try {
         return JSON.parse(await call(`${sockets}/agent.sock`, "POST", "/turn", JSON.stringify({ text: message, session }))).reply;
@@ -45,7 +47,7 @@ export async function connectAgent(sockets: string, opts: { db: Db; prompt: stri
         await new Promise((r) => setTimeout(r, 2000));
       }
     }
-  };
+  }
 }
 
 // What the agent is doing in a session, as it goes: a tool call starting, or a message it finished.

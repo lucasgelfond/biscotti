@@ -39,7 +39,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     // Plugins' texts (a task's screenshot caption) can't pose as the gate's questions either.
     if (text) await channel.send(outbound(text.replace(LOCKS, "")));
   };
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, converse, vms: vms?.vms, route: api.route };
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, converse, interrupt: (session) => turn.stop(session), vms: vms?.vms, route: api.route };
   const observers = await Promise.all(plugins.flatMap((p) => (p.observe ? [p.observe(ctx)] : [])));
   for (const observer of observers) gate.observe(observer);
   for (const plugin of plugins) if (plugin.llm) gate.serve(await plugin.llm(ctx));
