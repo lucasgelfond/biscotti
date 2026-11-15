@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { emit, endpoints, secret, taskEvents, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
+import { emit, endpoints, prepareVm, secret, taskEvents, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
 import { extension } from "../api/index.ts";
 
 // ssh VMs: a task VM the owner works in over ssh with their own pi (core/vm/task/box-pi), from Concourse or the app,
@@ -34,7 +34,6 @@ interface SshVm {
 
 const KEY = /^(ssh|ecdsa|sk)-[\w@.-]+ [A-Za-z0-9+/=]+( .*)?$/;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
-const SETUP_TIMEOUT_MS = 30 * 60_000;
 const where = (slot: number) => (endpoints.has(slot) ? "cloud" : "local");
 // This machine's VMs' sshd is on the tailnet at 2200 + slot (`tailscale serve`, nix/setup.nix); another host's is its
 // endpoint for port 22.
@@ -55,32 +54,6 @@ async function bundle(ctx: Context, repo: string, base?: string) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-}
-
-// The VM's task agent (core/vm/task/biscotti-task) sets it up: the key authorized, the repo checked out, the setup
-// command run. It answers with the VM's host key.
-function prepare(vm: Vm, message: { key?: string; repo?: Buffer; setup?: string }, onLine?: (line: string) => void) {
-  const { host, port } = vmEndpoint(vm.slot, 4000);
-  return new Promise<string | undefined>((resolve, reject) => {
-    const socket = connect({ host, port }, () => socket.end(JSON.stringify({ box: { key: message.key, repo: message.repo?.toString("base64"), setup: message.setup } })));
-    const timer = setTimeout(() => socket.destroy(new Error("setting up the VM took too long")), SETUP_TIMEOUT_MS);
-    let done = false;
-    createInterface({ input: socket, crlfDelay: Infinity })
-      .on("error", () => {})
-      .on("line", (line) => {
-        try {
-          const event = JSON.parse(line);
-          if (event.type === "setup" && event.line) onLine?.(event.line);
-          if (event.type !== "box") return;
-          done = true;
-          clearTimeout(timer);
-          if (event.ok) resolve(event.hostKey);
-          else reject(new Error(event.error ?? "the VM couldn't be set up"));
-        } catch {}
-      });
-    socket.on("error", (err) => (clearTimeout(timer), reject(err)));
-    socket.on("close", () => (clearTimeout(timer), done || reject(new Error("the VM closed the connection"))));
-  });
 }
 
 export default {
@@ -129,7 +102,7 @@ export default {
             let id = 0;
             held = await vms.hold(`VM on ${warmRepo}`, { model: "code", sleep: sleep(() => id) });
             id = held.id;
-            await prepare(held.vm, { repo: await bundle(ctx, warmRepo!), setup: warmSetup });
+            await prepareVm(held.vm, { repo: await bundle(ctx, warmRepo!), setup: warmSetup });
             ready.push(held);
           } catch (err) {
             console.error(`warming a VM of ${warmRepo}: ${(err as Error).message}`);
@@ -157,7 +130,7 @@ export default {
       held = id;
       try {
         emit({ id, type: "queued", kind: "vm", goal, repo: request.repo });
-        const hostKey = await prepare(vm, { key: request.key, repo, setup: warm ? undefined : request.setup }, (line) => emit({ id, type: "step", tool: "setup", text: line.slice(0, 300) }));
+        const hostKey = await prepareVm(vm, { key: request.key, repo, setup: warm ? undefined : request.setup }, (line) => emit({ id, type: "step", tool: "setup", text: line.slice(0, 300) }));
         const s = await describe(id, vm, request.repo, hostKey);
         open.set(id, s);
         shown(s, warm ? "Ready (warm)" : "Ready");
@@ -191,7 +164,7 @@ export default {
       const repo = already?.repo ?? vms.kept().find((k) => k.id === id)?.goal.match(/ on (.+)$/)?.[1];
       const vm = already ? undefined : await vms.reclaim(id, { model: "code", sleep: sleep(() => id) });
       if (!already && !vm) throw new Error(`no VM #${id} kept`);
-      const hostKey = await prepare(vm ?? { slot: already!.slot, stop: async () => {} }, { key });
+      const hostKey = await prepareVm(vm ?? { slot: already!.slot, stop: async () => {} }, { key });
       const s = already ? { ...already, hostKey: hostKey ?? already.hostKey, opened: Date.now() } : await describe(id, vm!, repo, hostKey);
       open.set(id, s);
       if (!already) shown(s, "Reopened");

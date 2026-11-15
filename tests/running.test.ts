@@ -3,10 +3,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type AddressInfo, type Server } from "node:net";
+import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { createGate } from "../core/src/gate.ts";
+import type { TaskRun } from "../core/src/agent-tasks.ts";
 import { localTools, taskEvents, text, type Caller, type Host, type Vm } from "../core/src/plugin.ts";
 
 // The task pool's bookkeeping with stand-in VMs: what's running, stopping one, when a task counts as quiet, kept VMs
@@ -15,28 +17,30 @@ process.env.TASK_IDLE_MS = "400";
 process.env.VM_USE_CHECK_MS = "30";
 const { taskVms, gateTasks, vmCheck, sessions } = await import("../core/src/tasks.ts");
 
-// A task agent: "silent" says nothing, "wait <ms>" says nothing for that long and then reports, anything else is
-// reported at once. A follow-up is reported as "followup <message>".
-async function agent() {
-  // Half-open, as the VM's agent is: the goal ends the gate's side, the report comes back after.
-  const server = createServer({ allowHalfOpen: true }, (socket) => {
-    let goal = "";
-    socket.on("data", (d) => (goal += d)).on("error", () => {});
-    socket.on("end", async () => {
-      const task = JSON.parse(goal);
-      const said = (task.goal ?? `followup ${task.followup}`) as string;
-      if (said === "silent") return;
-      await new Promise((r) => setTimeout(r, Number(said.match(/^wait (\d+)/)?.[1] ?? 0)));
-      socket.end(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `done: ${said}` }] } })}\n`);
-    });
-  }).listen(0, "127.0.0.1");
+// The task agent (the main agent's, agent-tasks.ts), its run's lines: "silent" says nothing, "wait <ms>" says nothing
+// for that long and then reports, anything else is reported at once. A follow-up is reported as "followup <message>".
+function lines(task: TaskRun) {
+  const stream = new PassThrough();
+  const said = task.followup ? `followup ${task.goal}` : task.goal;
+  if (said !== "silent")
+    setTimeout(() => stream.end(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `done: ${said}` }] } })}\n`), Number(said.match(/^wait (\d+)/)?.[1] ?? 0));
+  return stream;
+}
+const run = async (_slot: number, task: TaskRun) => lines(task);
+const agent = { key: () => "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn gate", trust: () => {}, pipe: async () => {}, run: async (task: TaskRun) => lines(task) };
+// A pool whose tasks that agent runs.
+const pool = (hooks: Parameters<typeof taskVms>[1] = {}, saved?: string) => taskVms([], { run, ...hooks }, saved);
+
+// The VM's setup (its box mode, for pi-env): done at once.
+async function setup() {
+  const server = createServer((socket) => socket.on("data", () => socket.end(`${JSON.stringify({ type: "box", ok: true })}\n`)).on("error", () => {})).listen(0, "127.0.0.1");
   await once(server, "listening");
   return { host: "127.0.0.1", port: (server.address() as AddressInfo).port };
 }
 
-// A host of `slots` whose VMs are all that agent, recording what's done to them in `log`.
+// A host of `slots` whose VMs are set up at once, recording what's done to them in `log`.
 async function host(slots: number[], log: string[] = [], extra: Partial<Host> = {}): Promise<Host> {
-  const address = await agent();
+  const address = await setup();
   const vm = (slot: number): Vm => ({ slot, stop: async () => void log.push(`stop ${slot}`), suspend: async (id) => void log.push(`suspend ${slot} ${id}`) });
   return {
     slots,
@@ -53,7 +57,7 @@ const until = async (check: () => boolean) => {
 };
 
 test("lists running and queued tasks, and stopping one frees its slot for the queued one", async () => {
-  const vms = taskVms([], { busy: () => true });
+  const vms = pool({ busy: () => true });
   await vms.addHost(await host([1, 2]));
   const runs = ["silent", "silent", "silent"].map((goal) => vms.run(goal).result.catch((err: Error) => err.message));
   await until(() => vms.running().filter((t) => t.slot).length === 2);
@@ -70,7 +74,7 @@ test("lists running and queued tasks, and stopping one frees its slot for the qu
 
 test("a task in a tool call (like waiting on the owner's yes) isn't quiet; one that's only silent is", async () => {
   let inToolCall = true;
-  const vms = taskVms([], { busy: () => inToolCall });
+  const vms = pool({ busy: () => inToolCall });
   await vms.addHost(await host([1]));
 
   expect((await vms.run("wait 1200").result).report).toBe("done: wait 1200");
@@ -81,7 +85,7 @@ test("a task in a tool call (like waiting on the owner's yes) isn't quiet; one t
 test("a finished task's VM is deleted, and numbering carries on after a restart", async () => {
   const log: string[] = [];
   const saved = file();
-  const vms = taskVms([], {}, saved);
+  const vms = pool({}, saved);
   await vms.addHost(await host([1], log));
   expect((await vms.run("find flights").result).report).toBe("done: find flights");
   expect(log).toContain("stop 1");
@@ -89,13 +93,13 @@ test("a finished task's VM is deleted, and numbering carries on after a restart"
   expect(vms.alive()).toEqual([]);
   expect(vms.resume(1, "book the second one")).toBe(false);
 
-  const again = taskVms([], {}, saved);
+  const again = pool({}, saved);
   expect(again.reserve()).toBe(2);
 });
 
 test("a task kept open stays running once done, takes a follow-up in the same VM, and is deleted when told", async () => {
   const log: string[] = [];
-  const vms = taskVms([], {}, file());
+  const vms = pool({}, file());
   await vms.addHost(await host([1, 2], log));
   const { id, result } = vms.run("fix the bug", { keep: true });
   await result;
@@ -118,7 +122,7 @@ test("a task kept open stays running once done, takes a follow-up in the same VM
 
 test("asking to keep a running task keeps it open; asking for an asleep one wakes it; a plugin's VM put back is listed asleep", async () => {
   const log: string[] = [];
-  const vms = taskVms([], {}, file());
+  const vms = pool({}, file());
   await vms.addHost(await host([1, 2], log));
   const { id, result } = vms.run("wait 200");
   expect(await vms.keep(id)).toBe(true);
@@ -140,7 +144,7 @@ test("asking to keep a running task keeps it open; asking for an asleep one wake
 
 test("an open VM counts as used while someone's on it", async () => {
   let on = false;
-  const vms = taskVms([], {}, file());
+  const vms = pool({}, file());
   await vms.addHost(await host([1], [], { active: () => on }));
   const { id } = await vms.hold("VM on o/r");
   const opened = vms.alive()[0].used;
@@ -182,7 +186,7 @@ test("ssh and desktop sessions on a slot's VM are counted from the host's TCP ta
 
 test("a plugin holds a VM, keeps it, brings it back and deletes it, numbered with the tasks", async () => {
   const log: string[] = [];
-  const vms = taskVms([], {}, file());
+  const vms = pool({}, file());
   await vms.addHost(await host([1], log));
   const { id, vm } = await vms.hold("VM on o/r");
   expect([id, vm.slot]).toEqual([1, 1]);
@@ -205,7 +209,7 @@ test("a plugin holds a VM, keeps it, brings it back and deletes it, numbered wit
 
 test("when every slot holds a VM that may sleep, the one used longest ago sleeps for a newcomer; one without waits", async () => {
   const log: string[] = [];
-  const vms = taskVms([], {}, file());
+  const vms = pool({}, file());
   await vms.addHost(await host([1, 2], log));
   const used = new Map<number, number>();
   const sleeper = (id: () => number) => ({ used: () => used.get(id()) ?? 0, sleep: () => vms.give(id()) });
@@ -234,7 +238,7 @@ test("when every slot holds a VM that may sleep, the one used longest ago sleeps
 });
 
 test("an overflow host is used only once the others' slots are taken", async () => {
-  const vms = taskVms([], { busy: () => true });
+  const vms = pool({ busy: () => true });
   await vms.addHost(await host([101], [], { overflow: true }));
   await vms.addHost(await host([1]));
   vms.run("silent").result.catch(() => {});
@@ -257,7 +261,7 @@ async function gated() {
   const reports: string[] = [];
   const parents: (string | undefined)[] = [];
   const local = await host([1, 2], [], { gate: () => ({ host: "127.0.0.1", port: 0, peer: () => "127.0.0.1" }) });
-  const { vms, tools } = await gateTasks(gate, local, (_goal, { report }, parent) => (reports.push(report), parents.push(parent)), file());
+  const { vms, tools } = await gateTasks(gate, local, (_goal, { report }, parent) => (reports.push(report), parents.push(parent)), file(), undefined, agent);
   const messages = (slot: number) => fetch(`http://127.0.0.1:${(servers.get(slot)!.address() as AddressInfo).port}/messages`, { headers: { host: "gate" } }).then((r) => r.json());
   const said = async (name: string, args: Record<string, unknown> = {}, caller?: Caller) => ((await localTools(tools).call(name, args, caller)).content[0] as { text: string }).text;
   return { gate, vms, said, messages, reports, parents, close: () => servers.forEach((s) => s.close()) };

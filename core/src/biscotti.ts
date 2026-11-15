@@ -3,11 +3,12 @@ import { connectAgent } from "./connect.ts";
 import crons from "./crons.ts";
 import { createGate, LOCKS, scrub } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
-import { localTools, type Channel, type Context, type Plugin } from "./plugin.ts";
+import { localTools, type Channel, type Context, type Host, type Plugin } from "./plugin.ts";
 import { ownerApi } from "./http.ts";
 import { emit } from "./plugin.ts";
 import { sqlBridge } from "./sql-bridge.ts";
 import { gateTasks, localHost } from "./tasks.ts";
+import { vmEnv } from "./vm-env.ts";
 import vault, { secrets } from "./vault.ts";
 
 function env(name: string) {
@@ -18,22 +19,34 @@ function env(name: string) {
 
 // The gate: every key, the database, the channel and the plugins. `sockets` is the directory it shares with the main
 // agent (agent-main.ts).
-export async function start(opts: { plugins: Plugin[]; dir: string; sockets: string }) {
+// `vms`: this machine's task VMs, when they aren't the vms service's (VMS_SOCKET), e.g. a test's.
+export async function start(opts: { plugins: Plugin[]; dir: string; sockets: string; vms?: Host }) {
   const { dir, sockets } = opts;
   const plugins: Plugin[] = [crons, vault, ...opts.plugins];
   const db = openDb(`${dir}/biscotti.db`, env("DB_KEY"));
   // No text biscotti sends carries a saved secret, whoever wrote it: each becomes a placeholder.
   const outbound = (s: string) => ({ text: scrub(s, secrets(db)) as string });
+  const models = { main: env("MODEL"), task: env("TASK_MODEL"), code: process.env.CODE_MODEL || env("TASK_MODEL") };
   const gate = createGate({
     llm: { url: env("LLM_BASE_URL"), key: env("LLM_API_KEY"), extra: process.env.LLM_EXTRA ? JSON.parse(process.env.LLM_EXTRA) : undefined },
-    models: { main: env("MODEL"), task: env("TASK_MODEL"), code: process.env.CODE_MODEL || env("TASK_MODEL") },
+    models,
     send: (s) => channel.send(outbound(s)),
     secrets: () => secrets(db),
   });
   // Task VMs, where the vms service runs (vms-main.ts); finished ones are kept, listed in the data directory.
-  const vms = process.env.VMS_SOCKET
-    ? await gateTasks(gate, localHost(process.env.VMS_SOCKET, env("VM_DIR")), (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`, (text) => deliver(text))
-    : undefined;
+  // The main agent runs each one (agent-tasks.ts), its tools in the VM through pi-env, which the gate runs there over
+  // ssh with a key of its own (vm-env.ts).
+  const host = opts.vms ?? (process.env.VMS_SOCKET ? localHost(process.env.VMS_SOCKET, env("VM_DIR")) : undefined);
+  const pipes = host && vmEnv(dir);
+  const vms =
+    host && pipes
+      ? await gateTasks(gate, host, (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`, (text) => deliver(text), {
+          key: pipes.publicKey,
+          trust: pipes.trust,
+          pipe: pipes.pipe,
+          run: (task, stopped) => turn.task(task, stopped),
+        })
+      : undefined;
   const api = ownerApi();
   // The owner's apps reach the agent itself over the Agent Host Protocol.
   api.upgrade("/ahp", `${sockets}/agent.sock`);
@@ -64,7 +77,9 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     db,
     sql: sqlBridge(`${dir}/durable.db`, env("DB_KEY")),
     prompt,
+    models,
     gate: gate.handle,
+    env: (id, args, socket) => (vms ? vms.vms.env(id, args, socket) : Promise.reject(new Error("no task VMs here"))),
     onEvent(session, e) {
       const id = number(session);
       if (e.type === "tool_execution_start" && e.toolName) emit({ id, type: "step", tool: e.toolName, text: JSON.stringify(e.args ?? {}).slice(0, 160) });

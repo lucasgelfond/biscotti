@@ -2,8 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 
-// The stand-in model, OpenAI chat completions streamed: "remember X" calls the remember tool, a tool result is
-// answered with "saved", anything else is echoed.
+// The stand-in model, OpenAI chat completions streamed: "remember X" calls the remember tool, "start a task: X" the
+// task tool, and in a task "run `X`" the bash tool; a bash result is answered with "done: " and its output, another
+// tool's with "saved"; anything else is echoed.
 export const requests: { messages: { role: string; content: unknown }[]; tools?: { function: { name: string } }[] }[] = [];
 export const model = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   let body = "";
@@ -16,12 +17,17 @@ export const model = createServer(async (req: IncomingMessage, res: ServerRespon
     `data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: finish }], ...(usage && { usage }) })}\n\n`;
   res.writeHead(200, { "content-type": "text/event-stream" });
   const remember = said.match(/remember (.+)$/)?.[1];
-  if (last.role === "tool") res.write(chunk({ role: "assistant", content: "saved" }) + chunk({}, "stop", { prompt_tokens: 20, completion_tokens: 1, total_tokens: 21 }));
-  else if (remember)
-    res.write(
-      chunk({ role: "assistant", tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "remember", arguments: JSON.stringify({ fact: remember }) } }] }) +
-        chunk({}, "tool_calls", { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }),
-    );
+  const task = said.match(/start a task: (.+)$/)?.[1];
+  const command = request.tools?.some((t) => t.function.name === "bash") ? said.match(/run `([^`]+)`/)?.[1] : undefined;
+  const call = (name: string, args: object) =>
+    chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] }) +
+    chunk({}, "tool_calls", { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 });
+  const calledBash = (request.messages.at(-2) as { tool_calls?: { function: { name: string } }[] } | undefined)?.tool_calls?.[0]?.function.name === "bash";
+  if (last.role === "tool")
+    res.write(chunk({ role: "assistant", content: calledBash ? `done: ${said.trim()}` : "saved" }) + chunk({}, "stop", { prompt_tokens: 20, completion_tokens: 1, total_tokens: 21 }));
+  else if (remember) res.write(call("remember", { fact: remember }));
+  else if (task) res.write(call("task", { goal: task }));
+  else if (command) res.write(call("bash", { command }));
   else res.write(chunk({ role: "assistant", content: `echo: ${said.replace(/^\[[^\]]*\] /, "")}` }) + chunk({}, "stop", { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 }));
   res.end("data: [DONE]\n\n");
 }).listen(0, "127.0.0.1");

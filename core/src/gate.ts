@@ -238,18 +238,25 @@ export function createGate(opts: {
   // A task VM slot's listener gets the task set, only from that slot's VM (`peer`), and only requests addressed to the
   // gate (no DNS rebinding from a page).
   // `peer` may be a function, for a machine whose address is known only once it's up (nodes.ts).
-  const handler = (slot?: number, peer?: string | (() => string | undefined)) => (req: IncomingMessage, res: ServerResponse) => {
+  // The main agent runs tasks too (agent-tasks.ts): its calls for one (?task=<id>) are that task's VM's, in the slot
+  // `locate` finds it in.
+  let locate: ((task: number) => number | undefined) | undefined;
+  const handler = (vmSlot?: number, peer?: string | (() => string | undefined)) => (req: IncomingMessage, res: ServerResponse) => {
+    const url = new URL(req.url ?? "/", "http://gate");
+    const task = vmSlot ? undefined : Number(url.searchParams.get("task")) || undefined;
+    const slot = vmSlot ?? (task ? locate?.(task) : undefined);
+    if (task && !slot) return void res.writeHead(404).end(`no task #${task} is running`);
     const set = slot ? "tasks" : "main";
     const allowed = typeof peer === "function" ? (peer() ?? "") : peer;
     if (allowed !== undefined && req.socket.remoteAddress?.replace(/^::ffff:/, "") !== allowed) return void res.writeHead(403).end();
     if (set === "tasks" && !TASK_HOSTS.test(req.headers.host ?? "")) return void res.writeHead(403).end();
     // A task VM asks for what the owner said since its task started, each message once.
-    if (slot && req.method === "GET" && req.url === "/messages") {
+    if (slot && req.method === "GET" && url.pathname === "/messages") {
       const said = told.get(slot) ?? [];
       told.delete(slot);
       return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(said));
     }
-    const caller = slot ? { slot, task: slotTasks.get(slot), asked: slotAsked.get(slot) } : { session: new URL(req.url ?? "/", "http://gate").searchParams.get("session") ?? "main" };
+    const caller = slot ? { slot, task: slotTasks.get(slot), asked: slotAsked.get(slot) } : { session: url.searchParams.get("session") ?? "main" };
     (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, caller)).catch((err) => {
       console.error(err);
       if (!res.headersSent) res.writeHead(502).end(String(err));
@@ -278,6 +285,7 @@ export function createGate(opts: {
     thinking: (slot: number) => (thinking.get(slot) ?? 0) > 0,
     // The main agent's requests (the model, its tools), for a listener of the caller's choosing.
     handle: handler(),
+    locate: (find: (task: number) => number | undefined) => void (locate = find),
     add(tools: Tools) {
       sets.main.push(tools);
       if (tools.tasks) sets.tasks.push(tools.tasks);

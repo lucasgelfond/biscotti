@@ -6,6 +6,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import {
   type Conversation,
   type ConversationId,
+  type Extension,
   type ToolExecutionResult,
   createRegistry,
   defineDoc,
@@ -20,6 +21,7 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import type { StateAction } from "@microsoft/agent-host-protocol";
 import { WebSocketServer } from "ws";
 import { AhpHost, ROOT } from "./ahp.ts";
+import { agentTasks, type TaskRun } from "./agent-tasks.ts";
 import { DurableChat } from "./ahp-durable.ts";
 import { listen, readBody } from "./http.ts";
 import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
@@ -29,9 +31,11 @@ import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
 // encrypted database), its model, biscotti's tools and the system prompt all come through the gate's socket, and the
 // gate hands it each turn on the agent's own socket. Sessions: "main" (the owner's texts) and the others by number or
 // by the id an app gave them. The owner's apps see and drive them over the Agent Host Protocol (/ahp on its socket).
+// Tasks are conversations too (agent-tasks.ts), their tools in the task's VM.
 
 const ctx = BACKGROUND_CONTEXT;
 const MAIN_MODEL = { provider: "biscotti", modelId: "main" } as const;
+const CONTEXT_WINDOW = 200_000;
 
 // Which conversation each session is, its title, and when it was made.
 const Sessions = defineDoc<{ ids: Record<string, string>; titles?: Record<string, string>; created?: Record<string, string> }>({
@@ -85,10 +89,11 @@ export async function runAgent(sockets: string, _dir?: string) {
     return reply.result;
   };
   const sessionOf = new Map<string, string>();
+  let installed: Extension | undefined;
   async function biscotti() {
     const prompt = await get("/prompt");
     const { tools } = (await mcp("main", "tools/list", {})) as { tools: { name: string; description?: string; inputSchema: object; _meta?: Record<string, unknown> }[] };
-    return defineExtension({
+    return (installed = defineExtension({
       name: "biscotti",
       sections: [section("biscotti", () => prompt, { tag: false })],
       tools: tools.map((t) =>
@@ -109,7 +114,7 @@ export async function runAgent(sockets: string, _dir?: string) {
           },
         }),
       ),
-    });
+    }));
   }
 
   const models = createModels();
@@ -118,28 +123,32 @@ export async function runAgent(sockets: string, _dir?: string) {
       id: "biscotti",
       baseUrl: `${gateUrl}/llm`,
       auth: { apiKey: { name: "the gate", resolve: async () => ({ auth: { apiKey: "added-by-the-gate" } }) } },
-      models: [
-        {
-          id: "main",
-          name: "main",
-          api: "openai-completions",
-          provider: "biscotti",
-          baseUrl: `${gateUrl}/llm`,
-          reasoning: true,
-          input: ["text", "image"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 200_000,
-          maxTokens: 32_768,
-          // A plain OpenAI-compatible endpoint (the gate, in front of DeepSeek and others): a system role, no store.
-          compat: { supportsDeveloperRole: false, supportsStore: false, maxTokensField: "max_tokens" },
-        },
-      ],
+      // The gate's names for its models: the main agent's, tasks' and coding tasks'.
+      models: ["main", "task", "code"].map((id) => ({
+        id,
+        name: id,
+        api: "openai-completions" as const,
+        provider: "biscotti",
+        baseUrl: `${gateUrl}/llm`,
+        reasoning: true,
+        input: ["text", "image"] as ("text" | "image")[],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: CONTEXT_WINDOW,
+        maxTokens: 32_768,
+        // A plain OpenAI-compatible endpoint (the gate, in front of DeepSeek and others): a system role, no store.
+        compat: { supportsDeveloperRole: false, supportsStore: false, maxTokensField: "max_tokens" as const },
+      })),
       api: openAICompletionsApi(),
     }),
   );
+  // The models' names for the owner's apps: the provider's ids for main, task and code.
+  const names = JSON.parse(await get("/models")) as Record<string, string>;
   const registry = createRegistry();
   registry.install(await biscotti());
-  registry.install(createToolSearchExtension());
+  const toolSearch = createToolSearchExtension();
+  registry.install(toolSearch);
+  // pi-env's daemon in a task's VM, through the gate (env-pipe.ts).
+  const tasks = agentTasks({ harness: () => harness, ctx, call, daemon: (id) => [process.execPath, new URL("./env-pipe.ts", import.meta.url).pathname, sockets, String(id)] });
 
   const database = new RemoteSqliteDatabase(async (req: SqlRequest) => {
     const res = await call("POST", "/sql", JSON.stringify(req), { "content-type": "application/json" });
@@ -156,7 +165,9 @@ export async function runAgent(sockets: string, _dir?: string) {
       {
         models,
         registry,
-        settings: { compaction: { reserveTokens: 16_384 } },
+        // The main agent's sessions have biscotti's tools; tasks choose their own (agent-tasks.ts).
+        settings: () => ({ compaction: { reserveTokens: 16_384 }, extensions: [installed!, toolSearch] }),
+        env: ({ conversationId, read }, c) => tasks.env(conversationId, read as never, c),
         onReport: (report) => console.error(`pi-durable: ${report.kind}${report.error ? `: ${String(report.error)}` : ""}`),
       },
       ctx,
@@ -172,6 +183,7 @@ export async function runAgent(sockets: string, _dir?: string) {
     });
   }
   await open();
+  await tasks.settle();
 
   // A session's conversation: created once (the owner's texts are the root), then found by its session.
   function conversation(session: string) {
@@ -285,7 +297,7 @@ export async function runAgent(sockets: string, _dir?: string) {
   const chats = new Map<string, DurableChat>();
   const sessions = async () => (await harness.snapshot(Sessions, ctx)) ?? { ids: {}, titles: {} };
   const titleOf = (session: string, titles?: Record<string, string>) => titles?.[session] ?? (session === "main" ? "Texts" : "New session");
-  const meta = (session: string) => ({ biscotti: { kind: "main", ...(session === "main" && { source: "imessage" }) } });
+  const meta = (session: string) => ({ biscotti: { kind: "main", model: names.main, size: CONTEXT_WINDOW, ...(session === "main" && { source: "imessage" }) } });
   let summaries: Record<string, unknown>[] = [];
   async function catalogue() {
     const { ids, titles, created } = await sessions();
@@ -305,10 +317,11 @@ export async function runAgent(sockets: string, _dir?: string) {
     const title = titleOf(session, (await sessions()).titles);
     host.create(uri, { provider: "biscotti", title, status: 1, lifecycle: "ready", activeClients: [], chats: [], _meta: meta(session) });
     const chatUri = `${CHAT}${session}`;
-    const chat = new DurableChat(host, harness, handle, chatUri, ctx, (status) => {
+    const chat = new DurableChat(host, harness, handle, chatUri, ctx, onStatus, (id) => names[id] ?? id);
+    function onStatus(status: number) {
       host.dispatch(uri, { type: "session/chatUpdated", chat: chatUri, changes: { status, modifiedAt: new Date().toISOString() } } as unknown as StateAction);
       void catalogue().then(() => host.notify(ROOT, "root/sessionSummaryChanged", { session: uri, changes: { status, modifiedAt: new Date().toISOString() } }));
-    });
+    }
     await chat.open(title);
     chats.set(chatUri, chat);
     host.dispatch(uri, { type: "session/chatAdded", summary: { resource: chatUri, title, status: 1, modifiedAt: new Date().toISOString(), origin: { kind: "user" } } } as unknown as StateAction);
@@ -332,7 +345,8 @@ export async function runAgent(sockets: string, _dir?: string) {
         host.notify(ROOT, "root/sessionAdded", { summary: summaries.find((s) => s.resource === params.channel) });
       },
       async disposeSession(uri) {
-        const session = sessionOf_(uri)!;
+        const session = sessionOf_(uri);
+        if (!session || !(session in (await sessions()).ids)) throw new Error(`no session ${uri}`);
         await (await conversation(session)).abort(ctx).catch(() => {});
         await harness.commit(async (tx) => {
           const doc = await tx.doc(Sessions);
@@ -378,7 +392,9 @@ export async function runAgent(sockets: string, _dir?: string) {
   const server = createServer(async (req, res) => {
     try {
       // A restarted gate may bring new tools and a new prompt: reinstalled in place; running work keeps its own.
-      if (req.url === "/reload") return void res.end(void registry.install(await biscotti()));
+      if (req.url === "/reload") return void (tasks.reload(), res.end(void registry.install(await biscotti())));
+      // A task's run, for the gate: what it does, as lines, until it's done.
+      if (req.url === "/task") return void (await tasks.run(JSON.parse(await readBody(req)) as TaskRun, res, registry));
       const { text, session = "main" } = JSON.parse(await readBody(req)) as { text?: string; session?: string };
       if (req.url === "/stop") return void res.end(void (await (await conversation(String(session))).abort(ctx)));
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await reply(String(session), String(text)) }));

@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
+import type { Duplex } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { connect } from "node:net";
+import { createInterface } from "node:readline";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -61,6 +64,9 @@ export interface Host {
   active?(slot: number): boolean | Promise<boolean>;
   // A host that costs money to run: used only once every other host's slots are taken, and never kept warm.
   overflow?: boolean;
+  // pi-env's daemon in the slot's VM with `args`, piped to `socket` once it's starting (after answering the upgrade,
+  // "HTTP/1.1 101"); over ssh to its port 22 otherwise (vm-env.ts).
+  env?(slot: number, args: string[], socket: Duplex): Promise<void>;
 }
 
 // What happens to tasks and VMs, as events naming the task (or VM) number: for the owner's apps (the api plugin).
@@ -141,6 +147,10 @@ export interface Vms {
   drop(id: number): Promise<void>;
   reclaim(id: number, opts?: { model?: string; sleep?: Sleep }): Promise<Vm | undefined>;
   forget(id: number): Promise<boolean>;
+  // Where port `port` of a running task's or held VM's VM is reached.
+  endpoint(id: number, port: number): { host: string; port: number } | undefined;
+  // pi-env's daemon in a running task's VM, for the main agent (agent-tasks.ts).
+  env(id: number, args: string[], socket: Duplex): Promise<void>;
   // The live desktop of a running task's or held VM's, and its web server (a preview).
   watch(id: number): Promise<string | undefined>;
   site(id: number): Promise<string | undefined>;
@@ -349,3 +359,30 @@ main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
 export const endpoints = new Map<number, (port: number) => { host: string; port: number }>();
 export const vmEndpoint = (slot: number, port: number) => endpoints.get(slot)?.(port) ?? { host: `10.200.${slot}.2`, port };
 
+// How long a VM's setup (a checkout, a setup command) may take.
+const PREPARE_TIMEOUT_MS = 30 * 60_000;
+// The VM's task agent (core/vm/task/biscotti-task) sets it up: the key authorized, the repo checked out, the setup
+// command run. It answers with the VM's host key.
+export function prepareVm(vm: Vm, message: { key?: string; repo?: Buffer; setup?: string }, onLine?: (line: string) => void) {
+  const { host, port } = vmEndpoint(vm.slot, 4000);
+  return new Promise<string | undefined>((resolve, reject) => {
+    const socket = connect({ host, port }, () => socket.end(JSON.stringify({ box: { key: message.key, repo: message.repo?.toString("base64"), setup: message.setup } })));
+    const timer = setTimeout(() => socket.destroy(new Error("setting up the VM took too long")), PREPARE_TIMEOUT_MS);
+    let done = false;
+    createInterface({ input: socket, crlfDelay: Infinity })
+      .on("error", () => {})
+      .on("line", (line) => {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "setup" && event.line) onLine?.(event.line);
+          if (event.type !== "box") return;
+          done = true;
+          clearTimeout(timer);
+          if (event.ok) resolve(event.hostKey);
+          else reject(new Error(event.error ?? "the VM couldn't be set up"));
+        } catch {}
+      });
+    socket.on("error", (err) => (clearTimeout(timer), reject(err)));
+    socket.on("close", () => (clearTimeout(timer), done || reject(new Error("the VM closed the connection"))));
+  });
+}

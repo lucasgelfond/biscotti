@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runAgent } from "../core/src/agent.ts";
 import { start } from "../core/src/biscotti.ts";
 import { openDb } from "../core/src/memory.ts";
-import type { Context, Plugin } from "../core/src/plugin.ts";
+import type { Context, Host, Plugin } from "../core/src/plugin.ts";
 import { asTexts, tapbacks } from "../plugins/channels/spectrum/index.ts";
 
 // biscotti as main.ts starts it, with a stand-in phone that splits texts and takes tapbacks as iMessage does: `say`
@@ -29,8 +29,8 @@ export async function chrome(port: number, url: string, args: string[] = []) {
 }
 
 // With `restart` (an earlier boot), a new gate over its data and sockets, as after the service restarts: its agent
-// keeps running.
-export async function boot(names: (string | Plugin)[], dir = newDataDir(), restart?: { sockets: string; gateUrl: string }) {
+// keeps running. `vms`: stand-in task VMs.
+export async function boot(names: (string | Plugin)[], dir = newDataDir(), restart?: { sockets: string; gateUrl: string }, vms?: Host) {
   const sent: string[] = [];
   const images: Buffer[] = [];
   const reactions: string[] = [];
@@ -47,7 +47,7 @@ export async function boot(names: (string | Plugin)[], dir = newDataDir(), resta
   );
   // The agent as in production, reaching the gate only through the sockets; its relay is the tests' way in too.
   const sockets = restart?.sockets ?? mkdtempSync(join(tmpdir(), "sockets-"));
-  const biscotti = await start({ plugins: [phone, ...plugins], dir, sockets });
+  const biscotti = await start({ plugins: [phone, ...plugins], dir, sockets, vms });
   const gateUrl = restart?.gateUrl ?? (await runAgent(sockets, join(dir, "agent"))).gateUrl;
   const say = (text: string) => {
     tapback.seen({ react: async (emoji) => void reactions.push(emoji) });

@@ -1,4 +1,6 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
+import type { TaskRun } from "./agent-tasks.ts";
 import { call, listen, readBody } from "./http.ts";
 import type { Db } from "./memory.ts";
 import type { SqlRequest, sqlBridge } from "./sql-bridge.ts";
@@ -10,13 +12,24 @@ import { transcripts } from "./schema.ts";
 // of them are one memory (memory.ts searches every transcript).
 export async function connectAgent(
   sockets: string,
-  opts: { db: Db; sql: ReturnType<typeof sqlBridge>; prompt: string; gate: (req: IncomingMessage, res: ServerResponse) => void; onEvent?: (session: string, event: AgentEvent) => void },
+  opts: {
+    db: Db;
+    sql: ReturnType<typeof sqlBridge>;
+    prompt: string;
+    // The models' names (main, task, code) -> the provider's ids, for the owner's apps.
+    models: Record<string, string>;
+    gate: (req: IncomingMessage, res: ServerResponse) => void;
+    onEvent?: (session: string, event: AgentEvent) => void;
+    // pi-env's daemon in a task's VM, for the agent's tools there (an upgrade to /env/<id>, env-pipe.ts).
+    env?: (id: number, args: string[], socket: Duplex) => Promise<void>;
+  },
 ) {
   const { db } = opts;
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://gate");
     const session = url.searchParams.get("session") || "main";
     if (url.pathname === "/prompt") return void res.end(opts.prompt);
+    if (url.pathname === "/models") return void res.end(JSON.stringify(opts.models));
     if (url.pathname === "/event" && req.method === "POST") {
       return void readBody(req).then((body) => (opts.onEvent?.(session, JSON.parse(body)), res.end()), (err) => res.writeHead(400).end(String(err)));
     }
@@ -37,6 +50,12 @@ export async function connectAgent(
       (err) => res.writeHead(400).end(String(err)),
     );
   });
+  server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
+    const id = Number(new URL(req.url ?? "/", "http://gate").pathname.match(/^\/env\/(\d+)$/)?.[1]);
+    if (!id || !opts.env) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
+    const args = String(req.headers["pi-env-arguments"] ?? "").split(" ").filter(Boolean);
+    opts.env(id, args, socket).catch((err) => socket.end(`HTTP/1.1 502 Bad Gateway\r\n\r\n${(err as Error).message}`));
+  });
   // Only the agent's user (uid 1000, in its own container) may connect.
   await listen(server, `${sockets}/gate.sock`, 1000);
   // An agent still running from before this gate started has the old one's tools.
@@ -45,6 +64,16 @@ export async function connectAgent(
   // One turn of the agent in `session`: its reply, or undefined when the message steered one already underway. The
   // agent may still be starting. `turn.stop` stops the session's turn under way.
   turn.stop = (session: string) => call(`${sockets}/agent.sock`, "POST", "/stop", JSON.stringify({ session })).then(() => {});
+  // A task's run (agent-tasks.ts): what the agent does, as a stream of lines, until it's done or `stopped`.
+  turn.task = (run: TaskRun, stopped: AbortSignal) =>
+    new Promise<IncomingMessage>((resolve, reject) => {
+      const req = request({ socketPath: `${sockets}/agent.sock`, path: "/task", method: "POST", headers: { "content-type": "application/json" } }, (res) =>
+        res.statusCode === 200 ? resolve(res) : reject(new Error(`the agent couldn't run the task (${res.statusCode})`)),
+      );
+      req.on("error", reject);
+      stopped.addEventListener("abort", () => req.destroy(stopped.reason as Error), { once: true });
+      req.end(JSON.stringify(run));
+    });
   return turn;
   async function turn(message: string, session = "main"): Promise<string | undefined> {
     for (let attempt = 0; ; attempt++) {

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { connect } from "node:net";
 import { createInterface } from "node:readline";
+import type { Duplex, Readable } from "node:stream";
+import type { TaskRun } from "./agent-tasks.ts";
 import type { createGate } from "./gate.ts";
 import { call } from "./http.ts";
 import {
@@ -26,6 +27,7 @@ import {
   type Sleep,
   type Vm,
   type Vms,
+  prepareVm,
 } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in a slot of a host (this machine's, or a plugin's machines),
@@ -90,11 +92,18 @@ export function sessions(slot: number, tables = ["/proc/net/tcp", "/proc/net/tcp
 type Options = RunOptions & { followup?: boolean };
 
 // The pool: the hosts' slots, the tasks and held VMs in them, and the kept VMs (in `file`, with the last number used,
-// across restarts). `busy` says whether a slot's task is in a tool call, which isn't going quiet. `onStart` and `onEnd`
-// see each task and held VM take and leave its slot.
+// across restarts). `run` runs a task in its slot's VM (the main agent, gateTasks), its lines as a stream. `busy` says
+// whether a slot's task is in a tool call, which isn't going quiet. `onStart` and `onEnd` see each task and held VM
+// take and leave its slot.
 export function taskVms(
   hosts: Host[],
-  hooks: { busy?(slot: number): boolean; onStart?(slot: number, id: number, goal: string, model?: string): void; onReport?(slot: number, result: TaskResult): TaskResult; onEnd?(slot: number): void } = {},
+  hooks: {
+    run?(slot: number, task: TaskRun, opts: Options, stopped: AbortSignal): Promise<Readable>;
+    busy?(slot: number): boolean;
+    onStart?(slot: number, id: number, goal: string, model?: string): void;
+    onReport?(slot: number, result: TaskResult): TaskResult;
+    onEnd?(slot: number): void;
+  } = {},
   file?: string,
 ) {
   const hostOf = new Map<number, Host>();
@@ -249,8 +258,10 @@ export function taskVms(
         Object.assign(entry, { slot: v.slot });
         emit({ id, type: opts.followup ? "resumed" : "started", slot: v.slot, where: where(v.slot), ...(opts.followup && { text: said }) });
         hooks.onStart?.(v.slot, id, said, opts.model);
-        const { host, port } = vmEndpoint(v.slot, 4000);
-        const ran = await runPi(host, port, said, opts, () => !!hooks.busy?.(v.slot), entry.stopped.signal, steps(id));
+        if (!hooks.run) throw new Error("nothing runs tasks here");
+        const { repo, runner, model, display = DISPLAY, followup, extra } = opts;
+        const lines = hooks.run(v.slot, { id, goal: said, followup, model, display, runner, coding: Boolean(repo), ...extra }, opts, entry.stopped.signal);
+        const ran = await readRun(lines, opts, () => !!hooks.busy?.(v.slot), entry.stopped.signal, steps(id));
         const result = hooks.onReport?.(v.slot, ran) ?? ran;
         emit({ id, type: "report", text: result.report, screenshot: result.screenshot });
         return result;
@@ -369,41 +380,37 @@ const steps = (id: number) => (event: { type: string; toolName?: string; args?: 
   }
 };
 
-// The goal (and a repo, as a git bundle) goes to pi in the VM, or to a plugin's own runner; its last assistant text is
-// the report, then a screenshot and the repo's new commits follow. Pi runs lean (core/vm/task/lean.ts): the bench's
-// best setup with lessons, at a sixth of the tokens per call. A follow-up (on a kept VM) sends the owner's message
-// instead of a new goal.
-function runPi(
-  host: string,
-  port: number,
-  goal: string,
-  { repo, runner, timeoutMs = TASK_TIMEOUT_MS, display = DISPLAY, followup, extra }: Options,
+// A task's run, as the main agent reports it (agent-tasks.ts), a JSON line each: what it did and said (its last text is
+// the report), then a screenshot of the final screen and a coding task's new commits. It's cut off when it goes
+// quiet, runs out of time or is stopped.
+async function readRun(
+  lines: Promise<Readable>,
+  { timeoutMs = TASK_TIMEOUT_MS }: Options,
   busy: () => boolean,
   stopped: AbortSignal,
   onEvent: (event: { type: string }) => void,
 ) {
+  const stream = await lines;
   return new Promise<TaskResult>((resolve, reject) => {
-    const payload = followup ? { followup: goal } : { goal, repo: repo?.toString("base64"), runner, lean: 1, display, ...extra };
-    const socket = connect({ host, port }, () => socket.end(JSON.stringify(payload)));
     const idleMs = Math.min(IDLE_MS, timeoutMs);
     let heard = Date.now();
     const idle = setInterval(() => {
       if (busy()) heard = Date.now();
-      else if (Date.now() - heard > idleMs) socket.destroy(new Error("the task went quiet"));
+      else if (Date.now() - heard > idleMs) stream.destroy(new Error("the task went quiet"));
     }, Math.min(5_000, idleMs / 4));
-    const limit = setTimeout(() => socket.destroy(new Error(`the task ran out of time (${timeoutMs / 60_000} minutes)`)), timeoutMs);
-    const stop = () => socket.destroy(stopped.reason);
+    const limit = setTimeout(() => stream.destroy(new Error(`the task ran out of time (${timeoutMs / 60_000} minutes)`)), timeoutMs);
+    const stop = () => stream.destroy(stopped.reason);
     stopped.addEventListener("abort", stop, { once: true });
     let received = 0;
-    socket.on("data", (d: Buffer) => {
+    stream.on("data", (d: Buffer) => {
       heard = Date.now();
-      if ((received += d.length) > MAX_OUTPUT) socket.destroy(new Error("the task sent too much back"));
+      if ((received += d.length) > MAX_OUTPUT) stream.destroy(new Error("the task sent too much back"));
     });
     let report = "";
     let screenshot: Buffer | undefined;
     let bundle: Buffer | undefined;
-    // The socket's errors end the task (below); unhandled here, they'd take the gate down.
-    createInterface({ input: socket }).on("error", () => {}).on("line", (line) => {
+    // The stream's errors end the task (below); unhandled here, they'd take the gate down.
+    createInterface({ input: stream }).on("error", () => {}).on("line", (line) => {
       let event: { type: string; png?: string; data?: string; message?: { role: string; content: { type: string; text?: string }[] } };
       try {
         event = JSON.parse(line);
@@ -417,7 +424,7 @@ function runPi(
       const said = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
       if (said) report = said;
     });
-    socket.on("error", reject).on("close", () => {
+    stream.on("error", reject).on("close", () => {
       clearTimeout(limit);
       clearInterval(idle);
       stopped.removeEventListener("abort", stop);
@@ -524,7 +531,22 @@ export function taskTools(vms: Vms, doing?: (slot: number) => string | undefined
 // proposed to its report. Reports of tasks started for the main agent go to `report`, with the main session that
 // started them (its follow-ups' too).
 // `ask` gets the daily question for the owner about the VMs still around.
-export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host, report: (goal: string, result: TaskResult, parent?: string) => void, file?: string, ask?: (text: string) => void) {
+// `agent` runs each task (agent-tasks.ts), once its VM is set up for pi-env: the gate's key authorized (and a coding
+// task's repo checked out), the VM's host key trusted.
+export interface TaskAgent {
+  key(): string;
+  trust(id: number, hostKey: string): void;
+  pipe(id: number, at: { host: string; port: number }, args: string[], socket: Duplex): Promise<void>;
+  run(task: TaskRun, stopped: AbortSignal): Promise<Readable>;
+}
+export async function gateTasks(
+  gate: ReturnType<typeof createGate>,
+  local: Host,
+  report: (goal: string, result: TaskResult, parent?: string) => void,
+  file?: string,
+  ask?: (text: string) => void,
+  agent?: TaskAgent,
+) {
   const parents = new Map<number, string>();
   // What each task's results go through before they're reported (RunOptions.after), its follow-ups' too.
   const afters = new Map<number, (result: TaskResult) => Promise<TaskResult>>();
@@ -535,6 +557,13 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
   const pool = taskVms(
     [],
     {
+      async run(slot, task, opts, stopped) {
+        if (!agent) throw new Error("no agent runs tasks here");
+        const hostKey = await prepareVm({ slot, stop: async () => {} }, { key: agent.key(), repo: task.followup || task.moved ? undefined : opts.repo });
+        if (hostKey) agent.trust(task.id, hostKey);
+        stopped.throwIfAborted();
+        return agent.run(task, stopped);
+      },
       // In a tool call (e.g. waiting on the owner's yes) or waiting on the model: not going quiet.
       busy: (slot) => !!gate.busy(slot) || gate.thinking(slot),
       onStart(slot, id, goal, model) {
@@ -596,6 +625,16 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
       const slot = pool.slotOf(id);
       return slot === undefined ? undefined : await pool.host(slot)?.watch?.(slot);
     },
+    endpoint(id, port) {
+      const slot = pool.slotOf(id);
+      return slot === undefined ? undefined : vmEndpoint(slot, port);
+    },
+    async env(id, args, socket) {
+      const slot = pool.slotOf(id);
+      if (slot === undefined || !agent) throw new Error(`no VM #${id} is running`);
+      const host = pool.host(slot)!;
+      return host.env ? host.env(slot, args, socket) : agent.pipe(id, vmEndpoint(slot, 22), args, socket);
+    },
     async site(id) {
       const slot = pool.slotOf(id);
       return slot === undefined ? undefined : await pool.host(slot)?.site?.(slot);
@@ -609,6 +648,8 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
     },
   };
   await vms.addHost(local);
+  // The main agent's calls for a task are its VM's (gate.ts).
+  gate.locate((task) => pool.slotOf(task));
 
   // Once a day, from VM_CHECK_HOUR (10) local time: which of the VMs still around can go.
   const checkedFile = file && `${file.replace(/\.json$/, "")}.checked`;

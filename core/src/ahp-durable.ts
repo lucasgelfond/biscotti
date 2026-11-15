@@ -9,7 +9,7 @@ import type { AhpHost } from "./ahp.ts";
 // biscotti's, so it can stand on its own as an AHP host for pi-durable.
 
 type Part = { type: string; text?: string; id?: string; name?: string; arguments?: unknown };
-type Message = { role: string; content: string | Part[]; usage?: { input: number; output: number; cacheRead?: number }; toolCallId?: string; toolName?: string; isError?: boolean };
+type Message = { role: string; content: string | Part[]; model?: string; usage?: { input: number; output: number; cacheRead?: number }; toolCallId?: string; toolName?: string; isError?: boolean };
 type Entry = { id: unknown; kind: string; model?: readonly Message[] };
 
 const act = (action: object) => action as StateAction;
@@ -18,6 +18,10 @@ const textOf = (m: Message) => parts(m).flatMap((p) => (p.type === "text" && p.t
 // Inputs carry the time they were sent as a prefix, for the model; the chat shows what was said.
 const said = (text: string) => text.replace(/^\[[^\]]*\] /, "");
 const now = () => new Date().toISOString();
+// A message's usage, as AHP has it: input without what came from the cache, which is counted on its own; and the model
+// by the name `named` gives it.
+const usageOf = (m: Message, named: (id: string) => string) =>
+  m.usage && { inputTokens: m.usage.input, outputTokens: m.usage.output, cacheReadTokens: m.usage.cacheRead, ...(m.model && { model: named(m.model) }) };
 
 export function chatState(uri: URI, title: string, meta?: Record<string, unknown>) {
   return { resource: uri, title, status: 1, modifiedAt: now(), origin: { kind: "user" }, turns: [] as unknown[], ...(meta && { _meta: meta }) };
@@ -25,7 +29,7 @@ export function chatState(uri: URI, title: string, meta?: Record<string, unknown
 
 // The turns a conversation's entries make, for a chat's first state: each input starts one, and everything after it
 // up to the next is its answer.
-function turnsOf(entries: readonly Entry[]) {
+function turnsOf(entries: readonly Entry[], named: (id: string) => string) {
   const turns: { id: string; message: object; responseParts: object[]; usage: object | undefined; state: string }[] = [];
   const calls = new Map<string, { toolCall: Record<string, unknown> }>();
   for (const entry of entries) {
@@ -38,12 +42,12 @@ function turnsOf(entries: readonly Entry[]) {
       parts(m).forEach((p, i) => {
         if (p.type === "text" && p.text) turn.responseParts.push({ kind: "markdown", id: `${String(entry.id)}:${i}`, content: p.text });
         if (p.type === "toolCall") {
-          const part = { kind: "toolCall", toolCall: { status: "completed", toolCallId: p.id, toolName: p.name, displayName: p.name, invocationMessage: p.name, toolInput: JSON.stringify(p.arguments ?? {}), success: true, pastTenseMessage: p.name } };
+          const part = { kind: "toolCall", toolCall: { status: "completed", toolCallId: p.id, toolName: p.name, displayName: p.name, invocationMessage: p.name, toolInput: JSON.stringify(p.arguments ?? {}), confirmed: "not-needed", success: true, pastTenseMessage: p.name } };
           calls.set(p.id!, part);
           turn.responseParts.push(part);
         }
       });
-      if (m.usage) turn.usage = { inputTokens: m.usage.input + (m.usage.cacheRead ?? 0), outputTokens: m.usage.output, cacheReadTokens: m.usage.cacheRead };
+      if (m.usage) turn.usage = usageOf(m, named);
     }
     if (m.role === "toolResult" && m.toolCallId) {
       const call = calls.get(m.toolCallId);
@@ -66,13 +70,16 @@ export class DurableChat {
   readonly ctx: Context;
   // When the chat's status changes (idle, working), for the session's catalogue.
   readonly onStatus?: (status: number) => void;
-  constructor(host: AhpHost, harness: Harness, conversation: Conversation, uri: URI, ctx: Context, onStatus?: (status: number) => void) {
+  // A model's name for the apps (the conversation knows it by the provider's id for it).
+  readonly named: (id: string) => string;
+  constructor(host: AhpHost, harness: Harness, conversation: Conversation, uri: URI, ctx: Context, onStatus?: (status: number) => void, named = (id: string) => id) {
     this.host = host;
     this.harness = harness;
     this.conversation = conversation;
     this.uri = uri;
     this.ctx = ctx;
     this.onStatus = onStatus;
+    this.named = named;
   }
 
   get running() {
@@ -84,7 +91,7 @@ export class DurableChat {
     const watch = await this.conversation.watch(this.ctx, { min: 200, max: 400 });
     const entries = watch.value.entries as unknown as Entry[];
     for (const e of entries) this.#seen.add(String(e.id));
-    this.host.create(this.uri, { ...chatState(this.uri, title, meta), turns: turnsOf(entries) });
+    this.host.create(this.uri, { ...chatState(this.uri, title, meta), turns: turnsOf(entries, this.named) });
     this.#running = (watch.value.docs as Record<string, { run?: unknown } | undefined>)["pi.live"]?.run !== undefined;
     watch.start(async (call) => {
       if (call.kind !== "value") return;
@@ -122,7 +129,7 @@ export class DurableChat {
           this.#dispatch({ type: "chat/toolCallReady", turnId, toolCallId: p.id, invocationMessage: p.name, toolInput: JSON.stringify(p.arguments ?? {}), confirmed: "not-needed" });
         }
       });
-      if (m.usage) this.#dispatch({ type: "chat/usage", turnId, usage: { inputTokens: m.usage.input + (m.usage.cacheRead ?? 0), outputTokens: m.usage.output, cacheReadTokens: m.usage.cacheRead } });
+      if (m.usage) this.#dispatch({ type: "chat/usage", turnId, usage: usageOf(m, this.named) });
     }
     if (m.role === "toolResult" && m.toolCallId)
       this.#dispatch({ type: "chat/toolCallComplete", turnId, toolCallId: m.toolCallId, result: { success: !m.isError, pastTenseMessage: m.toolName ?? "", content: [{ type: "text", text: textOf(m) }] } });
@@ -136,7 +143,7 @@ export class DurableChat {
     const duration = Date.now() - turn.started;
     if (!failure) return this.#dispatch({ type: "chat/turnComplete", turnId: turn.id, duration });
     if (failure.reason === "aborted") return this.#dispatch({ type: "chat/turnCancelled", turnId: turn.id, duration });
-    this.#dispatch({ type: "chat/error", turnId: turn.id, duration, part: { kind: "error", error: { message: failure.detail ?? failure.reason } } });
+    this.#dispatch({ type: "chat/error", turnId: turn.id, duration, part: { kind: "error", error: { errorType: failure.reason, message: failure.detail ?? failure.reason } } });
   }
 
   // A client started a turn (its action is committed already): its message is the conversation's input.
