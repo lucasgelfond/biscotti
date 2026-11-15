@@ -44,7 +44,7 @@ test("a client starts a task as a session, follows it, lists it, and its report 
     .onNotification("_biscotti/session", (p) => p as { session: acp.SessionInfo }, ({ params }) => void board.push(params))
     .connectWith(createHttpStream(url), async (ctx) => {
       const init = await ctx.request(acp.methods.agent.initialize, { protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
-      const { sessionId } = await ctx.request(acp.methods.agent.session.new, { cwd: "/", mcpServers: [] });
+      const { sessionId } = await ctx.request(acp.methods.agent.session.new, { cwd: "/", mcpServers: [], _meta: { biscotti: { kind: "sandbox" } } });
       const prompted = await ctx.request(acp.methods.agent.session.prompt, { sessionId, prompt: [{ type: "text", text: "book a table" }] });
       const { sessions } = await ctx.request(acp.methods.agent.session.list, {});
       const watch = await ctx.request("_biscotti/watch", { sessionId });
@@ -56,7 +56,7 @@ test("a client starts a task as a session, follows it, lists it, and its report 
   expect(result.init.agentCapabilities?.loadSession).toBe(true);
   expect(result.sessionId).toBe("41");
   expect(result.prompted.stopReason).toBe("end_turn");
-  expect(result.sessions[0]).toMatchObject({ sessionId: "41", title: "book a table", _meta: { biscotti: { kind: "task", status: "kept", report: "done: book a table" } } });
+  expect(result.sessions[0]).toMatchObject({ sessionId: "41", title: "book a table", _meta: { biscotti: { kind: "sandbox", status: "kept", report: "done: book a table" } } });
   expect(result.watch).toEqual({ url: "https://desktop" });
   expect(result.echo).toEqual({ a: 1 });
   const kinds = updates.filter((u) => u.sessionId === "41").map((u) => u.update.sessionUpdate);
@@ -68,4 +68,43 @@ test("a client starts a task as a session, follows it, lists it, and its report 
   expect(said).toContainEqual({ type: "image", data: Buffer.from("png").toString("base64"), mimeType: "image/png" });
   // The board's own stream: every change of every session, without following it.
   expect(board.map((b) => b.session._meta?.biscotti)).toContainEqual(expect.objectContaining({ status: "kept" }));
+});
+
+// A main session: a conversation of the main agent (ctx.converse), titled by what's first said in it.
+test("a client starts a main session, talks to the agent there, and its steps and reply stream back", async () => {
+  let next = 70;
+  const said: [string, string][] = [];
+  const vms = { reserve: () => ++next, kept: () => [], watch: async () => undefined } as unknown as Vms;
+  const converse = async (session: string, message: string) => {
+    said.push([session, message]);
+    const id = Number(session);
+    emit({ id, type: "told", text: message });
+    emit({ id, type: "step", tool: "search_repositories", text: '{"query":"biscotti"}' });
+    emit({ id, type: "step", text: "Opening a PR on lucasgelfond/biscotti." });
+    emit({ id, type: "replied" });
+  };
+  let handler: (req: IncomingMessage, res: ServerResponse) => unknown = () => {};
+  await api.start!(testContext({ vms, converse, route: (_prefix, h) => (handler = h) }));
+  const server = createServer((req, res) => void handler(req, res)).listen(0, "127.0.0.1");
+  await new Promise((r) => server.once("listening", r));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/acp`;
+
+  const updates: acp.SessionNotification[] = [];
+  const result = await acp
+    .client({ name: "test" })
+    .onNotification(acp.methods.client.session.update, ({ params }) => void updates.push(params))
+    .connectWith(createHttpStream(url), async (ctx) => {
+      await ctx.request(acp.methods.agent.initialize, { protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} });
+      const { sessionId } = await ctx.request(acp.methods.agent.session.new, { cwd: "/", mcpServers: [], _meta: { biscotti: { source: { app: "concourse", device: "phone" } } } });
+      const prompted = await ctx.request(acp.methods.agent.session.prompt, { sessionId, prompt: [{ type: "text", text: "make a PR on biscotti" }] });
+      const { sessions } = await ctx.request(acp.methods.agent.session.list, {});
+      return { sessionId, prompted, session: sessions.find((s) => s.sessionId === sessionId) };
+    });
+  server.close();
+
+  expect(said).toEqual([["71", "make a PR on biscotti"]]);
+  expect(result.prompted.stopReason).toBe("end_turn");
+  expect(result.session).toMatchObject({ title: "make a PR on biscotti", _meta: { biscotti: { kind: "main", status: "done", source: { app: "concourse", device: "phone" } } } });
+  const mine = updates.filter((u) => u.sessionId === "71").map((u) => u.update);
+  expect(mine.map((u) => u.sessionUpdate)).toEqual(expect.arrayContaining(["user_message_chunk", "tool_call", "agent_message_chunk"]));
 });

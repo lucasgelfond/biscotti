@@ -75,12 +75,12 @@ comparing options across pages, several sites, or when browse comes back unsure.
             url: optional(str("Where to start, if known.")),
             values: optional(VALUES),
           }),
-          async run({ goal, url, values }) {
+          async run({ goal, url, values }, caller) {
             const errand = String(goal);
             void ctx
-              .vms!.run(JSON.stringify({ goal: errand, url, values }), { runner: RUNNER, timeoutMs: 10 * 60_000 })
-              .then(({ report, screenshot }) => ctx.deliver(`Browse report (${errand}): ${report}`, screenshot))
-              .catch((err: Error) => ctx.deliver(`Browse report (${errand}): browsing failed: ${err.message}`));
+              .vms!.run(JSON.stringify({ goal: errand, url, values }), { runner: RUNNER, timeoutMs: 10 * 60_000, parent: caller.session })
+              .then(({ report, screenshot }) => ctx.deliver(`Browse report (${errand}): ${report}`, screenshot, caller.session))
+              .catch((err: Error) => ctx.deliver(`Browse report (${errand}): browsing failed: ${err.message}`, undefined, caller.session));
             return text("Browsing.");
           },
         },

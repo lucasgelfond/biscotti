@@ -205,7 +205,7 @@ export function taskVms(
     run(goal: string, opts: Options = {}) {
       // Numbered before any await, so a task started right after is listed after this one.
       const id = opts.id ?? ((last = Math.max(last, ...kept.map((k) => k.id)) + 1), save(), last);
-      emit({ id, type: "queued", goal });
+      emit({ id, type: "queued", goal, kind: "sandbox", ...(opts.parent && { parent: opts.parent }) });
       return { id, result: task(id, goal, goal, opts) };
     },
     // A kept task's VM back in its slot, given the owner's message; false when there's no such task. Its report
@@ -341,9 +341,9 @@ export function taskTools(vms: Vms, doing?: (slot: number) => string | undefined
         goal: str(),
         display: optional(str('"mobile" for a phone-shaped desktop (portrait; sites show their phone layout) when the owner will watch or take over from their phone, "desktop" otherwise. Defaults to the owner\'s setting.')),
       }),
-      async run(args) {
+      async run(args, caller) {
         const others = vms.running();
-        const id = vms.start(String(args.goal), { display: args.display === "mobile" || args.display === "desktop" ? args.display : undefined });
+        const id = vms.start(String(args.goal), { display: args.display === "mobile" || args.display === "desktop" ? args.display : undefined, parent: caller.session });
         // A queued task (every slot busy) doesn't hold up the reply.
         for (let i = 0; i < 30 && vms.running().find((t) => t.id === id)?.slot === undefined; i++) await new Promise((r) => setTimeout(r, 100));
         const link = await vms.watch(id).catch(() => undefined);
@@ -387,8 +387,10 @@ export function taskTools(vms: Vms, doing?: (slot: number) => string | undefined
 
 // Task VMs through the gate: each slot's VM reaches the gate on its own listener; the gate knows which task each slot
 // runs (stamping its tool calls, routing its model), passes the owner's later messages to it, and appends what it
-// proposed to its report. Reports of tasks started for the main agent go to `report`.
-export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host, report: (goal: string, result: TaskResult) => void, file?: string) {
+// proposed to its report. Reports of tasks started for the main agent go to `report`, with the main session that
+// started them (its follow-ups' too).
+export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host, report: (goal: string, result: TaskResult, parent?: string) => void, file?: string) {
+  const parents = new Map<number, string>();
   // Messages for tasks still waiting for a VM, given to the VM when it starts.
   const waiting = new Map<number, string[]>();
   const pool = taskVms(
@@ -410,14 +412,15 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
     },
     file,
   );
-  const reportTo = (goal: string) => (r: Promise<TaskResult>) =>
-    r.then((result) => report(goal, result), (err) => report(goal, { report: `The task failed: ${err.message}` }));
+  const reportTo = (goal: string, parent?: string) => (r: Promise<TaskResult>) =>
+    r.then((result) => report(goal, result, parent), (err) => report(goal, { report: `The task failed: ${err.message}` }, parent));
 
   const vms: Vms = {
     run: (goal, opts) => pool.run(goal, opts).result,
     start(goal, opts) {
       const { id, result } = pool.run(goal, opts);
-      void reportTo(goal)(result);
+      if (opts?.parent) parents.set(id, opts.parent);
+      void reportTo(goal, opts?.parent)(result);
       return id;
     },
     tell(id, message) {
@@ -428,7 +431,7 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
       const k = pool.kept().find((t) => t.id === id);
       const resumed = k && pool.resume(id, message);
       if (!resumed) return "none";
-      void reportTo(k.goal)(resumed);
+      void reportTo(k.goal, parents.get(id))(resumed);
       return "resumed";
     },
     reserve: pool.reserve,

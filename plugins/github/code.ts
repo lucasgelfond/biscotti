@@ -54,12 +54,12 @@ export function codeTask(ctx: Context, token: string): LocalTool {
     return pull(true).catch((err) => (/draft/i.test(err.message) ? pull(false) : Promise.reject(err)));
   }
 
-  async function run(repo: string, goal: string, base: string | undefined, dir: string) {
+  async function run(repo: string, goal: string, base: string | undefined, dir: string, parent?: string) {
     await git(dir, "clone", "-q", "--depth", "50", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
     const work = join(dir, "repo");
     const baseBranch = base ?? (await git(work, "rev-parse", "--abbrev-ref", "HEAD"));
     await git(work, "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");
-    const result = await ctx.vms!.run(goal, { repo: readFileSync(join(dir, "in.bundle")), model: "code", timeoutMs: TIMEOUT_MS });
+    const result = await ctx.vms!.run(goal, { repo: readFileSync(join(dir, "in.bundle")), model: "code", timeoutMs: TIMEOUT_MS, parent });
     if (!result.bundle) return `Code task on ${repo} made no commits.\n${result.report}`;
     const { stat } = await review(work, result.bundle);
     const branch = `biscotti/${goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}-${randomBytes(2).toString("hex")}`;
@@ -77,13 +77,13 @@ export function codeTask(ctx: Context, token: string): LocalTool {
       goal: str("The change, complete on its own: the coding agent sees only this and the code."),
       base: optional(str("Branch to start from; the repo's default branch if omitted.")),
     }),
-    async run({ repo, goal, base }) {
+    async run({ repo, goal, base }, caller) {
       if (!ctx.vms) return text("Coding tasks need task VMs, which this machine doesn't have.");
       if (typeof repo !== "string" || !REPO.test(repo)) return text("repo should be owner/name.");
       const dir = mkdtempSync(join(tmpdir(), "code-task-"));
-      run(repo, String(goal), base ? String(base) : undefined, dir)
+      run(repo, String(goal), base ? String(base) : undefined, dir, caller.session)
         .catch((err: Error) => `Code task on ${repo} failed: ${err.message}`)
-        .then((report) => ctx.deliver(`Code task report: ${report}`))
+        .then((report) => ctx.deliver(`Code task report: ${report}`, undefined, caller.session))
         .finally(() => rmSync(dir, { recursive: true, force: true }));
       return text("Coding task started; the pull request link comes in a 'Code task report' message.");
     },
