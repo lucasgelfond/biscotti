@@ -10,17 +10,19 @@ import { standInVms } from "./stand-in-vm.ts";
 // HOST=firecracker on a machine with the vms service (the Pi or an EC2 node, its live service stopped, which holds the
 // slots and the gate's ports).
 
+// A newcomer waiting for a VM that couldn't be put to sleep tries again this often.
+process.env.VM_USE_CHECK_MS ??= "2000";
 const { boot } = await import("./support.ts");
 afterAll(() => void model.close());
 
-async function hostUnderTest(): Promise<{ host: Host; slots: number; close(): void }> {
+async function hostUnderTest(): Promise<{ host: Host; slots: number; close(): void; full?: (is?: boolean) => void }> {
   if (process.env.HOST === "firecracker") {
     const { localHost, SLOTS } = await import("../core/src/tasks.ts");
     if (!process.env.VMS_SOCKET || !existsSync(process.env.VMS_SOCKET)) throw new Error("HOST=firecracker needs VMS_SOCKET, the vms service's socket");
     return { host: localHost(process.env.VMS_SOCKET, process.env.VM_DIR ?? "/var/lib/biscotti/vm"), slots: SLOTS.length, close: () => {} };
   }
   const stand = await standInVms([1, 2]);
-  return { host: stand.host, slots: 2, close: stand.close };
+  return { host: stand.host, slots: 2, close: stand.close, full: stand.full };
 }
 const under = await hostUnderTest();
 afterAll(() => under.close());
@@ -125,4 +127,32 @@ test("a kept VM goes to sleep when its slot is needed, and wakes for a follow-up
   await say(`tell task ${asleep}: run \`cat mine.txt\``);
   await until(() => reports.has(asleep));
   expect(reports.get(asleep)).toContain(`kept-${kept.indexOf(asleep)}`);
+}, 240_000);
+
+// A full disk can't be faked on a real machine, so only on the stand-in.
+test.skipIf(!under.full)("a kept VM that can't be put to sleep (a full disk) stays open with its files, and the newcomer waits until one can", async () => {
+  const kept: number[] = [];
+  for (let n = 0; n < under.slots; n++) {
+    kept.push(await start(`start a kept task: run \`echo full-${n} > mine.txt && cat mine.txt\``));
+    await until(() => reports.has(kept[n]));
+  }
+  const notes: [number, string][] = [];
+  const note = (e: { id: number; text?: string }) => void (e.text && notes.push([e.id, e.text]));
+  taskEvents.on("event", note);
+  under.full!(true);
+  const next = await start("start a task: run `echo after-the-disk-is-freed`");
+  await until(() => notes.some(([id, text]) => kept.includes(id) && text.startsWith("Couldn't be put to sleep")));
+  expect(reports.has(next)).toBe(false);
+  // Nothing was lost: a kept VM's follow-up still finds its files.
+  const first = kept[0];
+  reports.delete(first);
+  await say(`tell task ${first}: run \`cat mine.txt\``);
+  await until(() => reports.has(first));
+  expect(reports.get(first)).toContain("full-0");
+  // Once saves work again, a VM goes to sleep and the newcomer runs.
+  under.full!(false);
+  await until(() => reports.has(next));
+  expect(reports.get(next)).toContain("after-the-disk-is-freed");
+  expect(kept.some((id) => states.get(id) === "kept")).toBe(true);
+  taskEvents.off("event", note);
 }, 240_000);

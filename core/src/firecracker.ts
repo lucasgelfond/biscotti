@@ -58,14 +58,21 @@ export async function restore(vmDir: string, firecracker: string, slot: number, 
 export const suspendedDir = (workDir: string, slot: number, id: string) => `${workDir}/${slot}/suspended/${id}`;
 
 // Pauses the VM and saves it (snapshot, memory, work disk) as `id`, then stops it. A full snapshot writes all of the VM's
-// memory, so this takes as long as writing that much to the disk.
+// memory, so this takes as long as writing that much to the disk. One that can't be saved (a full disk, say) carries
+// on where it was, what it wrote gone, and the error says so (`running`).
 export async function suspend(vm: FirecrackerVm, workDir: string, uid: number, id: string) {
   const dir = suspendedDir(workDir, vm.slot, id);
   // Written beside the last save: a VM resumed from it still has that memory file mapped until it stops.
   await asSlot(uid, "rm", "-rf", `${dir}.new`);
   await asSlot(uid, "mkdir", "-p", `${dir}.new`);
   await call(vm.api, "PATCH", "/vm", JSON.stringify({ state: "Paused" }));
-  await call(vm.api, "PUT", "/snapshot/create", JSON.stringify({ snapshot_type: "Full", snapshot_path: `${dir}.new/vm.snap`, mem_file_path: `${dir}.new/vm.mem` }));
+  try {
+    await call(vm.api, "PUT", "/snapshot/create", JSON.stringify({ snapshot_type: "Full", snapshot_path: `${dir}.new/vm.snap`, mem_file_path: `${dir}.new/vm.mem` }));
+  } catch (err) {
+    await asSlot(uid, "rm", "-rf", `${dir}.new`).catch(() => {});
+    await call(vm.api, "PATCH", "/vm", JSON.stringify({ state: "Resumed" }));
+    throw Object.assign(err as Error, { running: true });
+  }
   await vm.stop();
   await asSlot(uid, "rm", "-rf", dir);
   await asSlot(uid, "mv", `${dir}.new`, dir);

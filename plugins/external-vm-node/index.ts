@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { networkInterfaces } from "node:os";
 import { DescribeInstancesCommand, EC2Client, RunInstancesCommand, StartInstancesCommand, StopInstancesCommand } from "@aws-sdk/client-ec2";
-import { type Host, type Plugin, type Vm } from "@biscotti/core";
+import { type Host, type Plugin, stillRunning, type Vm } from "@biscotti/core";
 
 // External VM nodes: EC2 machines (nested virtualization) that each run one task VM, used only once this machine's
 // slots are taken. They're launched from the `biscotti-node` launch template (setup.sh), at most NODE_MAX, started when
@@ -78,7 +78,7 @@ export function nodes(): Host | undefined {
   const vm = (slot: number): Vm => ({
     slot,
     stop: () => vms(slot, "DELETE", "/vms/1").then(() => void later(slot)),
-    suspend: (id) => vms(slot, "POST", `/vms/1/suspend/${id}`).then(() => void later(slot)),
+    suspend: (id) => vms(slot, "POST", `/vms/1/suspend/${id}`).then(() => void later(slot), stillRunning),
   });
   const onNode = async (slot: number, path: string) => (clearTimeout(idle.get(slot)), await up(slot), await vms(slot, "POST", path), vm(slot));
   const here = networkInterfaces().tailscale0?.find((a) => a.family === "IPv4")?.address;

@@ -39,7 +39,12 @@ const server = createServer(async (req, res) => {
       const vm = running.get(slot);
       if (!vm) return void res.writeHead(409).end(`no VM in slot ${slot}`);
       running.delete(slot);
-      await suspend(vm, workDir, uid, id);
+      await suspend(vm, workDir, uid, id).catch((err: Error & { running?: boolean }) => {
+        if (!err.running) throw err;
+        // Not saved, still running: it stays in its slot, and the answer says so (409).
+        running.set(slot, vm);
+        throw Object.assign(err, { status: 409 });
+      });
     } else if (action === "suspended" && req.method === "DELETE") {
       await discard(workDir, slot, uid, id);
     } else if (action === "resume" && req.method === "POST") {
@@ -52,7 +57,7 @@ const server = createServer(async (req, res) => {
     res.end();
   } catch (err) {
     console.error(err);
-    res.writeHead(500).end((err as Error).message);
+    res.writeHead((err as { status?: number }).status ?? 500).end((err as Error).message);
   }
 });
 

@@ -29,6 +29,7 @@ import {
   type Vms,
   type Setup,
   prepareVm,
+  stillRunning,
 } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in a slot of a host (this machine's, or a plugin's machines),
@@ -57,7 +58,7 @@ export function localHost(socketPath: string, vmDir: string): Host {
   const vm = (slot: number): Vm => ({
     slot,
     stop: async () => void (await call(socketPath, "DELETE", `/vms/${slot}`)),
-    suspend: async (id) => void (await call(socketPath, "POST", `/vms/${slot}/suspend/${id}`)),
+    suspend: (id) => call(socketPath, "POST", `/vms/${slot}/suspend/${id}`).then(() => {}, stillRunning),
   });
   return {
     slots: SLOTS,
@@ -128,6 +129,8 @@ export function taskVms(
     for (const [id, h] of held) {
       if (hooks.busy?.(h.vm.slot) || (await Promise.resolve(hostOf.get(h.vm.slot)?.active?.(h.vm.slot)).catch(() => false))) used.set(id, Date.now());
     }
+    // A newcomer still waiting because a VM couldn't be put to sleep for it (a full disk, say): another try.
+    for (const w of waiting) makeRoom(w.fits);
   }, USE_CHECK_MS).unref();
 
   // The best free slot that fits (this machine's before overflow ones), or the first one released that does.
@@ -211,6 +214,8 @@ export function taskVms(
       await vm.suspend(id);
     } catch (err) {
       if ((err as Error).message !== "not kept") console.error(`keeping #${id}: ${(err as Error).message}`);
+      // Not saved (a full disk, say) but still running: it stays open rather than lose what's in it.
+      if ((err as { running?: boolean }).running) return keepOpen(vm, id, goal, "Couldn't be put to sleep, so it's still open");
       await vm.stop().catch(() => {});
       prs.delete(id);
       emit({ id, type: "done" });
@@ -235,10 +240,10 @@ export function taskVms(
     return true;
   }
   // A done task's VM, open until it's deleted, or put to sleep when its slot is needed.
-  function keepOpen(vm: Vm, id: number, goal: string) {
+  function keepOpen(vm: Vm, id: number, goal: string, text = "Kept open") {
     held.set(id, { vm, goal, open: true, sleep: { used: () => used.get(id) ?? 0, sleep: () => give(id) } });
     used.set(id, Date.now());
-    emit({ id, type: "started", slot: vm.slot, where: where(vm.slot), text: "Kept open" });
+    emit({ id, type: "started", slot: vm.slot, where: where(vm.slot), text });
   }
   async function give(id: number, keep = true) {
     const h = held.get(id);

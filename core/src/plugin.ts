@@ -38,9 +38,13 @@ export interface Context {
 export interface Vm {
   slot: number;
   stop(): Promise<void>;
-  // Pauses it and saves it (memory and disk) as `id`, freeing the slot; the host's `resume` brings it back.
+  // Pauses it and saves it (memory and disk) as `id`, freeing the slot; the host's `resume` brings it back. One that
+  // can't be saved but carries on as it was rejects with `running` set on the error.
   suspend?(id: number): Promise<void>;
 }
+
+// The vms service's answer when a VM couldn't be saved but carries on (409), as Vm.suspend's error says it.
+export const stillRunning = (err: Error) => Promise.reject(Object.assign(err, { running: / 409 /.test(err.message) }));
 
 // Where task VMs run: this machine's vms service, or a plugin's machines (Vms.addHost): Firecracker here or on EC2,
 // a Mac's. Every one is asked the same things; only `restore` is required. Slot numbers are the host's own; this

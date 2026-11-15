@@ -10,7 +10,7 @@ import type { Host } from "../core/src/plugin.ts";
 // own, standing in for ssh into a task VM. As with a real one, a VM restored into a slot starts fresh (a new home), one
 // suspended keeps its home to resume with, and one discarded loses it. Its setup (the VM image's, on port 4000) records
 // what it was asked (`setups`), checks a coding task's repo out in ~/repo as the VM's does (git only, no jj), and
-// answers with a host key. `fail` makes the next restores fail, for tests of what happens then.
+// answers with a host key. `fail` makes the next restores fail, and `full` every save, for tests of what happens then.
 export async function standInVms(slots = [1, 2], label?: string) {
   const setups: { slot: number; box: { key?: string; repo?: string; setup?: string } }[] = [];
   const fresh = () => mkdtempSync(join(tmpdir(), "vm-home-"));
@@ -18,6 +18,7 @@ export async function standInVms(slots = [1, 2], label?: string) {
   const homes = new Map<number, string>();
   const suspended = new Map<number, string>();
   let failing = 0;
+  let full = false;
   const checkout = (home: string, bundle: string) => {
     const git = (...args: string[]) => execFileSync("git", ["-C", `${home}/repo`, ...args]);
     writeFileSync(`${home}/repo.bundle`, Buffer.from(bundle, "base64"));
@@ -46,7 +47,11 @@ export async function standInVms(slots = [1, 2], label?: string) {
   const vm = (slot: number) => ({
     slot,
     stop: async () => void homes.delete(slot),
-    suspend: async (id: number) => void (suspended.set(id, homes.get(slot)!), homes.delete(slot)),
+    async suspend(id: number) {
+      if (full) throw Object.assign(new Error("no space left on the stand-in's disk"), { running: true });
+      suspended.set(id, homes.get(slot)!);
+      homes.delete(slot);
+    },
   });
   const host: Host = {
     ...(label && { label }),
@@ -83,6 +88,8 @@ export async function standInVms(slots = [1, 2], label?: string) {
     // The home of the VM in a slot now.
     home: (slot: number) => homes.get(slot),
     fail: (times = 1) => void (failing += times),
+    // A full disk: VMs can't be saved (suspend fails, the VM carrying on).
+    full: (is = true) => void (full = is),
     close: () => boxes.forEach((b) => b.close()),
   };
 }

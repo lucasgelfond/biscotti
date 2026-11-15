@@ -45,7 +45,9 @@ export function passTo(socketPath: string) {
   return (req: IncomingMessage, res: ServerResponse) =>
     new Promise<void>((resolve) => {
       const upstream = request({ socketPath, method: req.method, path: req.url, headers: req.headers, agent: false }, (answer) => {
-        res.writeHead(answer.statusCode ?? 502, answer.headers);
+        // Sent at once: an event stream (text/event-stream) may say nothing for a while, and Node holds headers back
+        // until the body's first bytes.
+        res.writeHead(answer.statusCode ?? 502, answer.headers).flushHeaders();
         answer.pipe(res);
         answer.on("end", resolve).on("error", () => (res.destroy(), resolve()));
       });
