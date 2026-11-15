@@ -52,13 +52,19 @@ export function vmEnv(dir: string) {
       const quoted = `'${file.replaceAll("'", "'\\''")}'`;
       const child = spawn("ssh", [...sshArguments(t), `exec "$SHELL" -lc 'exec "$0" "$@"' ${quoted}`, ...args], { stdio: ["pipe", "pipe", "pipe"] });
       child.stderr.on("data", (d) => console.error(`pi-env #${id}: ${String(d).trim()}`));
-      socket.pipe(child.stdin);
-      child.stdout.pipe(socket);
+      // Either side ending ends the other: the agent's (its run is over) or ssh's (the VM went away).
       const end = () => {
         socket.destroy();
         child.kill();
       };
-      child.on("exit", end);
+      for (const stream of [child.stdin, child.stdout, child.stderr]) stream.on("error", end);
+      socket.pipe(child.stdin);
+      child.stdout.pipe(socket);
+      child.on("exit", (code, signal) => {
+        if (code) console.error(`pi-env #${id}: ssh ended (${code ?? signal})`);
+        end();
+      });
+      child.on("error", end);
       socket.on("close", end).on("error", end);
     },
   };

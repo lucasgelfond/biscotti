@@ -106,7 +106,7 @@ git add -A
 [ -z "$(git status --porcelain)" ] || git commit -q -m "Uncommitted changes at the end of the task"
 if [ "$(git rev-parse HEAD)" = "${base}" ]; then echo none; else git bundle create -q /tmp/out.bundle ${base}..HEAD; echo bundled; fi`;
 
-// Which conversation each task is (by its number).
+// Which conversation each task is (by its number), its id as a string.
 const Tasks = defineDoc<{ ids: Record<string, string> }>({ kind: "biscotti.tasks", version: 1, scope: "session", initial: () => ({ ids: {} }), checkpointWhen: () => true });
 // A task's number (its VM's), for a coding task the commit its checkout started from, and whether its last run was cut
 // off (the gate gave up on it: it went quiet, ran out of time or was stopped).
@@ -404,7 +404,7 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
   async function conversationOf(id: number, model: string, instructions: string, registry: { install(e: Extension): void }): Promise<Conversation> {
     const harness = opts.harness();
     const known = (await harness.snapshot(Tasks, ctx))?.ids[String(id)];
-    const found = known && (await harness.conversation(known as unknown as ConversationId, ctx));
+    const found = known && (await harness.conversation(Number(known) as unknown as ConversationId, ctx));
     if (found) return found;
     const selected = await install(id, registry);
     const conversation = await harness.createConversation(
@@ -586,7 +586,7 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
     async conversation(id: number) {
       const harness = opts.harness();
       const known = (await harness.snapshot(Tasks, ctx))?.ids[String(id)];
-      return known ? await harness.conversation(known as unknown as ConversationId, ctx) : undefined;
+      return known ? await harness.conversation(Number(known) as unknown as ConversationId, ctx) : undefined;
     },
     // The environment of a task's conversation (its VM's), for the Harness; none for any other.
     async env(conversationId: ConversationId, read: { snapshot: Harness["snapshot"] }, c: Context): Promise<ExecutionEnv | undefined> {
@@ -602,7 +602,7 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
     async settle() {
       const harness = opts.harness();
       for (const conversationId of Object.values((await harness.snapshot(Tasks, ctx))?.ids ?? {})) {
-        const cid = conversationId as unknown as ConversationId;
+        const cid = Number(conversationId) as unknown as ConversationId;
         if ((await harness.snapshot(LiveDoc, cid, ctx))?.run === undefined) continue;
         await (await harness.conversation(cid, ctx))?.abort(ctx).catch(() => {});
         await harness.commit(async (tx) => void ((await tx.doc(TaskDoc, cid)).interrupted = true), ctx).catch(() => {});

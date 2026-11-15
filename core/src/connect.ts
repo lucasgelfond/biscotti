@@ -78,6 +78,8 @@ export async function connectAgent(
     );
   });
   server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
+    // The agent may hang up while the daemon is being set up.
+    socket.on("error", () => socket.destroy());
     const id = Number(new URL(req.url ?? "/", "http://gate").pathname.match(/^\/env\/(\d+)$/)?.[1]);
     if (!id || !opts.env) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
     const args = String(req.headers["pi-env-arguments"] ?? "").split(" ").filter(Boolean);

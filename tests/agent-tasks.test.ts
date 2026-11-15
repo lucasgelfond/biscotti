@@ -46,7 +46,9 @@ test("the main agent runs a task in its VM through pi-env and reports back", asy
 class Socket implements AhpTransport {
   readonly #frames: TransportFrame[] = [];
   readonly #waiting: ((frame: TransportFrame | null) => void)[] = [];
-  constructor(readonly ws: WebSocket) {
+  readonly ws: WebSocket;
+  constructor(ws: WebSocket) {
+    this.ws = ws;
     ws.on("message", (data: WebSocket.RawData) => {
       const frame: TransportFrame = { kind: "text", text: String(data) };
       const w = this.#waiting.shift();
@@ -96,6 +98,6 @@ test("the app sees a task as a sandbox chat of its session, with the task's own 
   const state = chat.result.snapshot!.state as ReturnType<typeof chatReducer> & { turns: { message: { text: string }; responseParts: { kind: string; content?: string; toolCall?: { toolName?: string } }[] }[] };
   expect(state.turns[0].message.text).toBe("run `echo seen-in-the-app`");
   expect(state.turns[0].responseParts.find((p) => p.kind === "toolCall")?.toolCall?.toolName).toBe("bash");
-  expect(state.turns[0].responseParts.map((p) => p.content)).toContain("done: seen-in-the-app");
+  expect(state.turns[0].responseParts.map((p) => (p as { content?: string }).content)).toContain("done: seen-in-the-app");
   ws.close();
 }, 120_000);

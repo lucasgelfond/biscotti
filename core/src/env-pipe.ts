@@ -21,6 +21,9 @@ const answered = (chunk: Buffer) => {
   socket.pipe(process.stdout);
   process.stdin.pipe(socket);
 };
+// Either side gone (the agent's Connection closed, or the gate) ends the pipe.
+for (const stream of [process.stdin, process.stdout]) stream.on("error", () => process.exit(0));
+process.stdin.on("end", () => socket.end());
 socket.on("data", answered);
 socket.on("error", (err) => (process.stderr.write(`${err.message}\n`), process.exit(1)));
 socket.on("close", () => process.exit(0));

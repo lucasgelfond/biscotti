@@ -224,7 +224,7 @@ export async function runAgent(sockets: string, _dir?: string) {
     if (!found) {
       found = (async () => {
         const ids = (await harness.snapshot(Sessions, ctx))?.ids ?? {};
-        let handle: Conversation | undefined = ids[session] ? await harness.conversation(ids[session] as unknown as ConversationId, ctx) : undefined;
+        let handle: Conversation | undefined = ids[session] ? await harness.conversation(Number(ids[session]) as unknown as ConversationId, ctx) : undefined;
         if (!handle) {
           handle =
             session === "main"
@@ -485,7 +485,9 @@ export async function runAgent(sockets: string, _dir?: string) {
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await reply(String(session), String(text)) }));
     } catch (err) {
       console.error(err);
-      res.writeHead(500).end(String(err));
+      // A task's run has its lines started already.
+      if (!res.headersSent) res.writeHead(500);
+      res.end(String(err));
     }
   });
   const sockets_ = new WebSocketServer({ noServer: true });
