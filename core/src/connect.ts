@@ -21,7 +21,6 @@ export async function connectAgent(
     // The models' names (main, task, code) -> the provider's ids, for the owner's apps.
     models: Record<string, string>;
     gate: (req: IncomingMessage, res: ServerResponse) => void;
-    onEvent?: (session: string, event: AgentEvent) => void;
     // pi-env's daemon in a task's VM, for the agent's tools there (an upgrade to /env/<id>, env-pipe.ts).
     env?: (id: number, args: string[], socket: Duplex) => Promise<void>;
     // The tasks' and VMs' board, for the owner's apps (AHP chats, agent.ts).
@@ -34,24 +33,17 @@ export async function connectAgent(
     const session = url.searchParams.get("session") || "main";
     if (url.pathname === "/prompt") return void res.end(opts.prompt);
     if (url.pathname === "/models") return void res.end(JSON.stringify(opts.models));
-    if (url.pathname === "/event" && req.method === "POST") {
-      return void readBody(req).then((body) => (opts.onEvent?.(session, JSON.parse(body)), res.end()), (err) => res.writeHead(400).end(String(err)));
-    }
     // pi-durable's storage: its own encrypted database, so nothing the agent sends reaches the vault or memory.
     if (url.pathname === "/sql" && req.method === "POST") {
       return void readBody(req)
         .then(async (body) => res.end(JSON.stringify({ answer: await opts.sql.handle(JSON.parse(body) as SqlRequest) })))
         .catch((err) => res.writeHead(400).end(String((err as Error).message ?? err)));
     }
-    // The board as it changes: every row, then each change, a JSON line each (without their steps: an app reads a
-    // task's own conversation).
+    // The board as it changes: every row, then each change, a JSON line each.
     if (url.pathname === "/board" && opts.board) {
       const board = opts.board;
       res.writeHead(200, { "content-type": "application/x-ndjson" });
-      const line = (row: Parameters<Parameters<Board["on"]>[0]>[0]) => {
-        const { steps, ...rest } = board.summary(row);
-        res.write(`${JSON.stringify(rest)}\n`);
-      };
+      const line = (row: Parameters<Parameters<Board["on"]>[0]>[0]) => void res.write(`${JSON.stringify(board.summary(row))}\n`);
       for (const row of board.rows.values()) line(row);
       const off = board.on((row) => line(row));
       return void res.on("close", off);
@@ -91,8 +83,7 @@ export async function connectAgent(
   await call(`${sockets}/agent.sock`, "POST", "/reload").catch(() => {});
 
   // One turn of the agent in `session`: its reply, or undefined when the message steered one already underway. The
-  // agent may still be starting. `turn.stop` stops the session's turn under way.
-  turn.stop = (session: string) => call(`${sockets}/agent.sock`, "POST", "/stop", JSON.stringify({ session })).then(() => {});
+  // agent may still be starting.
   // A task's run (agent-tasks.ts): what the agent does, as a stream of lines, until it's done or `stopped`.
   turn.task = (run: TaskRun, stopped: AbortSignal) =>
     new Promise<IncomingMessage>((resolve, reject) => {
@@ -115,16 +106,4 @@ export async function connectAgent(
       }
     }
   }
-}
-
-// What the agent is doing in a session, as it goes: a tool call starting, or a message it finished.
-export interface AgentEvent {
-  type: string;
-  toolName?: string;
-  args?: unknown;
-  message?: { role: string; content: { type: string; text?: string; thinking?: string }[] };
-  // A "status" event's: the model, the thinking level, and the context used of its window (tokens).
-  model?: string;
-  thinking?: string;
-  context?: { tokens: number | null; contextWindow: number };
 }

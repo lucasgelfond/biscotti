@@ -24,10 +24,6 @@ export interface Context {
   // A message into one of the main agent's sessions (a wake, a task report; "main", the owner's texts, unless said):
   // the reply goes to the owner there.
   deliver(text: string, image?: Buffer, session?: string): Promise<void>;
-  // The owner's message in a main session (from one of their apps): the agent answers there, as events.
-  converse?(session: string, message: string): Promise<void>;
-  // Stops a main session's turn under way.
-  interrupt?(session: string): Promise<void>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
   // Task VMs, where this machine has them, and the board of them for the owner's apps (board.ts).
@@ -70,17 +66,16 @@ export interface Host {
   env?(slot: number, args: string[], socket: Duplex): Promise<void>;
 }
 
-// What happens to tasks and VMs, as events naming the task (or VM) number: for the owner's apps (the api plugin).
+// What happens to tasks and VMs, as events naming the task (or VM) number: for the board (the owner's apps) and
+// plugins (push notifications).
 export interface TaskEvent {
   id: number;
-  type: "queued" | "started" | "step" | "told" | "replied" | "status" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
+  type: "queued" | "started" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
   at: number;
   goal?: string;
   slot?: number;
   where?: "local" | "cloud";
   text?: string;
-  tool?: string;
-  screenshot?: Buffer;
   // Fields a plugin adds for its own VMs (ssh-vms).
   [field: string]: unknown;
 }
@@ -325,7 +320,7 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
 
 // A vault entry's values, and saving one, for plugins that keep keys there or type them in.
 export { secrets } from "./vault.ts";
-export type { Board, Row, Summary } from "./board.ts";
+export type { Board, Row } from "./board.ts";
 import type { Board } from "./board.ts";
 export const secret = (db: Db, name: string) => db.select().from(vault).where(eq(vault.name, name)).get()?.value;
 export function saveSecret(db: Db, name: string, value: Record<string, string>) {
@@ -372,7 +367,7 @@ export const vmEndpoint = (slot: number, port: number) => endpoints.get(slot)?.(
 const PREPARE_TIMEOUT_MS = 30 * 60_000;
 // The VM's task agent (core/vm/task/biscotti-task) sets it up: the key authorized, the repo checked out, the setup
 // command run. It answers with the VM's host key.
-export function prepareVm(vm: Vm, message: { key?: string; repo?: Buffer; setup?: string }, onLine?: (line: string) => void) {
+export function prepareVm(vm: Vm, message: { key?: string; repo?: Buffer; setup?: string }) {
   const { host, port } = vmEndpoint(vm.slot, 4000);
   return new Promise<string | undefined>((resolve, reject) => {
     const socket = connect({ host, port }, () => socket.end(JSON.stringify({ box: { key: message.key, repo: message.repo?.toString("base64"), setup: message.setup } })));
@@ -383,7 +378,6 @@ export function prepareVm(vm: Vm, message: { key?: string; repo?: Buffer; setup?
       .on("line", (line) => {
         try {
           const event = JSON.parse(line);
-          if (event.type === "setup" && event.line) onLine?.(event.line);
           if (event.type !== "box") return;
           done = true;
           clearTimeout(timer);

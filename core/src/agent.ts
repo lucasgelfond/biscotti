@@ -63,7 +63,6 @@ export async function runAgent(sockets: string, _dir?: string) {
       await new Promise((r) => setTimeout(r, 1000));
     }
   };
-  const event = (session: string, e: unknown) => void call("POST", `/event?session=${encodeURIComponent(session)}`, JSON.stringify(e)).catch(() => {});
   // One of the gate's methods for the apps (appMethod).
   const method = async (name: string, params: Record<string, unknown>) => {
     const res = await call("POST", `/x/${encodeURIComponent(name)}`, JSON.stringify(params), { "content-type": "application/json" });
@@ -208,8 +207,7 @@ export async function runAgent(sockets: string, _dir?: string) {
   await open();
   await tasks.settle();
 
-  // What each session does, as it's committed: for the owner's apps (a tool call starting, a message finished) and
-  // for memory (the gate's searchable transcript).
+  // What each session says, as it's committed, for memory (the gate's searchable transcript).
   async function follow(session: string, handle: Conversation) {
     const seen = new Set<string>();
     const watch = await handle.watch(ctx);
@@ -220,12 +218,8 @@ export async function runAgent(sockets: string, _dir?: string) {
         seen.add(String(entry.id));
         const message = entry.model?.[0];
         if (!message) continue;
-        const parts = typeof message.content === "string" ? [{ type: "text", text: message.content }] : (message.content as { type: string; text?: string; name?: string; arguments?: unknown }[]);
+        const parts = typeof message.content === "string" ? [{ type: "text", text: message.content }] : (message.content as { type: string; text?: string }[]);
         const said = parts.flatMap((p) => (p.type === "text" && p.text ? [p.text] : [])).join("\n").trim();
-        if (message.role === "assistant") {
-          for (const p of parts) if (p.type === "toolCall") event(session, { type: "tool_execution_start", toolName: p.name, args: p.arguments });
-          if (said) event(session, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: said }] } });
-        }
         rows.push({ id: entry.id, entry, text: said && (message.role === "user" || message.role === "assistant") ? `${message.role}: ${said}` : null });
       }
       if (rows.length) await call("POST", `/transcript?session=${encodeURIComponent(session)}`, JSON.stringify(rows)).catch(() => {});
@@ -234,16 +228,6 @@ export async function runAgent(sockets: string, _dir?: string) {
     watch.start(async (c) => {
       if (c.kind === "value") await take(c.value.entries as never);
     });
-  }
-
-  // Its model, thinking level and how full its context is, for the owner's apps, after each turn.
-  async function status(session: string, handle: Conversation) {
-    const agent = await handle.agent(ctx);
-    const context = await handle.context(ctx);
-    const last = [...context.messages].reverse().find((m) => m.role === "assistant") as { usage?: { input: number; cacheRead?: number; output: number } } | undefined;
-    const tokens = last?.usage ? last.usage.input + (last.usage.cacheRead ?? 0) + last.usage.output : null;
-    const model = agent.model && models.getModel(agent.model.provider, agent.model.modelId);
-    event(session, { type: "status", model: agent.model?.modelId ?? "main", thinking: agent.thinkingLevel, context: { tokens, contextWindow: model?.contextWindow ?? 200_000 } });
   }
 
   // One turn: the reply (everything said this run), or undefined when the message steered a run already going.
@@ -258,8 +242,6 @@ export async function runAgent(sockets: string, _dir?: string) {
       } catch (err) {
         said = `Nothing compacted: ${(err as Error).message}`;
       }
-      event(session, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: said }] } });
-      await status(session, handle);
       return said;
     }
     const text = `[${new Date().toString()}] ${message}`;
@@ -270,7 +252,6 @@ export async function runAgent(sockets: string, _dir?: string) {
       return undefined;
     }
     const settled = await (await handle.submit({ type: "input", content: text, ...entry }, ctx)).wait(ctx);
-    await status(session, handle);
     if (settled.status !== "done") return `(That turn ended without an answer: ${(settled as { reason?: string }).reason ?? "unknown"}.)`;
     const context = await handle.context(ctx);
     const turn: string[] = [];
@@ -323,7 +304,6 @@ export async function runAgent(sockets: string, _dir?: string) {
       // A task's run, for the gate: what it does, as lines, until it's done.
       if (req.url === "/task") return void (await tasks.run(JSON.parse(await readBody(req)) as TaskRun, res, registry));
       const { text, session = "main", origin } = JSON.parse(await readBody(req)) as { text?: string; session?: string; origin?: string };
-      if (req.url === "/stop") return void res.end(void (await (await conversation(String(session))).abort(ctx)));
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await reply(String(session), String(text), origin) }));
     } catch (err) {
       console.error(err);

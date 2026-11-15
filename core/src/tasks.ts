@@ -261,9 +261,9 @@ export function taskVms(
         if (!hooks.run) throw new Error("nothing runs tasks here");
         const { repo, runner, model, display = DISPLAY, followup, extra } = opts;
         const lines = hooks.run(v.slot, { id, goal: said, followup, model, display, runner, coding: Boolean(repo), ...extra }, opts, entry.stopped.signal);
-        const ran = await readRun(lines, opts, () => !!hooks.busy?.(v.slot), entry.stopped.signal, steps(id));
+        const ran = await readRun(lines, opts, () => !!hooks.busy?.(v.slot), entry.stopped.signal);
         const result = hooks.onReport?.(v.slot, ran) ?? ran;
-        emit({ id, type: "report", text: result.report, screenshot: result.screenshot });
+        emit({ id, type: "report", text: result.report });
         return result;
       } finally {
         if (keepers.has(id)) keepOpen(v, id, goal);
@@ -368,18 +368,6 @@ export function taskVms(
   };
 }
 
-// A task's steps as they happen, for the owner's apps: what it's doing (each tool call) and what it says.
-const steps = (id: number) => (event: { type: string; toolName?: string; args?: unknown; message?: { role: string; content: { type: string; text?: string }[] } }) => {
-  if (event.type === "tool_execution_start" && event.toolName) {
-    const args = event.args === undefined ? "" : JSON.stringify(event.args);
-    emit({ id, type: "step", tool: event.toolName, text: args.length > 160 ? `${args.slice(0, 160)}…` : args });
-  }
-  if (event.type === "message_end" && event.message?.role === "assistant") {
-    const said = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
-    if (said) emit({ id, type: "step", text: said.slice(0, 600) });
-  }
-};
-
 // A task's run, as the main agent reports it (agent-tasks.ts), a JSON line each: what it did and said (its last text is
 // the report), then a screenshot of the final screen and a coding task's new commits. It's cut off when it goes
 // quiet, runs out of time or is stopped.
@@ -388,7 +376,6 @@ async function readRun(
   { timeoutMs = TASK_TIMEOUT_MS }: Options,
   busy: () => boolean,
   stopped: AbortSignal,
-  onEvent: (event: { type: string }) => void,
 ) {
   const stream = await lines;
   return new Promise<TaskResult>((resolve, reject) => {
@@ -417,7 +404,6 @@ async function readRun(
       } catch {
         return;
       }
-      onEvent(event);
       if (event.type === "screenshot") screenshot = Buffer.from(event.png!, "base64");
       if (event.type === "bundle") bundle = Buffer.from(event.data!, "base64");
       if (event.type !== "message_end" || event.message?.role !== "assistant") return;
@@ -601,7 +587,6 @@ export async function gateTasks(
     },
     tell(id, message) {
       const task = pool.running().find((t) => t.id === id);
-      if (task) emit({ id, type: "told", text: message });
       if (task?.slot !== undefined) return (gate.tell(task.slot, message), "told");
       if (task) return (waiting.set(id, [...(waiting.get(id) ?? []), message]), "queued");
       const goal = pool.alive().find((v) => v.id === id)?.goal;

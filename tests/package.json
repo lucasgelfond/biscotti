@@ -7,7 +7,6 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "2.2.0",
     "@biscotti/core": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.1",
     "@opentelemetry/exporter-trace-otlp-proto": "0.223.0",

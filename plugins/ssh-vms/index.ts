@@ -129,7 +129,7 @@ export default {
       held = id;
       try {
         emit({ id, type: "queued", kind: "vm", goal, repo: request.repo });
-        const hostKey = await prepareVm(vm, { key: request.key, repo, setup: warm ? undefined : request.setup }, (line) => emit({ id, type: "step", tool: "setup", text: line.slice(0, 300) }));
+        const hostKey = await prepareVm(vm, { key: request.key, repo, setup: warm ? undefined : request.setup });
         const s = await describe(id, vm, request.repo, hostKey);
         open.set(id, s);
         shown(s, warm ? "Ready (warm)" : "Ready");

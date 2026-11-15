@@ -69,21 +69,6 @@ importers:
         specifier: 0.31.11
         version: 0.31.11
 
-  plugins/api:
-    dependencies:
-      '@agentclientprotocol/sdk':
-        specifier: 2.2.0
-        version: 2.2.0(zod@4.6.7)
-      '@biscotti/core':
-        specifier: workspace:*
-        version: link:../../core
-      drizzle-orm:
-        specifier: 0.45.4
-        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
-      zod:
-        specifier: 4.6.7
-        version: 4.6.7
-
   plugins/artifacts:
     dependencies:
       '@biscotti/core':
@@ -273,9 +258,6 @@ importers:
         specifier: 8.18.3
         version: 8.18.3
     devDependencies:
-      '@agentclientprotocol/sdk':
-        specifier: 2.2.0
-        version: 2.2.0(zod@4.6.7)
       '@biscotti/core':
         specifier: workspace:*
         version: link:../core
@@ -296,15 +278,6 @@ importers:
         version: 5.0.3(@opentelemetry/api@1.9.1)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
 
 packages:
-
-  '@agentclientprotocol/sdk@2.2.0':
-    resolution: {integrity: sha512-o1+eDQVb05yzPY+5v54awHyONU1oeLsbLVavkwrMQaZDuJDh/38pQiXJS4ix4d6QA3Y4bU0lHFRjwg99KKKSaQ==}
-    peerDependencies:
-      '@modelcontextprotocol/server': ^2.4.0
-      zod: ^3.25.76 || ^4.0.0
-    peerDependenciesMeta:
-      '@modelcontextprotocol/server':
-        optional: true
 
   '@anthropic-ai/claude-code-darwin-arm64@2.1.325':
     resolution: {integrity: sha512-Ds1f1B+qy2BWDI+VnmDHwkNyTbXCwFrBtrinPD95RBmUubFJu9nCzMgn+wrg5VwwF6vtkkzGexogneZIYZKb6A==}
@@ -2908,10 +2881,6 @@ packages:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
-
-  '@agentclientprotocol/sdk@2.2.0(zod@4.6.7)':
-    dependencies:
-      zod: 4.6.7
 
   '@anthropic-ai/claude-code-darwin-arm64@2.1.325':
     optional: true

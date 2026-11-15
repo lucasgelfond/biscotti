@@ -3,9 +3,8 @@ import { connectAgent } from "./connect.ts";
 import crons from "./crons.ts";
 import { createGate, LOCKS, scrub } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
-import { appMethod, localTools, type Channel, type Context, type Host, type Plugin, type TaskEvent } from "./plugin.ts";
+import { appMethod, localTools, type Channel, type Context, type Host, type Plugin } from "./plugin.ts";
 import { ownerApi } from "./http.ts";
-import { emit } from "./plugin.ts";
 import { sqlBridge } from "./sql-bridge.ts";
 import { gateTasks, localHost } from "./tasks.ts";
 import { vmEnv } from "./vm-env.ts";
@@ -75,7 +74,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
       return { removed };
     });
   }
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, converse, interrupt: (session) => turn.stop(session), vms: vms?.vms, board: tasks, route: api.route };
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, vms: vms?.vms, board: tasks, route: api.route };
   const observers = await Promise.all(plugins.flatMap((p) => (p.observe ? [p.observe(ctx)] : [])));
   for (const observer of observers) gate.observe(observer);
   for (const plugin of plugins) if (plugin.llm) gate.serve(await plugin.llm(ctx));
@@ -92,12 +91,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
 
   // The main agent's sessions, as events for the owner's apps (numbered like tasks; "main", the owner's texts, is 0):
   // what the owner said, each tool call and message as it goes, and "replied" once a turn is done.
-  // Only those numbered like tasks (from the api plugin's ACP); an AHP session (an app's id) has no row on the board.
-  const number = (session: string) => (session === "main" ? 0 : /^\d+$/.test(session) ? Number(session) : undefined);
-  const note = (session: string, e: Omit<TaskEvent, "id" | "at">) => {
-    const id = number(session);
-    if (id !== undefined) emit({ id, ...e });
-  };
   const turn = await connectAgent(sockets, {
     db,
     sql: sqlBridge(`${dir}/durable.db`, env("DB_KEY")),
@@ -106,13 +99,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     gate: gate.handle,
     env: (id, args, socket) => (vms ? vms.vms.env(id, args, socket) : Promise.reject(new Error("no task VMs here"))),
     board: tasks,
-    onEvent(session, e) {
-      if (e.type === "tool_execution_start" && e.toolName) note(session, { type: "step", tool: e.toolName, text: JSON.stringify(e.args ?? {}).slice(0, 160) });
-      const said = e.type === "message_end" && e.message?.role === "assistant" ? e.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n") : "";
-      if (said) note(session, { type: "step", text: outbound(said.replace(LOCKS, "")).text.slice(0, 4000) });
-      // The model by the name its provider gives it (the agent knows it as "main").
-      if (e.type === "status") note(session, { type: "status", model: e.model === "main" ? env("MODEL") : e.model, thinking: e.thinking, used: e.context?.tokens ?? undefined, size: e.context?.contextWindow });
-    },
   });
 
   // A message into a main session (a wake, a task report; or the owner's, `fromOwner`): the agent's reply, which in
@@ -122,26 +108,18 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     try {
       const reply = (await turn(text, session, fromOwner ? "user" : "systemNotification"))?.replace(LOCKS, "").trim();
       for (const end of done) end?.(reply && outbound(reply).text);
-      note(session, { type: "replied", ...(image && { screenshot: image }) });
       if (session !== "main") return;
       if (reply) await channel.send(outbound(reply));
       if (image) await channel.send({ image });
     } catch (err) {
       for (const end of done) end?.(undefined, err);
-      note(session, { type: "failed", text: (err as Error).message });
       console.error(err);
     }
   }
-  // The owner in one of their apps (not their texts): the agent answers there, and texts only if asked to.
-  async function converse(session: string, message: string) {
-    note(session, { type: "told", text: message });
-    const command = message.trim().startsWith("/");
-    await deliver(session === "main" || command ? message : `(In the owner's app: your reply shows there, not as a text.)\n${message}`, undefined, session, true);
-  }
-
+  // The owner's text: the agent's reply goes back as one.
   async function handle(message: { text: string }) {
     if (gate.answer(message.text)) return;
-    await converse("main", message.text);
+    await deliver(message.text, undefined, "main", true);
   }
 
   for (const plugin of plugins) await plugin.start?.(ctx);
