@@ -189,6 +189,8 @@ export function agentTasks(opts: {
   call: (method: string, path: string, body?: string, headers?: Record<string, string>) => Promise<{ status: number; text: string }>;
   // The command that starts pi-env's daemon in VM `id`, before its `serve` arguments (env-pipe.ts, through the gate).
   daemon: (id: number) => string[];
+  // Task `id`'s conversation was just made, for its first run.
+  onConversation?: (id: number, conversation: Conversation) => void;
 }) {
   const { ctx, call } = opts;
   const gateMcp = async (id: number, method: string, params: object) => {
@@ -414,6 +416,7 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
       ctx,
     );
     await harness.commit(async (tx) => void ((await tx.doc(Tasks)).ids[String(id)] = String(conversation.id)), ctx);
+    opts.onConversation?.(id, conversation);
     return conversation;
   }
 
@@ -579,6 +582,12 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
 
   return {
     run,
+    // Task `id`'s conversation, once it has run.
+    async conversation(id: number) {
+      const harness = opts.harness();
+      const known = (await harness.snapshot(Tasks, ctx))?.ids[String(id)];
+      return known ? await harness.conversation(known as unknown as ConversationId, ctx) : undefined;
+    },
     // The environment of a task's conversation (its VM's), for the Harness; none for any other.
     async env(conversationId: ConversationId, read: { snapshot: Harness["snapshot"] }, c: Context): Promise<ExecutionEnv | undefined> {
       const task = await (read.snapshot as (doc: typeof TaskDoc, id: ConversationId, c: Context) => Promise<{ id: number } | undefined>)(TaskDoc, conversationId, c);

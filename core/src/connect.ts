@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import type { TaskRun } from "./agent-tasks.ts";
+import type { Board } from "./board.ts";
+import { appMethods } from "./plugin.ts";
 import { call, listen, readBody } from "./http.ts";
 import type { Db } from "./memory.ts";
 import type { SqlRequest, sqlBridge } from "./sql-bridge.ts";
@@ -22,6 +24,8 @@ export async function connectAgent(
     onEvent?: (session: string, event: AgentEvent) => void;
     // pi-env's daemon in a task's VM, for the agent's tools there (an upgrade to /env/<id>, env-pipe.ts).
     env?: (id: number, args: string[], socket: Duplex) => Promise<void>;
+    // The tasks' and VMs' board, for the owner's apps (AHP chats, agent.ts).
+    board?: Board;
   },
 ) {
   const { db } = opts;
@@ -37,6 +41,29 @@ export async function connectAgent(
     if (url.pathname === "/sql" && req.method === "POST") {
       return void readBody(req)
         .then(async (body) => res.end(JSON.stringify({ answer: await opts.sql.handle(JSON.parse(body) as SqlRequest) })))
+        .catch((err) => res.writeHead(400).end(String((err as Error).message ?? err)));
+    }
+    // The board as it changes: every row, then each change, a JSON line each (without their steps: an app reads a
+    // task's own conversation).
+    if (url.pathname === "/board" && opts.board) {
+      const board = opts.board;
+      res.writeHead(200, { "content-type": "application/x-ndjson" });
+      const line = (row: Parameters<Parameters<Board["on"]>[0]>[0]) => {
+        const { steps, ...rest } = board.summary(row);
+        res.write(`${JSON.stringify(rest)}\n`);
+      };
+      for (const row of board.rows.values()) line(row);
+      const off = board.on((row) => line(row));
+      return void res.on("close", off);
+    }
+    // The apps' methods (appMethod), as the agent passes them on (x-biscotti/<name> over AHP).
+    if (url.pathname.startsWith("/x/") && req.method === "POST") {
+      const method = appMethods.get(decodeURIComponent(url.pathname.slice("/x/".length)));
+      if (!method) return void res.writeHead(404).end("no such method");
+      const gone = new AbortController();
+      res.on("close", () => gone.abort());
+      return void readBody(req)
+        .then(async (body) => res.end(JSON.stringify((await method(body ? JSON.parse(body) : {}, gone.signal)) ?? null)))
         .catch((err) => res.writeHead(400).end(String((err as Error).message ?? err)));
     }
     if (url.pathname !== "/transcript" || req.method !== "POST") return opts.gate(req, res);

@@ -1,6 +1,5 @@
-import { declined, input, localTools, mcpTools, merge, secret, text, type Context, type Plugin } from "@biscotti/core";
+import { appMethod, declined, input, localTools, mcpTools, merge, secret, text, type Context, type Plugin } from "@biscotti/core";
 import { codeTasks } from "./code.ts";
-import { extension } from "../api/index.ts";
 
 // GitHub's remote MCP server with the owner's fine-grained token, from .env or the vault ("GitHub", field "token").
 // Biscotti works on GitHub freely (branches, commits, pull requests, comments, edits); it asks the owner first only
@@ -56,8 +55,8 @@ once they ask (\`code_pull_request\`); never merge one, that's their call.`,
     if (token(ctx)) {
       setInterval(() => void cleanUp(ctx), Number(process.env.PR_CHECK_MS ?? 3600_000)).unref();
       // The owner's apps read GitHub through biscotti's token (pull requests, checks, diffs), so they need none of
-      // their own: _biscotti/github {path} -> GitHub's JSON for a GET of one of the repos' read endpoints.
-      extension("_biscotti/github", async ({ path }) => {
+      // their own: the apps' github method {path} -> GitHub's JSON for a GET of one of the repos' read endpoints.
+      appMethod("github", async ({ path }) => {
         if (typeof path !== "string" || !/^\/repos\/[\w.-]+\/[\w.-]+\/(pulls|commits|compare|check-runs|actions|branches|contents)(\/|\?|$)/.test(path)) throw new Error("only reads of a repo's pulls, commits, compare, checks, branches or contents");
         const res = await fetch(`https://api.github.com${path}`, { headers: { Authorization: `Bearer ${token(ctx)}`, Accept: "application/vnd.github+json" } });
         return { status: res.status, body: await res.json().catch(() => null) };

@@ -5,20 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { emit, endpoints, prepareVm, secret, taskEvents, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
-import { extension } from "../api/index.ts";
+import { appMethod, emit, endpoints, prepareVm, secret, taskEvents, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
 
 // ssh VMs: a task VM the owner works in over ssh with their own pi (core/vm/task/box-pi), from Concourse or the app,
 // rather than one run of the task agent. Closed, it's kept (suspended) to open again. SSH_VM_WARM_REPO (owner/name),
 // SSH_VM_WARM_COUNT (1) and SSH_VM_WARM_SETUP keep some checked out and set up ahead of time. One stays up until it's
 // closed, or until every slot is taken and something else needs one: then the one opened longest ago goes to sleep
-// (closed and kept on disk, to open again). Each is a session of the
-// api plugin's ACP agent (kind "vm", its ssh address, host key and Preview in _meta.biscotti), with these methods:
+// (closed and kept on disk, to open again). Each is on the board (kind "vm", its ssh address, host key and
+// preview), and these are the apps' methods for them (core's appMethod):
 //
-//   _biscotti/vms/open    {key, repo?, base?, setup?, where?}: one to ssh into -> SshVm. `where`: "local" (this
-//                         machine's VMs) or "cloud" (an external VM node's); either, by default
-//   _biscotti/vms/reopen  {sessionId, key}: a closed one open again, adding that key -> SshVm
-//   _biscotti/vms/close   {sessionId, discard?}: closed (kept, to open again), or deleted for good
+//   vms.open    {key, repo?, base?, setup?, where?}: one to ssh into -> SshVm. `where`: "local" (this machine's VMs) or
+//               "cloud" (an external VM node's); either, by default
+//   vms.reopen  {sessionId, key}: a closed one open again, adding that key -> SshVm
+//   vms.close   {sessionId, discard?}: closed (kept, to open again), or deleted for good
 
 interface SshVm {
   id: number;
@@ -149,7 +148,7 @@ export default {
     }
 
     const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-    extension("_biscotti/vms/open", async ({ key, repo, base, setup, where: at }, signal) => {
+    appMethod("vms.open", async ({ key, repo, base, setup, where: at }, signal) => {
       if (typeof key !== "string") throw new Error("an ssh public key, please");
       const s = await openVm({ key, repo: str(repo), base: str(base), setup: str(setup), where: at === "local" || at === "cloud" ? at : undefined });
       // One whose asker went away before it was ready (an app sent to the background) is closed, so it's kept to
@@ -157,7 +156,7 @@ export default {
       if (signal.aborted) await close(s.id);
       return s;
     });
-    extension("_biscotti/vms/reopen", async ({ sessionId, key }) => {
+    appMethod("vms.reopen", async ({ sessionId, key }) => {
       const id = Number(sessionId);
       if (typeof key !== "string" || !KEY.test(key.trim())) throw new Error("an ssh public key, please");
       const already = open.get(id);
@@ -170,7 +169,7 @@ export default {
       if (!already) shown(s, "Reopened");
       return s;
     });
-    extension("_biscotti/vms/close", async ({ sessionId, discard }) => {
+    appMethod("vms.close", async ({ sessionId, discard }) => {
       const id = Number(sessionId);
       const closed = await close(id, Boolean(discard));
       return { closed, discarded: discard ? closed || (await vms.forget(id)) : false };

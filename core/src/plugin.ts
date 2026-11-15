@@ -30,8 +30,9 @@ export interface Context {
   interrupt?(session: string): Promise<void>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
-  // Task VMs, where this machine has them.
+  // Task VMs, where this machine has them, and the board of them for the owner's apps (board.ts).
   vms?: Vms;
+  board?: Board;
   // An HTTP route on the owner's API (API_PORT, published on the tailnet): `prefix` and everything under it, for the
   // owner only (Tailscale-User-Login, API_OWNER).
   route(prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => unknown): void;
@@ -86,6 +87,12 @@ export interface TaskEvent {
 export const taskEvents = new EventEmitter<{ event: [TaskEvent] }>();
 taskEvents.setMaxListeners(100);
 export const emit = (event: Omit<TaskEvent, "at">) => taskEvents.emit("event", { ...event, at: Date.now() } as TaskEvent);
+
+// Methods the owner's apps call (x-biscotti/<name> over AHP, agent.ts), each answered with what it's sent; plugins add
+// theirs. `signal` aborts when the app goes away first.
+export type AppMethod = (params: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
+export const appMethods = new Map<string, AppMethod>();
+export const appMethod = (name: string, handler: AppMethod) => void appMethods.set(name, handler);
 
 export interface Running {
   id: number;
@@ -318,6 +325,8 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
 
 // A vault entry's values, and saving one, for plugins that keep keys there or type them in.
 export { secrets } from "./vault.ts";
+export type { Board, Row, Summary } from "./board.ts";
+import type { Board } from "./board.ts";
 export const secret = (db: Db, name: string) => db.select().from(vault).where(eq(vault.name, name)).get()?.value;
 export function saveSecret(db: Db, name: string, value: Record<string, string>) {
   const row = { name, fields: Object.keys(value), value };

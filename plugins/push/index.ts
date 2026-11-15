@@ -1,11 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { taskEvents, type Plugin } from "@biscotti/core";
+import { appMethod, taskEvents, type Plugin } from "@biscotti/core";
 import { ApnsClient, Errors, Notification } from "apns2";
-import { extension } from "../api/index.ts";
 
 // Push notifications to the owner's phones (the Concourse app, in the dotfiles) when a task reports or fails, straight to Apple's APNs with a
 // token key. Settings: APNS_KEY_FILE (the .p8 from the Apple developer site), APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC
-// (the app's bundle ID). Phones register through the api plugin's ACP agent, _biscotti/devices/register {token,
+// (the app's bundle ID). Phones register with the apps' devices.register method {token,
 // sandbox} (a development build's token is a sandbox one), and are kept in the data directory.
 
 export default {
@@ -31,7 +30,7 @@ export default {
       for (const d of devices) void clients[`${d.sandbox}`].send(new Notification(d.token, { alert, sound: "default", threadId: `task-${e.id}`, data: { task: e.id } })).catch(() => {});
     });
 
-    extension("_biscotti/devices/register", async ({ token, sandbox }) => {
+    appMethod("devices.register", async ({ token, sandbox }) => {
       if (typeof token !== "string" || !/^[0-9a-f]{32,200}$/i.test(token)) throw new Error("not a device token");
       devices = [...devices.filter((d) => d.token !== token), { token, sandbox: Boolean(sandbox) }];
       save();

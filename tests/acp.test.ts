@@ -3,8 +3,9 @@ import type { AddressInfo } from "node:net";
 import * as acp from "@agentclientprotocol/sdk";
 import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client";
 import { expect, test } from "vitest";
-import { emit, type Vms } from "../core/src/plugin.ts";
-import api, { extension } from "../plugins/api/index.ts";
+import { board as taskBoard } from "../core/src/board.ts";
+import { appMethod, emit, type Vms } from "../core/src/plugin.ts";
+import api from "../plugins/api/index.ts";
 import { testContext } from "./support.ts";
 
 // The task API as an ACP agent, over its HTTP transport, with a stand-in pool whose tasks call a tool and report.
@@ -32,8 +33,9 @@ test("a client starts a task as a session, follows it, lists it, and its report 
   } as unknown as Vms;
 
   let handler: (req: IncomingMessage, res: ServerResponse) => unknown = () => {};
-  await api.start!(testContext({ vms, route: (_prefix, h) => (handler = h) }));
-  extension("_biscotti/echo", async (params) => params);
+  const ctx = testContext({ vms, route: (_prefix, h) => (handler = h) });
+  await api.start!({ ...ctx, board: taskBoard(ctx.db, vms) });
+  appMethod("echo", async (params) => params);
   const server = createServer((req, res) => void handler(req, res)).listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/acp`;
@@ -89,7 +91,8 @@ test("a client starts a main session, talks to the agent there, and its steps an
     emit({ id, type: "replied" });
   };
   let handler: (req: IncomingMessage, res: ServerResponse) => unknown = () => {};
-  await api.start!(testContext({ vms, converse, route: (_prefix, h) => (handler = h) }));
+  const ctx = testContext({ vms, converse, route: (_prefix, h) => (handler = h) });
+  await api.start!({ ...ctx, board: taskBoard(ctx.db, vms) });
   const server = createServer((req, res) => void handler(req, res)).listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/acp`;
@@ -129,7 +132,8 @@ test("a session's follower sees its status change when another client prompts it
     emit({ id, type: "replied" });
   };
   let handler: (req: IncomingMessage, res: ServerResponse) => unknown = () => {};
-  await api.start!(testContext({ vms, converse, route: (_prefix, h) => (handler = h) }));
+  const ctx = testContext({ vms, converse, route: (_prefix, h) => (handler = h) });
+  await api.start!({ ...ctx, board: taskBoard(ctx.db, vms) });
   const server = createServer((req, res) => void handler(req, res)).listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/acp`;

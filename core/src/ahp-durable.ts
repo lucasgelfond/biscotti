@@ -72,26 +72,41 @@ export class DurableChat {
   readonly onStatus?: (status: number) => void;
   // A model's name for the apps (the conversation knows it by the provider's id for it).
   readonly named: (id: string) => string;
-  constructor(host: AhpHost, harness: Harness, conversation: Conversation, uri: URI, ctx: Context, onStatus?: (status: number) => void, named = (id: string) => id) {
-    this.host = host;
-    this.harness = harness;
-    this.conversation = conversation;
-    this.uri = uri;
-    this.ctx = ctx;
-    this.onStatus = onStatus;
-    this.named = named;
+  // How a client's message reaches the conversation (as its input, unless the conversation is someone else's to
+  // feed, like a task's); its turn starts when the conversation takes it in.
+  readonly send?: (text: string, turnId: string) => Promise<void>;
+  constructor(opts: {
+    host: AhpHost;
+    harness: Harness;
+    conversation: Conversation;
+    uri: URI;
+    ctx: Context;
+    onStatus?: (status: number) => void;
+    named?: (id: string) => string;
+    send?: (text: string, turnId: string) => Promise<void>;
+  }) {
+    this.host = opts.host;
+    this.harness = opts.harness;
+    this.conversation = opts.conversation;
+    this.uri = opts.uri;
+    this.ctx = opts.ctx;
+    this.onStatus = opts.onStatus;
+    this.named = opts.named ?? ((id) => id);
+    this.send = opts.send;
   }
 
   get running() {
     return this.#running || (this.#turn !== undefined && !this.#turn.placed);
   }
 
-  // The chat's channel, with the turns so far, then its actions as the conversation commits.
+  // The chat's channel, with the turns so far, then its actions as the conversation commits. A channel already open
+  // (one made before the conversation, for a task waiting for its VM) carries on with them.
   async open(title: string, meta?: Record<string, unknown>) {
     const watch = await this.conversation.watch(this.ctx, { min: 200, max: 400 });
     const entries = watch.value.entries as unknown as Entry[];
+    if (this.host.has(this.uri)) for (const e of entries) this.#entry(e);
     for (const e of entries) this.#seen.add(String(e.id));
-    this.host.create(this.uri, { ...chatState(this.uri, title, meta), turns: turnsOf(entries, this.named) });
+    if (!this.host.has(this.uri)) this.host.create(this.uri, { ...chatState(this.uri, title, meta), turns: turnsOf(entries, this.named) });
     this.#running = (watch.value.docs as Record<string, { run?: unknown } | undefined>)["pi.live"]?.run !== undefined;
     watch.start(async (call) => {
       if (call.kind !== "value") return;
@@ -150,7 +165,15 @@ export class DurableChat {
   async started(turnId: string, text: string) {
     this.#turn = { id: turnId, started: Date.now(), placed: false };
     this.onStatus?.(8);
+    if (this.send) return this.send(text, turnId);
     await this.conversation.submit({ type: "input", content: `[${new Date().toString()}] ${text}`, requestId: turnId }, this.ctx);
+  }
+
+  // A client's turn that never reached the conversation (it was refused), ended with why.
+  refused(turnId: string, why: string) {
+    if (this.#turn?.id === turnId) this.#turn = undefined;
+    this.onStatus?.(1);
+    this.#dispatch({ type: "chat/error", turnId, duration: 0, part: { kind: "error", error: { errorType: "refused", message: why } } });
   }
 
   async cancel() {

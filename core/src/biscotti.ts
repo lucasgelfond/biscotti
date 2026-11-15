@@ -3,12 +3,13 @@ import { connectAgent } from "./connect.ts";
 import crons from "./crons.ts";
 import { createGate, LOCKS, scrub } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
-import { localTools, type Channel, type Context, type Host, type Plugin } from "./plugin.ts";
+import { appMethod, localTools, type Channel, type Context, type Host, type Plugin } from "./plugin.ts";
 import { ownerApi } from "./http.ts";
 import { emit } from "./plugin.ts";
 import { sqlBridge } from "./sql-bridge.ts";
 import { gateTasks, localHost } from "./tasks.ts";
 import { vmEnv } from "./vm-env.ts";
+import { board } from "./board.ts";
 import vault, { secrets } from "./vault.ts";
 
 function env(name: string) {
@@ -55,7 +56,26 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     // Plugins' texts (a task's screenshot caption) can't pose as the gate's questions either.
     if (text) await channel.send(outbound(text.replace(LOCKS, "")));
   };
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, converse, interrupt: (session) => turn.stop(session), vms: vms?.vms, route: api.route };
+  const tasks = vms && board(db, vms.vms);
+  // The apps' own methods for tasks and VMs (the board's sandboxes and VMs): its live desktop (which keeps it open), a
+  // message for it, stopping it, deleting it.
+  if (vms && tasks) {
+    const pool = vms.vms;
+    const id = (p: Record<string, unknown>) => {
+      const n = Number(p.id);
+      if (!Number.isInteger(n) || n <= 0) throw new Error("which task or VM? (its number, id)");
+      return n;
+    };
+    appMethod("watch", async (p) => (await pool.keep(id(p)), { url: (await pool.watch(id(p))) ?? null }));
+    appMethod("tell", async (p) => ({ told: pool.tell(id(p), String(p.message ?? "")) }));
+    appMethod("stop", async (p) => ({ stopped: pool.stop(id(p)) }));
+    appMethod("remove", async (p) => {
+      const removed = (await pool.remove(id(p))) || (await pool.forget(id(p)));
+      tasks.forget(id(p));
+      return { removed };
+    });
+  }
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, converse, interrupt: (session) => turn.stop(session), vms: vms?.vms, board: tasks, route: api.route };
   const observers = await Promise.all(plugins.flatMap((p) => (p.observe ? [p.observe(ctx)] : [])));
   for (const observer of observers) gate.observe(observer);
   for (const plugin of plugins) if (plugin.llm) gate.serve(await plugin.llm(ctx));
@@ -80,6 +100,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     models,
     gate: gate.handle,
     env: (id, args, socket) => (vms ? vms.vms.env(id, args, socket) : Promise.reject(new Error("no task VMs here"))),
+    board: tasks,
     onEvent(session, e) {
       const id = number(session);
       if (e.type === "tool_execution_start" && e.toolName) emit({ id, type: "step", tool: e.toolName, text: JSON.stringify(e.args ?? {}).slice(0, 160) });

@@ -22,6 +22,7 @@ import type { StateAction } from "@microsoft/agent-host-protocol";
 import { WebSocketServer } from "ws";
 import { AhpHost, ROOT } from "./ahp.ts";
 import { agentTasks, type TaskRun } from "./agent-tasks.ts";
+import { taskChats } from "./ahp-tasks.ts";
 import { DurableChat } from "./ahp-durable.ts";
 import { listen, readBody } from "./http.ts";
 import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
@@ -37,8 +38,9 @@ const ctx = BACKGROUND_CONTEXT;
 const MAIN_MODEL = { provider: "biscotti", modelId: "main" } as const;
 const CONTEXT_WINDOW = 200_000;
 
-// Which conversation each session is, its title, and when it was made.
-const Sessions = defineDoc<{ ids: Record<string, string>; titles?: Record<string, string>; created?: Record<string, string> }>({
+// Which conversation each session is, its title, when it was made, and where (an app's source and desktop shape for
+// its tasks, as it said when it made it).
+const Sessions = defineDoc<{ ids: Record<string, string>; titles?: Record<string, string>; created?: Record<string, string>; sources?: Record<string, string>; displays?: Record<string, string> }>({
   kind: "biscotti.sessions",
   version: 1,
   scope: "session",
@@ -75,6 +77,31 @@ export async function runAgent(sockets: string, _dir?: string) {
     }
   };
   const event = (session: string, e: unknown) => void call("POST", `/event?session=${encodeURIComponent(session)}`, JSON.stringify(e)).catch(() => {});
+  // One of the gate's methods for the apps (appMethod).
+  const method = async (name: string, params: Record<string, unknown>) => {
+    const res = await call("POST", `/x/${encodeURIComponent(name)}`, JSON.stringify(params), { "content-type": "application/json" });
+    if (res.status >= 300) throw new Error(res.text || `${name} failed`);
+    return JSON.parse(res.text) as unknown;
+  };
+  // A stream of JSON lines from the gate, followed again whenever it ends (the gate restarted).
+  const stream = (path: string, onLine: (line: Record<string, unknown>) => void) => {
+    const again = () => setTimeout(() => stream(path, onLine), 2000);
+    const req = request({ host: "127.0.0.1", port, path }, (res) => {
+      if (res.statusCode !== 200) return void (res.resume(), res.statusCode === 404 || again());
+      let buffer = "";
+      res.setEncoding("utf8").on("data", (d: string) => {
+        buffer += d;
+        for (let i = buffer.indexOf("\n"); i >= 0; i = buffer.indexOf("\n")) {
+          const line = buffer.slice(0, i);
+          buffer = buffer.slice(i + 1);
+          if (line.trim()) onLine(JSON.parse(line));
+        }
+      });
+      res.on("end", again).on("error", () => {});
+    });
+    req.on("error", again);
+    req.end();
+  };
 
   // biscotti's tools, as the gate lists them, each call stamped with its conversation's session. A remote service's
   // (GitHub's, Notion's) the gate marks deferred: tool_search loads them when they're wanted.
@@ -148,7 +175,13 @@ export async function runAgent(sockets: string, _dir?: string) {
   const toolSearch = createToolSearchExtension();
   registry.install(toolSearch);
   // pi-env's daemon in a task's VM, through the gate (env-pipe.ts).
-  const tasks = agentTasks({ harness: () => harness, ctx, call, daemon: (id) => [process.execPath, new URL("./env-pipe.ts", import.meta.url).pathname, sockets, String(id)] });
+  const tasks = agentTasks({
+    harness: () => harness,
+    ctx,
+    call,
+    daemon: (id) => [process.execPath, new URL("./env-pipe.ts", import.meta.url).pathname, sockets, String(id)],
+    onConversation: (id, conversation) => void sandboxes.started(id, conversation),
+  });
 
   const database = new RemoteSqliteDatabase(async (req: SqlRequest) => {
     const res = await call("POST", "/sql", JSON.stringify(req), { "content-type": "application/json" });
@@ -297,14 +330,26 @@ export async function runAgent(sockets: string, _dir?: string) {
   const chats = new Map<string, DurableChat>();
   const sessions = async () => (await harness.snapshot(Sessions, ctx)) ?? { ids: {}, titles: {} };
   const titleOf = (session: string, titles?: Record<string, string>) => titles?.[session] ?? (session === "main" ? "Texts" : "New session");
-  const meta = (session: string) => ({ biscotti: { kind: "main", model: names.main, size: CONTEXT_WINDOW, ...(session === "main" && { source: "imessage" }) } });
+  // Its source as the app gave it (JSON).
+  const sourceOf = (doc: { sources?: Record<string, string> } | undefined, session: string) => (doc?.sources?.[session] ? (JSON.parse(doc.sources[session]) as unknown) : undefined);
+  const meta = (session: string, doc?: { sources?: Record<string, string>; displays?: Record<string, string> }) => ({
+    biscotti: {
+      kind: "main",
+      model: names.main,
+      size: CONTEXT_WINDOW,
+      source: session === "main" ? "imessage" : sourceOf(doc, session),
+      ...(doc?.displays?.[session] && { display: doc.displays[session] }),
+      chats: sandboxes.of(session),
+    },
+  });
   let summaries: Record<string, unknown>[] = [];
   async function catalogue() {
-    const { ids, titles, created } = await sessions();
+    const doc = await sessions();
+    const { ids, titles, created } = doc;
     summaries = Object.keys(ids).map((session) => {
       const chat = host.get<{ status: number; modifiedAt: string }>(`${CHAT}${session}`);
       const made = created?.[session] ?? new Date(0).toISOString();
-      return { resource: `${SESSION}${session}`, provider: "biscotti", title: titleOf(session, titles), status: chat?.status ?? 1, createdAt: made, modifiedAt: chat?.modifiedAt ?? made, defaultChat: `${CHAT}${session}`, _meta: meta(session) };
+      return { resource: `${SESSION}${session}`, provider: "biscotti", title: titleOf(session, titles), status: chat?.status ?? 1, createdAt: made, modifiedAt: chat?.modifiedAt ?? made, defaultChat: `${CHAT}${session}`, _meta: meta(session, doc) };
     });
     // Newest first.
     summaries.sort((a, b) => String(b.modifiedAt).localeCompare(String(a.modifiedAt)));
@@ -314,10 +359,11 @@ export async function runAgent(sockets: string, _dir?: string) {
     const uri = `${SESSION}${session}`;
     if (host.has(uri)) return;
     const handle = await conversation(session);
-    const title = titleOf(session, (await sessions()).titles);
-    host.create(uri, { provider: "biscotti", title, status: 1, lifecycle: "ready", activeClients: [], chats: [], _meta: meta(session) });
+    const doc = await sessions();
+    const title = titleOf(session, doc.titles);
+    host.create(uri, { provider: "biscotti", title, status: 1, lifecycle: "ready", activeClients: [], chats: [], _meta: meta(session, doc) });
     const chatUri = `${CHAT}${session}`;
-    const chat = new DurableChat(host, harness, handle, chatUri, ctx, onStatus, (id) => names[id] ?? id);
+    const chat = new DurableChat({ host, harness, conversation: handle, uri: chatUri, ctx, onStatus, named: (id) => names[id] ?? id });
     function onStatus(status: number) {
       host.dispatch(uri, { type: "session/chatUpdated", chat: chatUri, changes: { status, modifiedAt: new Date().toISOString() } } as unknown as StateAction);
       void catalogue().then(() => host.notify(ROOT, "root/sessionSummaryChanged", { session: uri, changes: { status, modifiedAt: new Date().toISOString() } }));
@@ -326,11 +372,34 @@ export async function runAgent(sockets: string, _dir?: string) {
     chats.set(chatUri, chat);
     host.dispatch(uri, { type: "session/chatAdded", summary: { resource: chatUri, title, status: 1, modifiedAt: new Date().toISOString(), origin: { kind: "user" } } } as unknown as StateAction);
     host.dispatch(uri, { type: "session/defaultChatChanged", defaultChat: chatUri } as unknown as StateAction);
+    // Its sandboxes and VMs.
+    for (const summary of sandboxes.summaries(session)) host.dispatch(uri, { type: "session/chatAdded", summary } as unknown as StateAction);
   }
+  // The board's sandboxes and VMs, as chats of their sessions (ahp-tasks.ts).
+  const sandboxes = taskChats({
+    host: { get: (u: string) => host.get(u), has: (u: string) => host.has(u), create: (u: string, s: object) => host.create(u, s), delete: (u: string) => host.delete(u), dispatch: (c: string, a: StateAction) => host.dispatch(c, a) } as unknown as AhpHost,
+    harness: () => harness,
+    ctx,
+    method,
+    follow: stream,
+    conversation: (id) => tasks.conversation(id),
+    named: (id) => names[id] ?? id,
+    changed(session) {
+      const uri = `${SESSION}${session}`;
+      void sessions().then(async (doc) => {
+        if (!(session in doc.ids)) return;
+        const _meta = meta(session, doc);
+        if (host.has(uri)) host.dispatch(uri, { type: "session/metaChanged", _meta } as unknown as StateAction);
+        await catalogue();
+        host.notify(ROOT, "root/sessionSummaryChanged", { session: uri, changes: { _meta } });
+      });
+    },
+  });
   const host: AhpHost = new AhpHost(
     {
       listSessions: () => catalogue(),
       async hydrate(uri) {
+        if (sandboxes.owns(uri)) return sandboxes.hydrate(uri);
         const session = sessionOf_(uri);
         if (!session || !(session in (await sessions()).ids)) return false;
         await openSession(session);
@@ -339,6 +408,14 @@ export async function runAgent(sockets: string, _dir?: string) {
       async createSession(params) {
         const session = sessionOf_(String(params.channel));
         if (!session) throw new Error("a session's channel is ahp-session:/<id>");
+        // Where it was made, as the app says (its source, and the desktop shape for its tasks).
+        const asked = ((params._meta as { biscotti?: { source?: unknown; display?: unknown } } | undefined)?.biscotti ?? {}) as { source?: unknown; display?: unknown };
+        if (asked.source !== undefined || typeof asked.display === "string")
+          await harness.commit(async (tx) => {
+            const doc = await tx.doc(Sessions);
+            if (asked.source !== undefined) doc.sources = { ...doc.sources, [session]: JSON.stringify(asked.source) };
+            if (asked.display === "mobile" || asked.display === "desktop") doc.displays = { ...doc.displays, [session]: asked.display };
+          }, ctx);
         await conversation(session);
         await openSession(session);
         await catalogue();
@@ -360,12 +437,19 @@ export async function runAgent(sockets: string, _dir?: string) {
         await catalogue();
         host.notify(ROOT, "root/sessionRemoved", { session: uri });
       },
+      async disposeChat(uri) {
+        if (!sandboxes.owns(uri)) throw new Error("only a session's sandboxes and VMs can go; its own chat goes with it (disposeSession)");
+        await sandboxes.dispose(uri);
+      },
+      methods: Object.fromEntries(Object.entries(sandboxes.methods).map(([name, run]) => [name, (params: Record<string, unknown>) => run(params)])),
       validate(channel, action) {
+        if (sandboxes.owns(channel)) return sandboxes.validate(channel, action);
         const chat = chats.get(channel);
         if ((action.type as string) === "chat/turnStarted" && chat?.running) return "a turn is running: steer it with a pending message, or cancel it first";
         return undefined;
       },
       acted(channel, action) {
+        if (sandboxes.owns(channel)) return sandboxes.acted(channel, action);
         const chat = chats.get(channel);
         if (!chat) return;
         const a = action as unknown as { type: string; turnId: string; message?: { text: string } };
@@ -376,6 +460,7 @@ export async function runAgent(sockets: string, _dir?: string) {
             const title = a.message!.text.split("\n")[0].slice(0, 80);
             await harness.commit(async (tx) => void ((await tx.doc(Sessions)).titles = { ...((await tx.doc(Sessions)).titles ?? {}), [session]: title }), ctx);
             host.dispatch(`${SESSION}${session}`, { type: "session/titleChanged", title } as unknown as StateAction);
+            host.dispatch(`${SESSION}${session}`, { type: "session/chatUpdated", chat: channel, changes: { title } } as unknown as StateAction);
             await catalogue();
             host.notify(ROOT, "root/sessionSummaryChanged", { session: `${SESSION}${session}`, changes: { title } });
           });

@@ -3,8 +3,7 @@ import { connect } from "node:net";
 import { networkInterfaces } from "node:os";
 import { createInterface } from "node:readline";
 import { DescribeInstancesCommand, EC2Client, RunInstancesCommand, StartInstancesCommand, StopInstancesCommand } from "@aws-sdk/client-ec2";
-import { emit, vmEndpoint, type Host, type Plugin, type Vm, type Vms } from "@biscotti/core";
-import { extension } from "../api/index.ts";
+import { appMethod, emit, vmEndpoint, type Host, type Plugin, type Vm, type Vms } from "@biscotti/core";
 
 // External VM nodes: EC2 machines (nested virtualization) that each run one task VM, used only once this machine's
 // slots are taken. They're launched from the `biscotti-node` launch template (setup.sh), at most NODE_MAX, started when
@@ -15,7 +14,7 @@ import { extension } from "../api/index.ts";
 // Settings: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (the biscotti-gate IAM user setup.sh makes), NODE_MAX
 // (4), TAILNET_HOST (this machine's Tailscale name, for the tailnet's).
 //
-// _biscotti/tasks/move {sessionId}, on the api plugin's ACP agent, carries a task on in an external VM: its files,
+// The apps' tasks.move method {sessionId} carries a task on in an external VM: its files,
 // commits and conversation (a VM's memory can't move between CPUs, so open pages and running processes don't come).
 
 const VMS_PORT = 7400;
@@ -142,7 +141,7 @@ export default {
     if (!ctx.vms || !host) return;
     const vms = ctx.vms;
     await vms.addHost(host);
-    extension("_biscotti/tasks/move", async ({ sessionId }) => {
+    appMethod("tasks.move", async ({ sessionId }) => {
       const id = Number(sessionId);
       void move(vms, host.slots, id).catch((err) => emit({ id, type: "failed", text: `Moving it failed: ${err.message}` }));
       return { moving: true };

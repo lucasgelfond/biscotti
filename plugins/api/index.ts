@@ -1,8 +1,7 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { createNodeHttpHandler } from "@agentclientprotocol/sdk/experimental/node";
 import { AcpServer } from "@agentclientprotocol/sdk/experimental/server";
-import { emit, taskEvents, type Context, type Plugin, type TaskEvent, type Vms } from "@biscotti/core";
-import { sql } from "drizzle-orm";
+import { appMethods, emit, type Board, type Plugin, type Row, type TaskEvent } from "@biscotti/core";
 
 // The owner's apps (Concourse, in the dotfiles: its iPhone/Mac app and its Zellij plugin) reach biscotti as an ACP agent
 // (agentclientprotocol.com), over its Streamable HTTP transport at /acp on the owner's API. Everything is a pi session,
@@ -29,106 +28,14 @@ import { sql } from "drizzle-orm";
 // for a board without following each session. Plugins add methods of
 // their own (`extension`), named _biscotti/…; this one has _biscotti/watch {sessionId} -> {url}, the live desktop.
 
-// What the board knows of a session (in _meta.biscotti).
-export interface Summary {
-  kind: string;
-  status: "queued" | "running" | "moving" | "kept" | "done" | "failed";
-  slot?: number;
-  where?: string;
-  repo?: string;
-  ssh?: { host: string; port: number; user: string };
-  hostKey?: string;
-  preview?: string;
-  // A task's app, running in its VM (a coding task's preview).
-  site?: string;
-  report?: string;
-  parent?: string;
-  source?: unknown;
-  // A main session's model, thinking level and context use (tokens), as of its last turn.
-  model?: string;
-  thinking?: string;
-  used?: number;
-  size?: number;
-}
-interface Row extends Summary {
-  id: number;
-  goal: string;
-  // What it did and said, and (`owner`) what the owner told it.
-  steps: { at: number; text?: string; tool?: string; owner?: true }[];
-  started: number;
-  updated: number;
-}
-
-const STEPS = 200;
-const ROWS = 100;
-const STATUS: Partial<Record<TaskEvent["type"], Row["status"]>> = { queued: "queued", started: "running", resumed: "running", moved: "running", moving: "moving", kept: "kept", done: "done", replied: "done" };
 // Sessions by number, the owner's texts being "main" (0).
 const sid = (id: number) => (id === 0 ? "main" : String(id));
 const idOf = (sessionId: string) => (sessionId === "main" ? 0 : Number(sessionId));
-// Kinds from before sessions had these names.
-const KINDS: Record<string, string> = { task: "sandbox", box: "vm" };
+// Plugins' methods (core's appMethod) by their names here: _biscotti/vms/open is vms.open.
+const methodOf = (method: string) => appMethods.get(method.slice("_biscotti/".length).replaceAll("/", "."));
 
-// Methods other plugins add (_biscotti/…), each answered with the params it was sent.
-// `signal` aborts when the client goes away first.
-type Extension = (params: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
-const extensions = new Map<string, Extension>();
-export const extension = (method: `_biscotti/${string}`, handler: Extension) => void extensions.set(method, handler);
-
-// The board: every task's and VM's row, kept in the database across restarts.
-function board(ctx: Context) {
-  ctx.db.run(sql`CREATE TABLE IF NOT EXISTS tasks (id integer PRIMARY KEY, kind text NOT NULL DEFAULT 'task', goal text NOT NULL, status text NOT NULL, slot integer, "where" text, repo text, ssh text, preview text, report text, steps text NOT NULL, started integer NOT NULL, updated integer NOT NULL)`);
-  for (const column of ["parent text", "source text", "model text", "thinking text", "used integer", "size integer", "site text"]) {
-    try {
-      ctx.db.run(sql.raw(`ALTER TABLE tasks ADD COLUMN ${column}`));
-    } catch {}
-  }
-  const rows = new Map<number, Row>();
-  for (const r of ctx.db.all<Record<string, unknown>>(sql`SELECT * FROM tasks ORDER BY updated DESC LIMIT ${ROWS}`).reverse()) {
-    const row = Object.fromEntries(Object.entries(r).filter(([, v]) => v !== null)) as unknown as Row;
-    rows.set(row.id, { ...row, kind: KINDS[row.kind] ?? row.kind, ssh: r.ssh ? JSON.parse(String(r.ssh)) : undefined, source: r.source ? JSON.parse(String(r.source)) : undefined, steps: JSON.parse(String(r.steps)) });
-  }
-  // The owner's texts are main session 0, whatever was saved for it before.
-  const texts = rows.get(0);
-  rows.set(0, { id: 0, status: "done", steps: [], started: Date.now(), updated: Date.now(), ...texts, goal: texts?.goal || "Texts", kind: "main", source: "imessage" });
-  const screenshots = new Map<number, string>();
-  const save = (t: Row) =>
-    ctx.db.run(sql`INSERT OR REPLACE INTO tasks (id, kind, goal, status, slot, "where", repo, ssh, preview, site, report, steps, started, updated, parent, source, model, thinking, used, size)
-      VALUES (${t.id}, ${t.kind}, ${t.goal}, ${t.status}, ${t.slot ?? null}, ${t.where ?? null}, ${t.repo ?? null}, ${t.ssh ? JSON.stringify(t.ssh) : null}, ${t.preview ?? null}, ${t.site ?? null}, ${t.report ?? null}, ${JSON.stringify(t.steps)}, ${t.started}, ${t.updated}, ${t.parent ?? null}, ${t.source === undefined ? null : JSON.stringify(t.source)}, ${t.model ?? null}, ${t.thinking ?? null}, ${t.used ?? null}, ${t.size ?? null})`);
-  return {
-    rows,
-    screenshots,
-    take(e: TaskEvent) {
-      let t = rows.get(e.id);
-      if (!t) rows.set(e.id, (t = { id: e.id, kind: "sandbox", goal: "", status: "queued", started: e.at, updated: e.at, steps: [] }));
-      t.updated = e.at;
-      for (const field of ["goal", "kind", "repo", "ssh", "hostKey", "preview", "site", "slot", "where", "parent", "source", "model", "thinking", "used", "size"] as const) if (e[field] !== undefined) (t as unknown as Record<string, unknown>)[field] = e[field];
-      // A main session is titled by what the owner first said in it.
-      if (e.type === "told" && t.kind === "main" && t.goal === "New session" && e.text) t.goal = e.text;
-      if (e.type === "told") t.status = "running";
-      t.status = STATUS[e.type] ?? (e.type === "failed" && t.status !== "moving" ? "failed" : t.status);
-      if (e.type === "report") t.report = e.text;
-      if ((e.type === "report" || e.type === "replied") && e.screenshot) screenshots.set(e.id, e.screenshot.toString("base64"));
-      if (e.text && ["step", "moving", "failed"].includes(e.type)) t.steps.push({ at: e.at, text: e.text, tool: e.tool });
-      if (e.text && (e.type === "told" || e.type === "resumed")) t.steps.push({ at: e.at, text: e.text, owner: true });
-      t.steps.splice(0, Math.max(0, t.steps.length - STEPS));
-      for (const old of [...rows.keys()].slice(0, Math.max(0, rows.size - ROWS))) (rows.delete(old), screenshots.delete(old));
-      try {
-        save(t);
-      } catch (err) {
-        console.error(`saving task #${t.id}: ${(err as Error).message}`);
-      }
-      return t;
-    },
-    forget(id: number) {
-      rows.delete(id);
-      ctx.db.run(sql`DELETE FROM tasks WHERE id = ${id}`);
-    },
-  };
-}
-
-const info = (t: Row, vms: Vms): acp.SessionInfo => {
-  // Listed as kept only while its VM still is (one deleted over the limit is done).
-  if (t.status === "kept" && !vms.kept().some((k) => k.id === t.id)) t.status = "done";
+const info = (board: Board, row: Row): acp.SessionInfo => {
+  const t = board.summary(row);
   const { id, goal, steps, started, updated, ...summary } = t;
   return { sessionId: sid(id), cwd: t.repo ? "/home/cua/repo" : "/home/cua", title: goal.split("\n")[0].slice(0, 200), updatedAt: new Date(updated).toISOString(), _meta: { biscotti: summary } };
 };
@@ -160,9 +67,9 @@ const COMMANDS: acp.SessionUpdate = { sessionUpdate: "available_commands_update"
 
 export default {
   async start(ctx) {
-    if (!ctx.vms) return;
+    if (!ctx.vms || !ctx.board) return;
     const vms = ctx.vms;
-    const tasks = board(ctx);
+    const tasks = ctx.board;
     // Each open connection (keyed by the SDK's connection object, which every request's context shares) and the
     // sessions it opened.
     const connections = new Map<object, { client: acp.AgentContext; follows: Set<string> }>();
@@ -177,16 +84,16 @@ export default {
     // Main sessions whose turn was stopped: their prompt ends "cancelled".
     const cancelled = new Set<number>();
 
-    taskEvents.on("event", (e) => {
-      const t = tasks.take(e);
+    tasks.on((t, e) => {
+      if (!e) return;
       const sessionId = sid(e.id);
       const content = updates(e, ++seq, tasks.screenshots.get(e.id));
-      const status: acp.SessionUpdate = { sessionUpdate: "session_info_update", title: t.goal.split("\n")[0].slice(0, 200), updatedAt: new Date(t.updated).toISOString(), _meta: { biscotti: info(t, vms)._meta!.biscotti } };
+      const status: acp.SessionUpdate = { sessionUpdate: "session_info_update", title: t.goal.split("\n")[0].slice(0, 200), updatedAt: new Date(t.updated).toISOString(), _meta: { biscotti: info(tasks, t)._meta!.biscotti } };
       for (const { client, follows } of connections.values()) {
         if (follows.has(sessionId)) for (const update of [...content, status]) void client.notify(acp.methods.client.session.update, { sessionId, update }).catch(() => {});
         // Also on the connection's own stream (a session's updates go only to that session's stream, over HTTP), so a
         // board learns of every session as it starts and changes without following each one.
-        void client.notify("_biscotti/session", { session: info(t, vms) }).catch(() => {});
+        void client.notify("_biscotti/session", { session: info(tasks, t) }).catch(() => {});
       }
       const stop: acp.StopReason | undefined = e.type === "replied" && cancelled.delete(e.id) ? "cancelled" : e.type === "report" || e.type === "replied" ? "end_turn" : e.type === "failed" ? (/stopped/.test(e.text ?? "") ? "cancelled" : "end_turn") : undefined;
       if (stop) for (const resolve of waiting.get(e.id)?.splice(0) ?? []) resolve(stop);
@@ -211,7 +118,7 @@ export default {
         agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, resume: {}, close: {}, delete: {} }, promptCapabilities: {} },
         authMethods: [],
       }))
-      .onRequest(acp.methods.agent.session.list, () => ({ sessions: [...tasks.rows.values()].sort((a, b) => b.updated - a.updated).map((t) => info(t, vms)) }))
+      .onRequest(acp.methods.agent.session.list, () => ({ sessions: [...tasks.rows.values()].sort((a, b) => b.updated - a.updated).map((t) => info(tasks, t)) }))
       .onRequest(acp.methods.agent.session.new, ({ params, client }) => {
         const asked = (params._meta?.biscotti ?? {}) as { kind?: string; display?: string; source?: unknown };
         const id = vms.reserve();
@@ -277,7 +184,7 @@ export default {
         return { url: (await vms.watch(id)) ?? null };
       })
       .onRequest("*", async ({ method, params, signal }) => {
-        const handler = extensions.get(method);
+        const handler = methodOf(method);
         if (!handler) throw acp.RequestError.methodNotFound(method);
         return handler((params ?? {}) as Record<string, unknown>, signal);
       });
