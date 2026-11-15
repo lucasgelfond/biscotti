@@ -1,8 +1,0 @@
-{
-  "name": "@biscotti/bifrost",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@biscotti/core": "workspace:*"
-  }
-}

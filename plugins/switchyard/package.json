@@ -1,9 +1,0 @@
-{
-  "name": "@biscotti/switchyard",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@biscotti/core": "workspace:*",
-    "smol-toml": "1.9.1"
-  }
-}

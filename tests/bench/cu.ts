@@ -200,7 +200,7 @@ const phoenix = process.env.CU_PHOENIX ? (() => {
 })() : undefined;
 // The vault (empty; CU_DB keeps the database across runs, e.g. for lessons), and plugins whose task tools the VMs get:
 // by default biscotti's own (vault fills, zoom and lessons), e.g. CU_PLUGINS=secure-fill,vision,lessons,jev-quick-browse for
-// quick_browse too, or …,switchyard for routed models. Tasks run lean (CU_LEAN=0 for the full context).
+// quick_browse too, or …,claude-code for the Claude subscription's models. Tasks run lean (CU_LEAN=0 for the full context).
 const scratch = mkdtempSync(join(tmpdir(), "cu-"));
 // The owner says yes to whatever a task asks (a vault fill on a site): what is graded is what the task does with it.
 const ctx: Context = { db: openDb(process.env.CU_DB ?? `${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {} };
@@ -208,7 +208,7 @@ gate.add(await vault.tools!(ctx));
 for (const name of (process.env.CU_PLUGINS ?? "secure-fill,vision,lessons").split(",").filter(Boolean)) {
   const plugin: Plugin = (await import(`../../plugins/${name}/index.ts`)).default;
   if (plugin.tools) gate.add(await plugin.tools(ctx));
-  // A plugin's model backend too (e.g. switchyard, with SWITCHYARD_ROLES=task: auto routing in place of <model>).
+  // A plugin's model backend too (e.g. claude-code).
   if (plugin.llm) gate.serve(await plugin.llm(ctx));
 }
 const servers = await Promise.all(SLOTS.map((slot) => gate.listen(`10.200.${slot}.1`, 80, { slot })));
