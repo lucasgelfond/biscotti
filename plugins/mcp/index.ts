@@ -13,6 +13,11 @@ import { sql } from "drizzle-orm";
 
 const PORT = Number(process.env.MCP_OAUTH_PORT ?? 4793);
 const NAME = /^[a-z][a-z0-9]{0,19}$/;
+// The only tools kept of a server (by its name here); others' are all kept.
+const ONLY: Record<string, Set<string>> = {
+  notion: new Set(["notion-search", "notion-fetch", "notion-create-pages", "notion-update-page"]),
+};
+const kept = (server: string, tool: string) => !ONLY[server] || ONLY[server].has(tool);
 // Changes that only add something (a page, a comment, an issue).
 const ADDS = /(^|[-_])(create|add|append|insert|comment)/i;
 
@@ -87,7 +92,7 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>, loaded 
             const client = await connect(row).catch((err) => void console.error(`mcp ${row.name}: ${err.message}`));
             if (!client) return [];
             const { tools } = await client.listTools().finally(() => client.close());
-            return tools.map((t): Tool => {
+            return tools.filter((t) => kept(row.name, t.name)).map((t): Tool => {
               loosen(`${row.name}_${t.name}`, t.inputSchema);
               asks.set(`${row.name}_${t.name}`, !t.annotations?.readOnlyHint && !(ADDS.test(t.name) && t.annotations?.destructiveHint !== true));
               return deferred({ ...t, name: `${row.name}_${t.name}`, description: `${row.name}: ${t.description ?? ""}` });
@@ -100,6 +105,7 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>, loaded 
         const row = rows().find((r) => name.startsWith(`${r.name}_`));
         if (!row) return text(`No server for ${name}.`);
         const tool = name.slice(row.name.length + 1);
+        if (!kept(row.name, tool)) return text(`biscotti doesn't use ${row.name}'s ${tool}.`);
         args = parsed(name, args);
         if (asks.get(name) !== false && !(await ctx.ask(`${row.name}: ${tool} with ${JSON.stringify(args)}?`))) return declined;
         const client = await connect(row);
