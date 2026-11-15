@@ -171,6 +171,8 @@ export default {
     // The desktop shape asked for at session/new, until the first prompt starts the task.
     const displays = new Map<number, "mobile" | "desktop">();
     const sources = new Map<number, unknown>();
+    // Main sessions whose turn was stopped: their prompt ends "cancelled".
+    const cancelled = new Set<number>();
 
     taskEvents.on("event", (e) => {
       const t = tasks.take(e);
@@ -183,7 +185,7 @@ export default {
         // board learns of every session as it starts and changes without following each one.
         void client.notify("_biscotti/session", { session: info(t, vms) }).catch(() => {});
       }
-      const stop: acp.StopReason | undefined = e.type === "report" || e.type === "replied" ? "end_turn" : e.type === "failed" ? (/stopped/.test(e.text ?? "") ? "cancelled" : "end_turn") : undefined;
+      const stop: acp.StopReason | undefined = e.type === "replied" && cancelled.delete(e.id) ? "cancelled" : e.type === "report" || e.type === "replied" ? "end_turn" : e.type === "failed" ? (/stopped/.test(e.text ?? "") ? "cancelled" : "end_turn") : undefined;
       if (stop) for (const resolve of waiting.get(e.id)?.splice(0) ?? []) resolve(stop);
     });
 
@@ -262,7 +264,7 @@ export default {
       })
       .onNotification(acp.methods.agent.session.cancel, ({ params }) => {
         const id = idOf(params.sessionId);
-        if (tasks.rows.get(id)?.kind === "main") void ctx.interrupt?.(sid(id)).catch(() => {});
+        if (tasks.rows.get(id)?.kind === "main") cancelled.add(id), void ctx.interrupt?.(sid(id)).catch(() => {});
         else vms.stop(id);
       })
       .onRequest("_biscotti/watch", (p) => p as { sessionId: string }, async ({ params }) => ({ url: (await vms.watch(idOf(params.sessionId))) ?? null }))
