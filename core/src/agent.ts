@@ -312,7 +312,7 @@ export async function runAgent(sockets: string, _dir?: string) {
   });
   const conversation = (session: string) => ahp.conversation(session);
   // Sessions from before pi-durable-acp-ahp kept the catalogue, adopted into it (once: a known one is left as it is).
-  // To go once every install has started since.
+  // TODO: remove once every install has started since.
   const before = await harness.snapshot(BeforeSessions, ctx);
   for (const [session, id] of Object.entries(before?.ids ?? {})) {
     const source = before?.sources?.[session] ? (JSON.parse(before.sources[session]) as unknown) : undefined;

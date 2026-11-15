@@ -137,6 +137,8 @@
       fi
       echo ${version} > "$STATE/version"
       echo ${repo} > "$STATE/build"
+      # TODO: this restarts the vms service, which stops every running VM, and VMs kept from before a VM image rebuild
+      # can't be woken.
       docker compose --env-file "$ENV" -f ${repo}/core/host/compose.yaml -f "$STATE/compose.plugins.yaml" up -d --build --remove-orphans
 
     '';

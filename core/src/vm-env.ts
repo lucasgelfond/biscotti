@@ -22,6 +22,7 @@ export function vmEnv(dir: string) {
     knownHostsFile: knownHosts,
     hostKeyAlias: `biscotti-vm-${id}`,
   });
+  // TODO: bake pi-env's daemon into the VM image, rather than sending it to each VM.
   // The daemon's path in each VM, once deployed (and verified by its hash).
   const deployed = new Map<number, string>();
 

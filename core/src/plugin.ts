@@ -408,6 +408,7 @@ export function prepareVm(vm: Pick<Vm, "slot">, message: Setup) {
         } catch {}
       });
     socket.on("error", (err) => (clearTimeout(timer), reject(err)));
+    // TODO: an ssh VM on an EC2 node ends here (its setup closes the connection); tasks there set up fine.
     socket.on("close", () => (clearTimeout(timer), done || reject(new Error("the VM closed the connection"))));
   });
 }

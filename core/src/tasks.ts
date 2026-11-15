@@ -117,6 +117,7 @@ export function taskVms(
   const saved: { last: number; kept: Kept[] } = file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { last: 0, kept: [] };
   const kept = saved.kept;
   let last = saved.last;
+  // TODO: kept VMs and the last task number into SQLite with the board, instead of this file.
   const save = () => file && writeFileSync(file, JSON.stringify({ last, kept }));
   const running = new Map<number, Running & { stopped: AbortController }>();
   // VMs held after or outside a task: a task's kept open (`open`), or a plugin's (hold).

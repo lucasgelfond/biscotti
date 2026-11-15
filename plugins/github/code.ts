@@ -46,6 +46,7 @@ export function codeTasks(ctx: Context, token: string): LocalTool[] {
     return body;
   };
 
+  // TODO: into SQLite, instead of this file.
   const file = join(ctx.dir, "code-tasks.json");
   const works = new Map<number, Work>(existsSync(file) ? Object.entries(JSON.parse(readFileSync(file, "utf8"))).map(([id, w]) => [Number(id), w as Work]) : []);
   const save = () => writeFileSync(file, JSON.stringify(Object.fromEntries(works)));
