@@ -1,5 +1,6 @@
 import { chmodSync, chownSync, rmSync } from "node:fs";
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { connect } from "node:net";
 
 // HTTP between biscotti's processes, over unix sockets.
 
@@ -56,10 +57,29 @@ export function ownerApi(port = Number(process.env.API_PORT ?? 7700)) {
       if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: (err as Error).message }));
     }
   });
+  // WebSocket upgrades (the Agent Host Protocol at /ahp) passed through, raw, to a unix socket.
+  const upgrades: [string, string][] = [];
+  server.on("upgrade", (req: IncomingMessage, socket, head: Buffer) => {
+    const login = req.headers["tailscale-user-login"];
+    const owner = process.env.API_OWNER;
+    const path = new URL(req.url ?? "/", "http://api").pathname;
+    const target = upgrades.find(([prefix]) => path === prefix)?.[1];
+    if (!login || (owner && login !== owner) || !target) return void socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+    const upstream = connect(target, () => {
+      const headers = [];
+      for (let i = 0; i < req.rawHeaders.length; i += 2) headers.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+      upstream.write(`${req.method} ${req.url} HTTP/1.1\r\n${headers.join("\r\n")}\r\n\r\n`);
+      if (head.length) upstream.write(head);
+      socket.pipe(upstream).pipe(socket);
+    });
+    upstream.on("error", () => socket.destroy());
+    socket.on("error", () => upstream.destroy());
+  });
   return {
     route: (prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => unknown) => void routes.push([prefix, handler]),
+    upgrade: (prefix: string, socketPath: string) => void upgrades.push([prefix, socketPath]),
     // Only once a plugin has added a route.
     // A prompt waits for its task's report, often longer than Node's 5-minute default.
-    listen: () => (routes.length && port ? new Promise<Server>((resolve) => ((server.requestTimeout = 0), server.listen(port, "127.0.0.1", () => resolve(server)))) : undefined),
+    listen: () => ((routes.length || upgrades.length) && port ? new Promise<Server>((resolve) => ((server.requestTimeout = 0), server.listen(port, "127.0.0.1", () => resolve(server)))) : undefined),
   };
 }

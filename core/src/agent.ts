@@ -17,23 +17,28 @@ import {
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
+import type { StateAction } from "@microsoft/agent-host-protocol";
+import { WebSocketServer } from "ws";
+import { AhpHost, ROOT } from "./ahp.ts";
+import { DurableChat } from "./ahp-durable.ts";
 import { listen, readBody } from "./http.ts";
 import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
 
 // The main agent: pi-durable runs every conversation, each turn and tool call committed before it shows, so a run a
 // crash or restart cut off picks up where it was. It holds no keys and has no network: its storage (the gate's
 // encrypted database), its model, biscotti's tools and the system prompt all come through the gate's socket, and the
-// gate hands it each turn on the agent's own socket. Sessions: "main" (the owner's texts) and the others by number.
+// gate hands it each turn on the agent's own socket. Sessions: "main" (the owner's texts) and the others by number or
+// by the id an app gave them. The owner's apps see and drive them over the Agent Host Protocol (/ahp on its socket).
 
 const ctx = BACKGROUND_CONTEXT;
 const MAIN_MODEL = { provider: "biscotti", modelId: "main" } as const;
 
-// Which conversation each session is.
-const Sessions = defineDoc<{ ids: Record<string, string> }>({
+// Which conversation each session is, and its title.
+const Sessions = defineDoc<{ ids: Record<string, string>; titles?: Record<string, string> }>({
   kind: "biscotti.sessions",
   version: 1,
   scope: "session",
-  initial: () => ({ ids: {} }),
+  initial: () => ({ ids: {}, titles: {} }),
   checkpointWhen: () => true,
 });
 
@@ -182,6 +187,8 @@ export async function runAgent(sockets: string, _dir?: string) {
               : await harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: MAIN_MODEL } }, ctx);
           const id = String(handle.id);
           await harness.commit(async (tx) => void ((await tx.doc(Sessions)).ids[session] = id), ctx);
+          // A new session, for the apps' catalogues.
+          void catalogue().then((all) => host.notify(ROOT, "root/sessionAdded", { summary: all.find((s) => s.resource === `ahp-session:/${session}`) }));
         }
         sessionOf.set(String(handle.id), session);
         void follow(session, handle);
@@ -266,6 +273,101 @@ export async function runAgent(sockets: string, _dir?: string) {
     return turn.join("\n\n");
   }
 
+  // The Agent Host Protocol: each session an AHP session whose default chat is its conversation, opened when a client
+  // first looks at it.
+  const SESSION = "ahp-session:/";
+  const CHAT = "ahp-chat:/";
+  const sessionOf_ = (uri: string) => (uri.startsWith(SESSION) ? uri.slice(SESSION.length) : uri.startsWith(CHAT) ? uri.slice(CHAT.length).split("/")[0] : undefined);
+  const chats = new Map<string, DurableChat>();
+  const sessions = async () => (await harness.snapshot(Sessions, ctx)) ?? { ids: {}, titles: {} };
+  const titleOf = (session: string, titles?: Record<string, string>) => titles?.[session] ?? (session === "main" ? "Texts" : "New session");
+  const meta = (session: string) => ({ biscotti: { kind: "main", ...(session === "main" && { source: "imessage" }) } });
+  let summaries: Record<string, unknown>[] = [];
+  async function catalogue() {
+    const { ids, titles } = await sessions();
+    summaries = Object.keys(ids).map((session) => {
+      const chat = host.get<{ status: number; modifiedAt: string }>(`${CHAT}${session}`);
+      return { resource: `${SESSION}${session}`, provider: "biscotti", title: titleOf(session, titles), status: chat?.status ?? 1, createdAt: new Date(0).toISOString(), modifiedAt: chat?.modifiedAt ?? new Date(0).toISOString(), defaultChat: `${CHAT}${session}`, _meta: meta(session) };
+    });
+    return summaries;
+  }
+  async function openSession(session: string) {
+    const uri = `${SESSION}${session}`;
+    if (host.has(uri)) return;
+    const handle = await conversation(session);
+    const title = titleOf(session, (await sessions()).titles);
+    host.create(uri, { provider: "biscotti", title, status: 1, lifecycle: "ready", activeClients: [], chats: [], _meta: meta(session) });
+    const chatUri = `${CHAT}${session}`;
+    const chat = new DurableChat(host, harness, handle, chatUri, ctx, (status) => {
+      host.dispatch(uri, { type: "session/chatUpdated", chat: chatUri, changes: { status, modifiedAt: new Date().toISOString() } } as unknown as StateAction);
+      void catalogue().then(() => host.notify(ROOT, "root/sessionSummaryChanged", { session: uri, changes: { status, modifiedAt: new Date().toISOString() } }));
+    });
+    await chat.open(title);
+    chats.set(chatUri, chat);
+    host.dispatch(uri, { type: "session/chatAdded", summary: { resource: chatUri, title, status: 1, modifiedAt: new Date().toISOString(), origin: { kind: "user" } } } as unknown as StateAction);
+    host.dispatch(uri, { type: "session/defaultChatChanged", defaultChat: chatUri } as unknown as StateAction);
+  }
+  const host: AhpHost = new AhpHost(
+    {
+      listSessions: () => catalogue(),
+      async hydrate(uri) {
+        const session = sessionOf_(uri);
+        if (!session || !(session in (await sessions()).ids)) return false;
+        await openSession(session);
+        return host.has(uri);
+      },
+      async createSession(params) {
+        const session = sessionOf_(String(params.channel));
+        if (!session) throw new Error("a session's channel is ahp-session:/<id>");
+        await conversation(session);
+        await openSession(session);
+        await catalogue();
+        host.notify(ROOT, "root/sessionAdded", { summary: summaries.find((s) => s.resource === params.channel) });
+      },
+      async disposeSession(uri) {
+        const session = sessionOf_(uri)!;
+        await (await conversation(session)).abort(ctx).catch(() => {});
+        await harness.commit(async (tx) => {
+          const doc = await tx.doc(Sessions);
+          delete doc.ids[session];
+          if (doc.titles) delete doc.titles[session];
+        }, ctx);
+        conversations.delete(session);
+        chats.delete(`${CHAT}${session}`);
+        host.delete(`${CHAT}${session}`);
+        host.delete(uri);
+        await catalogue();
+        host.notify(ROOT, "root/sessionRemoved", { session: uri });
+      },
+      validate(channel, action) {
+        const chat = chats.get(channel);
+        if ((action.type as string) === "chat/turnStarted" && chat?.running) return "a turn is running: steer it with a pending message, or cancel it first";
+        return undefined;
+      },
+      acted(channel, action) {
+        const chat = chats.get(channel);
+        if (!chat) return;
+        const a = action as unknown as { type: string; turnId: string; message?: { text: string } };
+        if (a.type === "chat/turnStarted") {
+          const session = sessionOf_(channel)!;
+          void sessions().then(async ({ titles }) => {
+            if (titles?.[session] || session === "main") return;
+            const title = a.message!.text.split("\n")[0].slice(0, 80);
+            await harness.commit(async (tx) => void ((await tx.doc(Sessions)).titles = { ...((await tx.doc(Sessions)).titles ?? {}), [session]: title }), ctx);
+            host.dispatch(`${SESSION}${session}`, { type: "session/titleChanged", title } as unknown as StateAction);
+            await catalogue();
+            host.notify(ROOT, "root/sessionSummaryChanged", { session: `${SESSION}${session}`, changes: { title } });
+          });
+          void chat.started(a.turnId, a.message?.text ?? "").catch((err) => console.error(`a turn from an app: ${(err as Error).message}`));
+        }
+        if (a.type === "chat/turnCancelled") void chat.cancel();
+      },
+    },
+    { name: "biscotti", version: process.env.BISCOTTI_VERSION ?? "dev" },
+  );
+  host.create(ROOT, { agents: [{ provider: "biscotti", displayName: "biscotti", description: "biscotti's main agent", models: [] }] });
+  await catalogue();
+
   const server = createServer(async (req, res) => {
     try {
       // A restarted gate may bring new tools and a new prompt: reinstalled in place; running work keeps its own.
@@ -277,6 +379,11 @@ export async function runAgent(sockets: string, _dir?: string) {
       console.error(err);
       res.writeHead(500).end(String(err));
     }
+  });
+  const sockets_ = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    if (new URL(req.url ?? "/", "http://agent").pathname !== "/ahp") return void socket.destroy();
+    sockets_.handleUpgrade(req, socket, head, (ws) => host.accept(ws));
   });
   await listen(server, `${sockets}/agent.sock`);
   return { gateUrl };

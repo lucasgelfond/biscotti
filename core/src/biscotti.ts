@@ -35,6 +35,8 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     ? await gateTasks(gate, localHost(process.env.VMS_SOCKET, env("VM_DIR")), (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`, (text) => deliver(text))
     : undefined;
   const api = ownerApi();
+  // The owner's apps reach the agent itself over the Agent Host Protocol.
+  api.upgrade("/ahp", `${sockets}/agent.sock`);
   const send = async (text: string, image?: Buffer) => {
     if (image) await channel.send({ image });
     // Plugins' texts (a task's screenshot caption) can't pose as the gate's questions either.

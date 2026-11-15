@@ -20,9 +20,11 @@
     "better-sqlite3-multiple-ciphers": "13.0.3",
     "croner": "10.0.1",
     "drizzle-orm": "0.45.4",
-    "typebox": "^1.3.27"
+    "typebox": "^1.3.27",
+    "ws": "8.18.3"
   },
   "devDependencies": {
+    "@types/ws": "8.18.1",
     "drizzle-kit": "0.31.11"
   },
   "exports": {
