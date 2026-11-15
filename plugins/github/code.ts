@@ -17,7 +17,7 @@ const MAX_BUNDLE = 50 * 1024 * 1024;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 const PREVIEW = `
 
-Preview: the owner wants to use what you made, so once it works, leave it running for them: serve the app on 0.0.0.0:8000, detached so it outlives you (setsid nohup … > /tmp/preview.log 2>&1 &), and check it answers with curl. A production build served statically, or the project's preview or dev server, whichever is closest to how it ships. It's reached through a proxy under another host name, so let the server answer any Host header (e.g. Vite's server.allowedHosts: true, or --host 0.0.0.0). Say in your report how it's served.`;
+Preview: the owner wants to use what you made, so once it works, leave it running for them: serve the app on 0.0.0.0:8000, detached so it outlives you (setsid nohup … > /tmp/preview.log 2>&1 &), and check it answers with curl. Don't use the app in the VM's browser beyond a quick look (a screenshot that it renders): the VM has 2 CPUs and no GPU, so heavy work in a page (training, rendering, long computations) starves everything, the preview server and you included. Close the browser when you're done looking (pkill -f chromium). A production build served statically, or the project's preview or dev server, whichever is closest to how it ships. It's reached through a proxy under another host name, so let the server answer any Host header (e.g. Vite's server.allowedHosts: true, or --host 0.0.0.0). Say in your report how it's served.`;
 
 // What each coding task works on, by task number (kept in the data directory across restarts).
 interface Work {
