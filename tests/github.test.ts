@@ -13,10 +13,10 @@ test.skipIf(!hasToken)("reads from GitHub without asking", async () => {
   expect(sent.join("\n").toLowerCase()).toContain("lucasgelfond");
 });
 
-test.skipIf(!hasToken)("asks before a change, and makes none on a no", async () => {
+test.skipIf(!hasToken)("asks before closing something, and closes nothing on a no", async () => {
   const { say, sent } = await boot(["github"]);
 
-  const replied = say("Open an issue on lucasgelfond/biscotti titled 'test from biscotti' with an empty body. Go ahead.");
+  const replied = say("Close pull request #78 on lucasgelfond/biscotti. Go ahead.");
   await expect.poll(() => sent.join("\n"), { timeout: 90_000 }).toContain("Reply yes or no");
   await say("no");
   await replied;
