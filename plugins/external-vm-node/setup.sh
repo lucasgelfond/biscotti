@@ -17,7 +17,7 @@
 #   ]
 set -euo pipefail
 REGION=$1 GATE=$2 REV=$3 TYPE=${4:-m8i.large}
-: "${TS_OAUTH_CLIENT_SECRET:?the Tailscale OAuth client's secret, please}"
+: "${TS_OAUTH_CLIENT_SECRET:?the Tailscale OAuth client secret, please}"
 export AWS_REGION=$REGION AWS_PAGER=""
 account=$(aws sts get-caller-identity --query Account --output text)
 param="arn:aws:ssm:$REGION:$account:parameter/biscotti/node/tailscale"
