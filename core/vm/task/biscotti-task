@@ -518,8 +518,9 @@ createServer({ allowHalfOpen: true }, (socket) => {
       settled = true;
       if (base) {
         try {
-          const data = commits(session.delivered ?? base);
-          session.delivered = git("rev-parse", "HEAD");
+          // Everything since the base, every time: the host pushes the whole branch, and a run the host gave up on
+          // (its socket closed) delivered nothing.
+          const data = commits(base);
           if (data) socket.write(`${JSON.stringify({ type: "bundle", data })}\n`);
         } catch (err) {
           socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't bundle the commits: ${err.message}` }] } })}\n`);
