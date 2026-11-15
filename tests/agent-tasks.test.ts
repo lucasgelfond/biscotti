@@ -1,50 +1,24 @@
-import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
-import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { localDaemon } from "@earendil-works/pi-env";
 import { chatReducer, PROTOCOL_VERSION, type URI } from "@microsoft/agent-host-protocol";
 import { AhpClient, type AhpTransport, type TransportFrame } from "@microsoft/agent-host-protocol/client";
 import { afterAll, expect, test } from "vitest";
 import WebSocket from "ws";
-import type { Host } from "../core/src/plugin.ts";
 import { model } from "./stand-in-model.ts";
+import { standInVms } from "./stand-in-vm.ts";
 
 // A task as the main agent runs it (agent-tasks.ts): the owner asks, the main agent starts a task, the gate sets up a
 // VM and hands the run to the agent, whose task conversation runs a command in the VM through pi-env (the env pipe
-// through the gate's socket), and the report comes back to the owner. The VM here is pi-env's own daemon on this
-// machine, in a home of its own, standing in for ssh into a task VM; the box setup is a stand-in of the VM's.
+// through the gate's socket), and the report comes back to the owner. The VM is a stand-in (stand-in-vm.ts): pi-env's
+// own daemon on this machine.
 
 const { boot } = await import("./support.ts");
 afterAll(() => void model.close());
 
-// The VM's setup (core/vm/task/biscotti-task's box mode): the key authorized, answered with its host key.
-const set: unknown[] = [];
-const box = createServer((socket) => {
-  let body = "";
-  socket.on("data", (d) => (body += d)).on("end", () => {
-    set.push(JSON.parse(body));
-    socket.end(`${JSON.stringify({ type: "box", ok: true, hostKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandInHostKeyForTheTestVm" })}\n`);
-  });
-});
-await new Promise<void>((r) => box.listen(0, "127.0.0.1", r));
-const home = mkdtempSync(join(tmpdir(), "vm-home-"));
-const vms: Host = {
-  slots: [1],
-  restore: async (slot) => ({ slot, stop: async () => {} }),
-  endpoint: (_slot, port) => (port === 4000 ? { host: "127.0.0.1", port: (box.address() as { port: number }).port } : { host: "127.0.0.1", port }),
-  gate: () => ({ host: "127.0.0.1", port: 0, peer: () => undefined }),
-  async env(_slot, args, socket) {
-    const daemon = spawn(localDaemon(), args, { cwd: home, env: { ...process.env, HOME: home }, stdio: ["pipe", "pipe", "inherit"] });
-    socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: pi-env\r\nConnection: Upgrade\r\n\r\n");
-    socket.pipe(daemon.stdin);
-    daemon.stdout.pipe(socket);
-    daemon.on("exit", () => socket.destroy());
-    socket.on("close", () => daemon.kill()).on("error", () => daemon.kill());
-  },
-};
-afterAll(() => void box.close());
+const stand = await standInVms([1]);
+const vms = stand.host;
+const set = stand.setups;
+const home = stand.homes.get(1)!;
+afterAll(() => stand.close());
 
 const until = async (check: () => boolean, ms = 60_000) => {
   const end = Date.now() + ms;

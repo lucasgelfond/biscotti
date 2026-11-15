@@ -1,12 +1,15 @@
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { model } from "./stand-in-model.ts";
+import { standInVms } from "./stand-in-vm.ts";
 
-// biscotti on this machine for working on its apps: the real gate and agent, the stand-in model, and the Agent Host
-// Protocol on DEV_AHP_PORT (7781) of localhost, passed through as the gate does from the tailnet (no login check).
+// biscotti on this machine for working on its apps: the real gate and agent, the stand-in model, stand-in task VMs
+// (stand-in-vm.ts: "start a task: run `ls`" makes a sandbox; ssh-vms' VMs open too, though there's no sshd behind
+// them), and the Agent Host Protocol on DEV_AHP_PORT (7781) of localhost, passed through as the gate does from the
+// tailnet (no login check).
 // Run: node tests/dev-host.ts
 const { boot } = await import("./support.ts");
-const { say, sockets } = await boot([]);
+const { say, sockets } = await boot(["ssh-vms"], undefined, undefined, (await standInVms()).host);
 await say("hello from the dev host");
 const port = Number(process.env.DEV_AHP_PORT ?? 7781);
 const server = createServer((_req, res) => res.writeHead(404).end());
