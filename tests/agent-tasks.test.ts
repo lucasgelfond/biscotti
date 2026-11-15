@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatReducer, PROTOCOL_VERSION, type URI } from "@microsoft/agent-host-protocol";
 import { AhpClient, type AhpTransport, type TransportFrame } from "@microsoft/agent-host-protocol/client";
@@ -38,7 +41,6 @@ test("the main agent runs a task in its VM through pi-env and reports back", asy
   await until(() => sent.some((s) => s.includes("Task report")));
   const report = sent.find((s) => s.includes("Task report"))!;
   expect(report).toContain("done: hi-from-the-vm");
-  const { readFileSync } = await import("node:fs");
   expect(readFileSync(join(home, "made-here.txt"), "utf8").trim()).toBe("hi-from-the-vm");
 }, 120_000);
 
@@ -115,4 +117,26 @@ test("the app sees a task as a sandbox chat of its session, with the task's own 
   const { items } = await c.request("listSessions", { channel: "ahp-root://" });
   expect((items.find((s) => s.resource === "ahp-session:/main") as { chats?: { resource: string }[] }).chats?.map((ch) => ch.resource)).toEqual(["ahp-chat:/main", sandbox]);
   ws.close();
+}, 120_000);
+
+test("a coding task changes the repo it's given, and its commits come back to be pushed", async () => {
+  const { vms: pool } = await boot([], undefined, undefined, vms);
+  const dir = mkdtempSync(join(tmpdir(), "task-repo-"));
+  const git = (...args: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { encoding: "utf8" });
+  git("init", "-q", "-b", "main");
+  writeFileSync(`${dir}/greet.js`, 'export const greet = (name) => "Hello " + name;\n');
+  git("add", "-A");
+  git("commit", "-qm", "greet");
+  git("bundle", "create", "-q", `${dir}.bundle`, "HEAD", "main");
+
+  const result = await pool!.run("run `cd ~/repo && sed -i.bak 's/Hello /Hello, /' greet.js && rm greet.js.bak && cat greet.js`", { repo: readFileSync(`${dir}.bundle`), model: "code" });
+
+  // The VM's setup checked it out, the task changed it, and what it left uncommitted came back as a commit.
+  expect(set.at(-1)?.box.repo).toBeDefined();
+  expect(result.report).toContain("Hello, ");
+  expect(result.bundle).toBeDefined();
+  writeFileSync(`${dir}.out.bundle`, result.bundle!);
+  git("pull", "-q", "--ff-only", `${dir}.out.bundle`, "HEAD");
+  expect(readFileSync(`${dir}/greet.js`, "utf8")).toContain('"Hello, " + name');
+  expect(git("log", "-1", "--format=%s")).toContain("Uncommitted changes at the end of the task");
 }, 120_000);

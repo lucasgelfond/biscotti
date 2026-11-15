@@ -146,5 +146,5 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
 
   for (const plugin of plugins) await plugin.start?.(ctx);
   await api.listen();
-  return { db, channel, handle };
+  return { db, channel, handle, vms: vms?.vms };
 }
