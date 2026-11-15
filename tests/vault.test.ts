@@ -34,7 +34,7 @@ test("saves a login through a one-time form, and shows the agent its username bu
   expect(saved.status).toBe(200);
   expect(reused.status).toBe(404);
   expect(onDisk.includes("hunter2")).toBe(false);
-  expect(toolCalls(db).flat()).toContain("mcp__biscotti__vault_list");
+  expect(toolCalls(db).flat()).toContain("vault_list");
   expect(texts).toContain("owner@example.com");
   expect(texts).not.toContain("hunter2-biscotti");
 });
@@ -47,7 +47,7 @@ test("saves a password pasted in chat, and from then on the model only sees a pl
   await say("What's my Netflix password? Spell it out exactly.");
 
   const saved = db.$client.prepare("SELECT value FROM vault WHERE name LIKE '%etflix%'").get() as { value: string } | undefined;
-  expect(toolCalls(db).flat()).toContain("mcp__biscotti__vault_save");
+  expect(toolCalls(db).flat()).toContain("vault_save");
   expect(saved?.value).toContain("correct-horse-9");
   expect(sent.join("\n")).not.toContain("correct-horse-9");
 });

@@ -6,6 +6,7 @@ import { memoryTools, openDb } from "./memory.ts";
 import { localTools, type Channel, type Context, type Plugin } from "./plugin.ts";
 import { ownerApi } from "./http.ts";
 import { emit } from "./plugin.ts";
+import { sqlBridge } from "./sql-bridge.ts";
 import { gateTasks, localHost } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
 
@@ -59,6 +60,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   const number = (session: string) => (session === "main" ? 0 : Number(session));
   const turn = await connectAgent(sockets, {
     db,
+    sql: sqlBridge(`${dir}/durable.db`, env("DB_KEY")),
     prompt,
     gate: gate.handle,
     onEvent(session, e) {

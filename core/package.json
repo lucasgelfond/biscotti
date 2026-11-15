@@ -9,7 +9,13 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2",
+    "@earendil-works/pi-env": "1.5.2",
+    "@earendil-works/pi-schema": "1.5.2",
+    "@microsoft/agent-host-protocol": "1.1.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "better-sqlite3-multiple-ciphers": "13.0.3",
     "croner": "10.0.1",

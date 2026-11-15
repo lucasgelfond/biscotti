@@ -1,15 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
-import { eq } from "drizzle-orm";
 import { call, listen, readBody } from "./http.ts";
-import { searchableText, type Db } from "./memory.ts";
+import type { Db } from "./memory.ts";
+import type { SqlRequest, sqlBridge } from "./sql-bridge.ts";
 import { transcripts } from "./schema.ts";
 
 // The gate's side of the main agent (agent.ts): the agent's way in (its model and tools through `gate`, the system
-// prompt, each session's transcript, what it's doing) on a socket only it shares, and each turn sent to the agent's
-// own socket. The main agent has many sessions (conversations): "main" (the owner's texts) or another's number; all
+// prompt, its durable state through `sql`, each session's transcript for memory, what it's doing) on a socket only it
+// shares, and each turn sent to the agent's own socket. The main agent has many sessions (conversations): "main" (the owner's texts) or another's number; all
 // of them are one memory (memory.ts searches every transcript).
-export async function connectAgent(sockets: string, opts: { db: Db; prompt: string; gate: (req: IncomingMessage, res: ServerResponse) => void; onEvent?: (session: string, event: AgentEvent) => void }) {
+export async function connectAgent(
+  sockets: string,
+  opts: { db: Db; sql: ReturnType<typeof sqlBridge>; prompt: string; gate: (req: IncomingMessage, res: ServerResponse) => void; onEvent?: (session: string, event: AgentEvent) => void },
+) {
   const { db } = opts;
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://gate");
@@ -18,12 +20,18 @@ export async function connectAgent(sockets: string, opts: { db: Db; prompt: stri
     if (url.pathname === "/event" && req.method === "POST") {
       return void readBody(req).then((body) => (opts.onEvent?.(session, JSON.parse(body)), res.end()), (err) => res.writeHead(400).end(String(err)));
     }
-    if (url.pathname !== "/transcript") return opts.gate(req, res);
-    if (req.method !== "POST") return void res.end(JSON.stringify(db.select({ entry: transcripts.entry }).from(transcripts).where(eq(transcripts.session, session)).orderBy(transcripts.seq).all().map((r) => r.entry)));
+    // pi-durable's storage: its own encrypted database, so nothing the agent sends reaches the vault or memory.
+    if (url.pathname === "/sql" && req.method === "POST") {
+      return void readBody(req)
+        .then(async (body) => res.end(JSON.stringify({ answer: await opts.sql.handle(JSON.parse(body) as SqlRequest) })))
+        .catch((err) => res.writeHead(400).end(String((err as Error).message ?? err)));
+    }
+    if (url.pathname !== "/transcript" || req.method !== "POST") return opts.gate(req, res);
+    // What each session said, as text, for memory's search.
     readBody(req).then(
       (body) => {
-        const entries = JSON.parse(body) as FileEntry[];
-        if (entries.length) db.insert(transcripts).values(entries.map((entry) => ({ id: entry.id, entry, text: searchableText(entry), session }))).onConflictDoNothing().run();
+        const rows = JSON.parse(body) as { id: string; entry: unknown; text: string | null }[];
+        if (rows.length) db.insert(transcripts).values(rows.map((r) => ({ id: r.id, entry: r.entry, text: r.text, session }))).onConflictDoNothing().run();
         res.end();
       },
       (err) => res.writeHead(400).end(String(err)),

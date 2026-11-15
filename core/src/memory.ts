@@ -1,4 +1,3 @@
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import Database from "better-sqlite3-multiple-ciphers";
 import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -18,15 +17,6 @@ export function openDb(path: string, key: string) {
 }
 
 export type Db = ReturnType<typeof openDb>;
-
-export function searchableText(entry: FileEntry): string | null {
-  if (entry.type !== "message") return null;
-  const { role, content } = entry.message as { role: string; content: unknown };
-  if (role !== "user" && role !== "assistant") return null;
-  const parts = typeof content === "string" ? [content] : (content as { text?: string }[]).map((p) => p.text ?? "");
-  const joined = parts.join("\n").trim();
-  return joined ? `${role}: ${joined}` : null;
-}
 
 // Quoted terms, so user text is never parsed as FTS5 syntax.
 const ftsQuery = (s: string) => (s.match(/[\p{L}\p{N}]+/gu) ?? []).map((t) => `"${t}"`).join(" OR ");

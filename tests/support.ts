@@ -57,11 +57,13 @@ export async function boot(names: (string | Plugin)[], dir = newDataDir(), resta
 }
 
 
+// The tools each of the agent's answers called, from the transcript (pi-durable entries).
 export function toolCalls(db: Awaited<ReturnType<typeof boot>>["db"]) {
   return db.$client
     .prepare("SELECT entry FROM transcripts")
     .all()
-    .map((r) => JSON.parse((r as { entry: string }).entry))
-    .filter((e) => e.type === "message" && e.message.role === "assistant")
-    .map((e) => (e.message.content as { type: string; name?: string }[]).flatMap((c) => (c.type === "toolCall" ? [c.name!] : [])));
+    .map((r) => JSON.parse((r as { entry: string }).entry) as { model?: { role: string; content: unknown }[] })
+    .map((e) => e.model?.[0])
+    .filter((m) => m?.role === "assistant")
+    .map((m) => (Array.isArray(m!.content) ? (m!.content as { type: string; name?: string }[]) : []).flatMap((c) => (c.type === "toolCall" ? [c.name!] : [])));
 }

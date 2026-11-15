@@ -1,11 +1,10 @@
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // Every pi session entry, including ones compaction summarized away.
 export const transcripts = sqliteTable("transcripts", {
   seq: integer().primaryKey({ autoIncrement: true }),
   id: text().notNull().unique(),
-  entry: text({ mode: "json" }).$type<FileEntry>().notNull(),
+  entry: text({ mode: "json" }).$type<unknown>().notNull(),
   text: text(),
   // Which of the main agent's sessions ("main": the owner's texts; otherwise its number). Memory searches them all.
   session: text().notNull().default("main"),
