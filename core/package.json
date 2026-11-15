@@ -19,7 +19,7 @@
     "better-sqlite3-multiple-ciphers": "13.0.3",
     "croner": "10.0.1",
     "drizzle-orm": "0.45.4",
-    "pi-durable-acp-ahp": "github:lucasgelfond/pi-durable-acp-ahp#823c613",
+    "pi-durable-acp-ahp": "github:lucasgelfond/pi-durable-acp-ahp#07d7793",
     "typebox": "^1.3.27"
   },
   "devDependencies": {

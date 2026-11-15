@@ -74,6 +74,11 @@ const lastTurn = (state: { turns: { message: { text: string }; responseParts: { 
 
 test("an app sees and drives biscotti's sessions over AHP", async () => {
   const { say, sent, sockets, db } = await boot([]);
+  // The owner's texts are listed before anything's said in them.
+  const early = await client(sockets);
+  await early.c.initialize({ clientId: early.id, protocolVersions: [PROTOCOL_VERSION], initialSubscriptions: ["ahp-root://"] });
+  expect((await early.c.request("listSessions", { channel: "ahp-root://" })).items.map((s) => [s.resource, s.title])).toContainEqual(["ahp-session:/main", "Texts"]);
+  early.ws.close();
   await say("hello there");
   expect(sent.at(-1)).toBe("echo: hello there");
 

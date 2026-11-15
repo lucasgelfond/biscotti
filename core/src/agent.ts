@@ -5,9 +5,11 @@ import { createModels, createProvider } from "@earendil-works/pi-ai/models";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
   type Conversation,
+  type ConversationId,
   type Extension,
   type ToolExecutionResult,
   createRegistry,
+  defineDoc,
   defineExtension,
   defineTool,
   Harness,
@@ -32,6 +34,15 @@ import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
 const ctx = BACKGROUND_CONTEXT;
 const MAIN_MODEL = { provider: "biscotti", modelId: "main" } as const;
 const CONTEXT_WINDOW = 200_000;
+
+// The sessions' catalogue as biscotti kept it before pi-durable-acp-ahp did (until 2026-11-15), for adopting them.
+const BeforeSessions = defineDoc<{ ids: Record<string, string>; titles?: Record<string, string>; created?: Record<string, string>; sources?: Record<string, string>; displays?: Record<string, string> }>({
+  kind: "biscotti.sessions",
+  version: 1,
+  scope: "session",
+  initial: () => ({ ids: {}, titles: {} }),
+  checkpointWhen: () => true,
+});
 
 export async function runAgent(sockets: string, _dir?: string) {
   const relay = createTcpServer((client) => {
@@ -300,6 +311,17 @@ export async function runAgent(sockets: string, _dir?: string) {
     ),
   });
   const conversation = (session: string) => ahp.conversation(session);
+  // Sessions from before pi-durable-acp-ahp kept the catalogue, adopted into it (once: a known one is left as it is).
+  // To go once every install has started since.
+  const before = await harness.snapshot(BeforeSessions, ctx);
+  for (const [session, id] of Object.entries(before?.ids ?? {})) {
+    const source = before?.sources?.[session] ? (JSON.parse(before.sources[session]) as unknown) : undefined;
+    const display = before?.displays?.[session];
+    const biscotti = { ...(source !== undefined && { source }), ...(display && { display }) };
+    await ahp.adopt(session, Number(id) as unknown as ConversationId, { title: before?.titles?.[session], created: before?.created?.[session], ...(Object.keys(biscotti).length && { meta: { biscotti } }) });
+  }
+  // The owner's texts are a session from the start, not only once something's said in them.
+  await conversation("main");
   const acp = ahp.acp({ contextWindow: CONTEXT_WINDOW });
   const path = (url = "/") => new URL(url, "http://agent").pathname;
 
