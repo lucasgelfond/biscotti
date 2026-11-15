@@ -1,8 +1,8 @@
 import type { ConversationId } from "@earendil-works/pi-durable";
-import type { Chat } from "pi-durable-ahp";
+import type { Chat } from "pi-durable-acp-ahp";
 import type { Row } from "./board.ts";
 
-// The board's tasks (sandboxes) and VMs as chats beside the session that started them (pi-durable-ahp's `chats`): a
+// The board's tasks (sandboxes) and VMs as chats beside the session that started them (pi-durable-acp-ahp's `chats`): a
 // task's in its parent session, a VM's in "main", each keyed by its number. A chat's _meta.biscotti, and its session's
 // _meta.biscotti.chats (so a list shows them without subscribing to each), is its row as the apps read it. A task's turns
 // are its own conversation's; what a client says in one goes to the task through the gate (told while it runs, or a

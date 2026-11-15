@@ -10,7 +10,7 @@ services:
       context: ../..
       dockerfile: core/Dockerfile
       # The read-only deploy key for private dependencies (core/Dockerfile).
-      ssh: ["default=/var/lib/biscotti/deploy-keys/pi-durable-ahp"]
+      ssh: ["default=/var/lib/biscotti/deploy-keys/pi-durable-acp-ahp"]
     image: biscotti/agent
     network_mode: host
     env_file: /var/lib/biscotti/.env

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import type { Context } from "@earendil-works/chord/context";
-import { inputFrom } from "pi-durable-ahp";
+import { inputFrom } from "pi-durable-acp-ahp";
 import {
   type Conversation,
   type ConversationId,

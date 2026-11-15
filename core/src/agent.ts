@@ -16,7 +16,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
-import { durableAhp, inputFrom } from "pi-durable-ahp";
+import { durableAhp, inputFrom } from "pi-durable-acp-ahp";
 import { agentTasks, type TaskRun } from "./agent-tasks.ts";
 import { sandboxes } from "./sandboxes.ts";
 import { listen, readBody } from "./http.ts";
@@ -264,8 +264,9 @@ export async function runAgent(sockets: string, _dir?: string) {
     return turn.join("\n\n");
   }
 
-  // The owner's apps see and drive the sessions over the Agent Host Protocol (pi-durable-ahp): "main" is the owner's
-  // texts (the root conversation), the others an app's; a session's tasks and VMs are chats beside it (sandboxes.ts).
+  // The owner's apps see and drive the sessions over the Agent Host Protocol (/ahp) or the Agent Client Protocol (/acp,
+  // pi-durable-acp-ahp): "main" is the owner's texts (the root conversation), the others an app's; a session's tasks and
+  // VMs are chats beside it (sandboxes.ts).
   const board = sandboxes({
     method,
     follow: stream,
@@ -293,9 +294,14 @@ export async function runAgent(sockets: string, _dir?: string) {
     // Inputs carry the time they were sent, for the model; the chat shows what was said.
     input: (text) => `[${new Date().toString()}] ${text}`,
     said: (text) => text.replace(/^\[[^\]]*\] /, ""),
-    methods: Object.fromEntries(Object.entries(board.methods).map(([name, run]) => [name, (params: Record<string, unknown>) => run(params)])),
+    // Each also by its ACP name's (_biscotti/vms/open is x-biscotti/vms/open; the app's is x-biscotti/vms.open).
+    methods: Object.fromEntries(
+      Object.entries(board.methods).flatMap(([name, run]) => [name, name.replace(/\.(?=[^/]*$)/, "/")].map((n) => [n, (params: Record<string, unknown>) => run(params)])),
+    ),
   });
   const conversation = (session: string) => ahp.conversation(session);
+  const acp = ahp.acp({ contextWindow: CONTEXT_WINDOW });
+  const path = (url = "/") => new URL(url, "http://agent").pathname;
 
   const server = createServer(async (req, res) => {
     try {
@@ -303,6 +309,8 @@ export async function runAgent(sockets: string, _dir?: string) {
       if (req.url === "/reload") return void (tasks.reload(), res.end(void registry.install(await biscotti())));
       // A task's run, for the gate: what it does, as lines, until it's done.
       if (req.url === "/task") return void (await tasks.run(JSON.parse(await readBody(req)) as TaskRun, res, registry));
+      // ACP's Streamable HTTP.
+      if (path(req.url) === "/acp") return void acp.http(req, res);
       const { text, session = "main", origin } = JSON.parse(await readBody(req)) as { text?: string; session?: string; origin?: string };
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await reply(String(session), String(text), origin) }));
     } catch (err) {
@@ -313,8 +321,9 @@ export async function runAgent(sockets: string, _dir?: string) {
     }
   });
   server.on("upgrade", (req, socket, head) => {
-    if (new URL(req.url ?? "/", "http://agent").pathname !== "/ahp") return void socket.destroy();
-    ahp.upgrade(req, socket, head);
+    if (path(req.url) === "/ahp") return ahp.upgrade(req, socket, head);
+    if (path(req.url) === "/acp") return acp.upgrade(req, socket, head);
+    socket.destroy();
   });
   await listen(server, `${sockets}/agent.sock`);
   return { gateUrl };

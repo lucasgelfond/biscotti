@@ -11,7 +11,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # A stalled download can hang pnpm for good, so each try gets an hour: enough for the largest package (Claude Code's
 # binary, ~100 MB) on a slow connection. The store is a build cache, so a try (or the next build) carries on from the
 # packages the last one finished.
-# pi-durable-ahp comes from a private GitHub repo, over ssh with the read-only deploy key the build mounts (compose.yaml's
+# pi-durable-acp-ahp comes from a private GitHub repo, over ssh with the read-only deploy key the build mounts (compose.yaml's
 # build.ssh), checked against GitHub's own host key.
 RUN mkdir -p -m 700 /root/.ssh && echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > /root/.ssh/known_hosts
 RUN --mount=type=ssh --mount=type=cache,id=pnpm-store,target=/pnpm-store for try in 1 2 3; do timeout 3600 pnpm fetch --prod --store-dir /pnpm-store && exit 0; done; exit 1

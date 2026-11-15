@@ -39,6 +39,23 @@ export function call(socketPath: string, method: string, path: string, body?: st
   });
 }
 
+// A handler that passes requests through to the server on `socketPath`, streamed both ways (ACP's Streamable HTTP holds
+// a response open for as long as the client follows).
+export function passTo(socketPath: string) {
+  return (req: IncomingMessage, res: ServerResponse) =>
+    new Promise<void>((resolve) => {
+      const upstream = request({ socketPath, method: req.method, path: req.url, headers: req.headers, agent: false }, (answer) => {
+        res.writeHead(answer.statusCode ?? 502, answer.headers);
+        answer.pipe(res);
+        answer.on("end", resolve).on("error", () => (res.destroy(), resolve()));
+      });
+      upstream.on("error", () => (res.headersSent ? res.destroy() : res.writeHead(502).end(), resolve()));
+      // The client gone, so is the request upstream.
+      res.on("close", () => (upstream.destroy(), resolve()));
+      req.pipe(upstream);
+    });
+}
+
 // The owner's API, for their apps: the routes plugins add (Context.route), on API_PORT on localhost. `tailscale serve`
 // publishes it on the tailnet (nix/setup.nix), which names the person on each request (Tailscale-User-Login). Only the
 // owner's login (API_OWNER, e.g. you@github) may use it; without API_OWNER, anyone on the tailnet signed in as a person
@@ -58,7 +75,8 @@ export function ownerApi(port = Number(process.env.API_PORT ?? 7700)) {
       if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: (err as Error).message }));
     }
   });
-  // WebSocket upgrades (the Agent Host Protocol at /ahp) passed through, raw, to a unix socket.
+  // WebSocket upgrades (the Agent Host Protocol at /ahp, the Agent Client Protocol at /acp) passed through, raw, to a
+  // unix socket.
   const upgrades: [string, string][] = [];
   server.on("upgrade", (req: IncomingMessage, socket, head: Buffer) => {
     const login = req.headers["tailscale-user-login"];

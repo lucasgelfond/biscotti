@@ -4,7 +4,7 @@ import crons from "./crons.ts";
 import { createGate, LOCKS, scrub } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import { appMethod, localTools, type Channel, type Context, type Host, type Plugin } from "./plugin.ts";
-import { ownerApi } from "./http.ts";
+import { ownerApi, passTo } from "./http.ts";
 import { sqlBridge } from "./sql-bridge.ts";
 import { gateTasks, localHost } from "./tasks.ts";
 import { vmEnv } from "./vm-env.ts";
@@ -48,8 +48,11 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
         })
       : undefined;
   const api = ownerApi();
-  // The owner's apps reach the agent itself over the Agent Host Protocol.
+  // The owner's apps reach the agent itself over the Agent Host Protocol, or the Agent Client Protocol (a WebSocket, or
+  // Streamable HTTP).
   api.upgrade("/ahp", `${sockets}/agent.sock`);
+  api.upgrade("/acp", `${sockets}/agent.sock`);
+  api.route("/acp", passTo(`${sockets}/agent.sock`));
   const send = async (text: string, image?: Buffer) => {
     if (image) await channel.send({ image });
     // Plugins' texts (a task's screenshot caption) can't pose as the gate's questions either.
