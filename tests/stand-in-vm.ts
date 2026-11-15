@@ -6,13 +6,18 @@ import { join } from "node:path";
 import { localDaemon } from "@earendil-works/pi-env";
 import type { Host } from "../core/src/plugin.ts";
 
-// Task VMs on this machine, for tests and the dev host: each slot's "VM" is pi-env's own daemon here, in a home of its
-// own (`homes`), standing in for ssh into a task VM. Its setup (core/vm/task/biscotti-task's box mode) is a stand-in
-// that records what it was asked (`setups`), checks a coding task's repo out in ~/repo as the VM's does (git only, no
-// jj), and answers with a host key.
-export async function standInVms(slots = [1, 2]) {
+// Task VMs on this machine, for tests and the dev host: a slot's "VM" is pi-env's own daemon here in a home of its
+// own, standing in for ssh into a task VM. As with a real one, a VM restored into a slot starts fresh (a new home), one
+// suspended keeps its home to resume with, and one discarded loses it. Its setup (the VM image's, on port 4000) records
+// what it was asked (`setups`), checks a coding task's repo out in ~/repo as the VM's does (git only, no jj), and
+// answers with a host key. `fail` makes the next restores fail, for tests of what happens then.
+export async function standInVms(slots = [1, 2], label?: string) {
   const setups: { slot: number; box: { key?: string; repo?: string; setup?: string } }[] = [];
-  const homes = new Map(slots.map((slot) => [slot, mkdtempSync(join(tmpdir(), `vm-${slot}-home-`))]));
+  const fresh = () => mkdtempSync(join(tmpdir(), "vm-home-"));
+  // Each slot's VM's home now, and each suspended VM's.
+  const homes = new Map<number, string>();
+  const suspended = new Map<number, string>();
+  let failing = 0;
   const checkout = (home: string, bundle: string) => {
     const git = (...args: string[]) => execFileSync("git", ["-C", `${home}/repo`, ...args]);
     writeFileSync(`${home}/repo.bundle`, Buffer.from(bundle, "base64"));
@@ -38,17 +43,32 @@ export async function standInVms(slots = [1, 2]) {
     await new Promise<void>((r) => box.listen(0, "127.0.0.1", r));
     boxes.set(slot, box);
   }
-  // A VM put to sleep keeps its home, as a suspended one keeps its disk.
-  const vm = (slot: number) => ({ slot, stop: async () => {}, suspend: async () => {} });
+  const vm = (slot: number) => ({
+    slot,
+    stop: async () => void homes.delete(slot),
+    suspend: async (id: number) => void (suspended.set(id, homes.get(slot)!), homes.delete(slot)),
+  });
   const host: Host = {
+    ...(label && { label }),
     slots,
-    restore: async (slot) => vm(slot),
-    resume: async (slot) => vm(slot),
-    discard: async () => {},
+    async restore(slot) {
+      if (failing > 0) throw (failing--, new Error("the stand-in VM wouldn't start"));
+      homes.set(slot, fresh());
+      return vm(slot);
+    },
+    async resume(slot, id) {
+      const home = suspended.get(id);
+      if (!home) throw new Error(`no VM #${id} suspended here`);
+      suspended.delete(id);
+      homes.set(slot, home);
+      return vm(slot);
+    },
+    discard: async (_slot, id) => void suspended.delete(id),
     endpoint: (slot, port) => (port === 4000 ? { host: "127.0.0.1", port: (boxes.get(slot)!.address() as { port: number }).port } : { host: "127.0.0.1", port }),
     gate: () => ({ host: "127.0.0.1", port: 0, peer: () => undefined }),
     async env(slot, args, socket) {
-      const home = homes.get(slot)!;
+      const home = homes.get(slot);
+      if (!home) throw new Error(`no VM in slot ${slot}`);
       const daemon = spawn(localDaemon(), args, { cwd: home, env: { ...process.env, HOME: home }, stdio: ["pipe", "pipe", "inherit"] });
       socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: pi-env\r\nConnection: Upgrade\r\n\r\n");
       socket.pipe(daemon.stdin);
@@ -57,5 +77,12 @@ export async function standInVms(slots = [1, 2]) {
       socket.on("close", () => daemon.kill()).on("error", () => daemon.kill());
     },
   };
-  return { host, setups, homes, close: () => boxes.forEach((b) => b.close()) };
+  return {
+    host,
+    setups,
+    // The home of the VM in a slot now.
+    home: (slot: number) => homes.get(slot),
+    fail: (times = 1) => void (failing += times),
+    close: () => boxes.forEach((b) => b.close()),
+  };
 }

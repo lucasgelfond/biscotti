@@ -2,9 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 
-// The stand-in model, OpenAI chat completions streamed: "remember X" calls the remember tool, "start a task: X" the
-// task tool, and in a task "run `X`" the bash tool; a bash result is answered with "done: " and its output, another
-// tool's with "saved"; anything else is echoed.
+// The stand-in model, OpenAI chat completions streamed: "remember X" calls the remember tool; "start a task: X" the
+// task tool ("start a kept task: X" with keep), "tell task N: X" tell_task, "stop task N" stop_task; in a task, "run `X`"
+// the bash tool. A bash result is answered with "done: " and its output, another tool's with "saved"; anything else is
+// echoed.
 export const requests: { messages: { role: string; content: unknown }[]; tools?: { function: { name: string } }[] }[] = [];
 export const model = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   let body = "";
@@ -17,7 +18,9 @@ export const model = createServer(async (req: IncomingMessage, res: ServerRespon
     `data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: finish }], ...(usage && { usage }) })}\n\n`;
   res.writeHead(200, { "content-type": "text/event-stream" });
   const remember = said.match(/remember (.+)$/)?.[1];
-  const task = said.match(/start a task: (.+)$/)?.[1];
+  const task = said.match(/start a (kept )?task: (.+)$/);
+  const tell = said.match(/tell task (\d+): (.+)$/);
+  const stop = said.match(/stop task (\d+)/);
   const command = request.tools?.some((t) => t.function.name === "bash") ? said.match(/run `([^`]+)`/)?.[1] : undefined;
   const call = (name: string, args: object) =>
     chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name, arguments: JSON.stringify(args) } }] }) +
@@ -26,7 +29,9 @@ export const model = createServer(async (req: IncomingMessage, res: ServerRespon
   if (last.role === "tool")
     res.write(chunk({ role: "assistant", content: calledBash ? `done: ${said.trim()}` : "saved" }) + chunk({}, "stop", { prompt_tokens: 20, completion_tokens: 1, total_tokens: 21 }));
   else if (remember) res.write(call("remember", { fact: remember }));
-  else if (task) res.write(call("task", { goal: task }));
+  else if (tell) res.write(call("tell_task", { id: Number(tell[1]), message: tell[2] }));
+  else if (stop) res.write(call("stop_task", { id: Number(stop[1]) }));
+  else if (task) res.write(call("task", { goal: task[2], ...(task[1] && { keep: true }) }));
   else if (command) res.write(call("bash", { command }));
   else res.write(chunk({ role: "assistant", content: `echo: ${said.replace(/^\[[^\]]*\] /, "")}` }) + chunk({}, "stop", { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 }));
   res.end("data: [DONE]\n\n");
