@@ -109,15 +109,18 @@ export async function runAgent(sockets: string, dir: string) {
         }
         // /compact: the conversation so far summarized, to free its context.
         if (message.trim() === "/compact") {
+          let said: string;
           try {
             await session.compact();
-            return "Compacted: the conversation so far is summarized, freeing its context.";
+            said = "Compacted: the conversation so far is summarized, freeing its context.";
           } catch (err) {
-            return `Nothing compacted: ${(err as Error).message}`;
-          } finally {
-            await save();
-            await status();
+            said = `Nothing compacted: ${(err as Error).message}`;
           }
+          await save();
+          // Said as a message, as a reply would be, for the owner's apps.
+          await fetch(`${gateUrl}/event?session=${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: said }] } }) }).catch(() => {});
+          await status();
+          return said;
         }
         const before = session.sessionManager.getEntries().length;
         try {
