@@ -198,7 +198,7 @@ export function createGate(opts: {
     const call = { name, slot, task: slot ? slotTasks.get(slot) : undefined };
     const send = ({ llm: b, model }: { llm?: Llm; model: string }) =>
       b
-        ? b.complete({ ...body, model, tools: body.tools?.map(strict) }, abort.signal, call).catch(() => new Response(null, { status: 503 }))
+        ? b.complete({ ...body, model, tools: body.tools?.map(strict) }, abort.signal, call).catch((err) => new Response(String((err as Error).message ?? err), { status: 503 }))
         : fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
@@ -209,9 +209,9 @@ export function createGate(opts: {
     // do this model's next calls for a while.
     for (const next of live.slice(1)) {
       if (!way.llm || !FALLBACK_STATUSES.has(upstream.status)) break;
-      console.error(`model ${name}: the plugin's backend answered ${upstream.status}; using ${next.model} for ${FALLBACK_MS / 60_000} min`);
+      const why = (await upstream.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 300);
+      console.error(`model ${name}: the plugin's backend answered ${upstream.status}${why ? ` (${why})` : ""}; using ${next.model} for ${FALLBACK_MS / 60_000} min`);
       benched.set(way.llm, (benched.get(way.llm) ?? new Map()).set(name, Date.now() + FALLBACK_MS));
-      await upstream.body?.cancel().catch(() => {});
       way = next;
       upstream = await send(way);
     }

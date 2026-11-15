@@ -262,6 +262,9 @@ export function agentTasks(opts: {
   }
 
   const taskOf = async (conversationId: ConversationId, c: Context) => (await opts.harness().snapshot(TaskDoc, conversationId, c))?.id;
+  // The tasks with a run under way here: only they have their VM (the gate puts it away, or deletes it, once a run is
+  // over, so nothing reaches for it after).
+  const active = new Set<number>();
 
   // What each task's run is doing now, in this process: where its lines go, whether its result was checked yet, and
   // what the requester has said since it started.
@@ -462,6 +465,7 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
     const send = (line: Line) => void (!res.destroyed && res.write(`${JSON.stringify(line)}\n`));
     res.writeHead(200, { "content-type": "application/x-ndjson" });
     const { id } = task;
+    active.add(id);
     try {
       if (task.runner) {
         send(said(await runOwn(task, send)));
@@ -578,6 +582,7 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
     } catch (err) {
       send(said(`The task couldn't run: ${(err as Error).message}`));
     } finally {
+      active.delete(id);
       release(id);
       res.end();
     }
@@ -594,7 +599,7 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
     // The environment of a task's conversation (its VM's), for the Harness; none for any other.
     async env(conversationId: ConversationId, read: { snapshot: Harness["snapshot"] }, c: Context): Promise<ExecutionEnv | undefined> {
       const task = await (read.snapshot as (doc: typeof TaskDoc, id: ConversationId, c: Context) => Promise<{ id: number } | undefined>)(TaskDoc, conversationId, c);
-      return task?.id ? vm(task.id).env : undefined;
+      return task?.id && active.has(task.id) ? vm(task.id).env : undefined;
     },
     // The gate restarted: its tools may have changed, so they're listed again for the next task.
     reload() {
