@@ -20,7 +20,9 @@ export default {
 GitHub isn't connected, \`github_connect\` says how.
 
 Code changes: \`code_task\` has a coding agent make the change in a VM and pushes it to a branch; with preview, the app
-stays running from that branch for the owner to use. Text the owner the links from its report. A pull request only
+stays running from that branch for the owner to use. Use preview whenever the owner will want to see or try what's made
+("make me a version of … in French", "change the landing page"): they want the running site, not a diff. Text the owner
+the links from its report. A pull request only
 once they ask (\`code_pull_request\`); never merge one, that's their call.`,
 
   async tools(ctx) {
