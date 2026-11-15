@@ -14,7 +14,8 @@ import { extension } from "../api/index.ts";
 // opened or reopened for 6 hours go to sleep: closed and kept on disk, to open again. Each is a session of the
 // api plugin's ACP agent (kind "vm", its ssh address, host key and Preview in _meta.biscotti), with these methods:
 //
-//   _biscotti/vms/open    {key, repo?, base?, setup?}: one to ssh into -> SshVm
+//   _biscotti/vms/open    {key, repo?, base?, setup?, where?}: one to ssh into -> SshVm. `where`: "local" (this
+//                         machine's VMs) or "cloud" (an external VM node's); either, by default
 //   _biscotti/vms/reopen  {sessionId, key}: a closed one open again, adding that key -> SshVm
 //   _biscotti/vms/close   {sessionId, discard?}: closed (kept, to open again), or deleted for good
 
@@ -126,13 +127,15 @@ export default {
     }
     warmUp();
 
-    async function openVm(request: { key: string; repo?: string; base?: string; setup?: string }) {
+    async function openVm(request: { key: string; repo?: string; base?: string; setup?: string; where?: "local" | "cloud" }) {
+      const fits = request.where ? (slot: number) => where(slot) === request.where : undefined;
+      if (request.where === "cloud" && !endpoints.size) throw new Error("there's no cloud machine set up (the external-vm-node plugin)");
       if (!KEY.test(request.key.trim())) throw new Error("that isn't an ssh public key");
-      const warm = request.repo && request.repo === warmRepo && !request.base && !request.setup ? ready.shift() : undefined;
+      const warm = request.repo && request.repo === warmRepo && !request.base && !request.setup && request.where !== "cloud" ? ready.shift() : undefined;
       if (warm) warmUp();
       const goal = `VM${request.repo ? ` on ${request.repo}` : ""}`;
       const repo = !warm && request.repo ? await bundle(ctx, request.repo, request.base) : undefined;
-      const { id, vm } = warm ?? (await vms.hold(goal, { model: "code" }));
+      const { id, vm } = warm ?? (await vms.hold(goal, { model: "code", fits }));
       try {
         emit({ id, type: "queued", kind: "vm", goal, repo: request.repo });
         const hostKey = await prepare(vm, { key: request.key, repo, setup: warm ? undefined : request.setup }, (line) => emit({ id, type: "step", tool: "setup", text: line.slice(0, 300) }));
@@ -157,9 +160,9 @@ export default {
     }
 
     const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-    extension("_biscotti/vms/open", async ({ key, repo, base, setup }, signal) => {
+    extension("_biscotti/vms/open", async ({ key, repo, base, setup, where: at }, signal) => {
       if (typeof key !== "string") throw new Error("an ssh public key, please");
-      const s = await openVm({ key, repo: str(repo), base: str(base), setup: str(setup) });
+      const s = await openVm({ key, repo: str(repo), base: str(base), setup: str(setup), where: at === "local" || at === "cloud" ? at : undefined });
       // One whose asker went away before it was ready (an app sent to the background) is closed, so it's kept to
       // open again rather than left open with no one on it.
       if (signal.aborted) await close(s.id);
