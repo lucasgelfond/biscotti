@@ -5,7 +5,7 @@ import { createGate, LOCKS, scrub } from "./gate.ts";
 import { memoryTools, openDb } from "./memory.ts";
 import { localTools, type Channel, type Context, type Plugin } from "./plugin.ts";
 import { ownerApi } from "./http.ts";
-import { emit, type TaskEvent } from "./plugin.ts";
+import { emit } from "./plugin.ts";
 import { gateTasks, localHost } from "./tasks.ts";
 import vault, { secrets } from "./vault.ts";
 
@@ -68,7 +68,6 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
       if (said) emit({ id, type: "step", text: outbound(said.replace(LOCKS, "")).text.slice(0, 4000) });
     },
   });
-  emit({ id: 0, type: "done", kind: "main", goal: "Texts", source: "imessage" } as Omit<TaskEvent, "at">);
 
   // A message into a main session (the owner's, a wake, a task report): the agent's reply, which in "main" also goes
   // to the owner's texts. Other sessions answer only in the app they're in.
@@ -87,9 +86,10 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
       console.error(err);
     }
   }
+  // The owner in one of their apps (not their texts): the agent answers there, and texts only if asked to.
   async function converse(session: string, message: string) {
     emit({ id: number(session), type: "told", text: message });
-    await deliver(message, undefined, session);
+    await deliver(session === "main" ? message : `(In the owner's app: your reply shows there, not as a text.)\n${message}`, undefined, session);
   }
 
   async function handle(message: { text: string }) {
