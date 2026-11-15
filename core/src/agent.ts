@@ -4,6 +4,7 @@ import { connect, createServer as createTcpServer } from "node:net";
 import {
   createAgentSession,
   createMcpExtension,
+  createToolSearchExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -11,6 +12,7 @@ import {
   type FileEntry,
 } from "@earendil-works/pi-coding-agent";
 import { listen, readBody } from "./http.ts";
+import { DEFERRED, type Tool } from "./plugin.ts";
 import { searchableText } from "./memory.ts";
 
 // The main agent: one long conversation, compacted by pi. It holds no keys and opens no database: model, tools, the
@@ -29,9 +31,9 @@ export async function runAgent(sockets: string, dir: string) {
   const gateUrl = `http://127.0.0.1:${port}`;
 
   // The gate may still be starting.
-  const get = async (path: string) => {
+  const get = async (path: string, init?: RequestInit) => {
     for (;;) {
-      const res = await fetch(`${gateUrl}${path}`).catch(() => undefined);
+      const res = await fetch(`${gateUrl}${path}`, init).catch(() => undefined);
       if (res?.ok) return res;
       await new Promise((r) => setTimeout(r, 1000));
     }
@@ -44,9 +46,13 @@ export async function runAgent(sockets: string, dir: string) {
     writeFileSync(`${dir}/models.json`, JSON.stringify(models));
     const modelRuntime = await ModelRuntime.create({ authPath: `${dir}/auth.json`, modelsPath: `${dir}/models.json`, modelsStorePath: `${dir}/models-store.json` });
 
+    // Remote services' tools (GitHub's, Notion's…), marked by the gate, are loaded by tool_search when wanted.
+    const listed = await (await get(`/mcp?session=${encodeURIComponent(id)}`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) })).text();
+    const { tools } = JSON.parse(listed.match(/^data: (.*)$/m)![1]).result as { tools: Tool[] };
+    const toolExposure = Object.fromEntries(tools.filter((t) => t._meta?.[DEFERRED]).map((t) => [t.name, "deferred" as const]));
     const mcp = createMcpExtension({
       loadConfig: () => ({
-        servers: [{ name: "biscotti", source: "biscotti", scope: "extension", config: { url: `${gateUrl}/mcp?session=${encodeURIComponent(id)}`, exposure: "direct", timeout: 900 } }],
+        servers: [{ name: "biscotti", source: "biscotti", scope: "extension", config: { url: `${gateUrl}/mcp?session=${encodeURIComponent(id)}`, exposure: "direct", toolExposure, timeout: 900 } }],
         errors: [],
       }),
     });
@@ -55,7 +61,7 @@ export async function runAgent(sockets: string, dir: string) {
       agentDir: dir,
       systemPrompt: await (await get("/prompt")).text(),
       noExtensions: true,
-      extensionFactories: [mcp],
+      extensionFactories: [mcp, createToolSearchExtension()],
       noSkills: true,
       noPromptTemplates: true,
       noThemes: true,

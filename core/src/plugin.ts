@@ -241,7 +241,12 @@ export function merge(...sets: Tools[]): Tools {
   };
 }
 
-// A session per call, so a paused call resumes in its own session.
+// A tool the main agent loads only when it looks for one like it (pi's tool_search), so a remote service's many
+// tools aren't in every model call: GitHub's and Notion's are ~350 KB of definitions.
+export const DEFERRED = "biscotti/deferred";
+export const deferred = (tool: Tool): Tool => ({ ...tool, _meta: { ...tool._meta, [DEFERRED]: true } });
+
+// A session per call, so a paused call resumes in its own session. Its tools are deferred.
 export function mcpTools(url: string, headers: Record<string, string>, call?: (client: Client, name: string, args: Record<string, unknown>) => Promise<CallToolResult>): Tools {
   async function withClient<T>(fn: (client: Client) => Promise<T>) {
     const client = new Client({ name: "biscotti", version: "1" });
@@ -253,7 +258,7 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
     }
   }
   return {
-    list: () => withClient(async (client) => (await client.listTools()).tools),
+    list: () => withClient(async (client) => (await client.listTools()).tools.map(deferred)),
     call: (name, args) =>
       withClient((client) => (call ? call(client, name, args) : (client.callTool({ name, arguments: args }) as Promise<CallToolResult>))),
   };

@@ -15,7 +15,7 @@ const token = (ctx: Context) =>
   process.env.GITHUB_TOKEN || secret(ctx.db, "GitHub")?.token;
 
 export default {
-  prompt: `GitHub: repos, issues and pull requests through the GitHub tools. Go ahead with branches, commits, pull requests, comments and edits without checking with the user; deleting or closing anything asks them itself. If
+  prompt: `GitHub: repos, issues and pull requests through the GitHub tools (load them with \`tool_search\`, e.g. "github pull request"). Go ahead with branches, commits, pull requests, comments and edits without checking with the user; deleting or closing anything asks them itself. If
 GitHub isn't connected, \`github_connect\` says how.
 
 Code changes: \`code_task\` has a coding agent make the change in a VM and opens a draft pull request. Text the user
@@ -40,7 +40,8 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
       return client.callTool({ name, arguments: args }) as never;
     });
     async function list() {
-      return (await tools.list()).filter((t) => !MERGE.test(t.name));
+      // Named as GitHub's, so tool_search finds them by it.
+      return (await tools.list()).filter((t) => !MERGE.test(t.name)).map((t) => ({ ...t, description: `GitHub: ${t.description ?? ""}` }));
     }
     return merge({ ...tools, list }, localTools([codeTask(ctx, pat)]));
   },
