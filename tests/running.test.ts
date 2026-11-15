@@ -141,11 +141,12 @@ async function gated() {
     return server;
   };
   const reports: string[] = [];
+  const parents: (string | undefined)[] = [];
   const local = await host([1, 2], [], { gate: () => ({ host: "127.0.0.1", port: 0, peer: () => "127.0.0.1" }) });
-  const { vms, tools } = await gateTasks(gate, local, (_goal, { report }) => reports.push(report), file());
+  const { vms, tools } = await gateTasks(gate, local, (_goal, { report }, parent) => (reports.push(report), parents.push(parent)), file());
   const messages = (slot: number) => fetch(`http://127.0.0.1:${(servers.get(slot)!.address() as AddressInfo).port}/messages`, { headers: { host: "gate" } }).then((r) => r.json());
-  const said = async (name: string, args: Record<string, unknown> = {}) => ((await localTools(tools).call(name, args)).content[0] as { text: string }).text;
-  return { gate, vms, said, messages, reports, close: () => servers.forEach((s) => s.close()) };
+  const said = async (name: string, args: Record<string, unknown> = {}, caller?: Caller) => ((await localTools(tools).call(name, args, caller)).content[0] as { text: string }).text;
+  return { gate, vms, said, messages, reports, parents, close: () => servers.forEach((s) => s.close()) };
 }
 
 test("tell_task passes the owner's message to that running task's VM, holds it for a queued one, and says when there's none", async () => {
@@ -189,4 +190,12 @@ test("the gate stamps a task VM's tool calls with its task, and knows the slot i
   await call;
   expect(gate.busy(1)).toBeUndefined();
   server.close();
+});
+
+test("a task started from a main session reports back to that session", async () => {
+  const { said, reports, parents, close } = await gated();
+  await said("task", { goal: "book it" }, { session: "7" });
+  await until(() => reports.length === 1);
+  expect([reports[0], parents[0]]).toEqual(["done: book it", "7"]);
+  close();
 });

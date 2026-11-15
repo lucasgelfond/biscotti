@@ -21,8 +21,8 @@ export interface Context {
   // A message into one of the main agent's sessions (a wake, a task report; "main", the owner's texts, unless said):
   // the reply goes to the owner there.
   deliver(text: string, image?: Buffer, session?: string): Promise<void>;
-  // The owner's message in a main session, from one of their apps: the agent's reply (also emitted as its events).
-  converse?(session: string, message: string): Promise<string>;
+  // The owner's message in a main session (from one of their apps): the agent answers there, as events.
+  converse?(session: string, message: string): Promise<void>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
   // Task VMs, where this machine has them.
@@ -60,7 +60,7 @@ export interface Host {
 // What happens to tasks and VMs, as events naming the task (or VM) number: for the owner's apps (the api plugin).
 export interface TaskEvent {
   id: number;
-  type: "queued" | "started" | "step" | "told" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
+  type: "queued" | "started" | "step" | "told" | "replied" | "report" | "kept" | "done" | "failed" | "resumed" | "moving" | "moved";
   at: number;
   goal?: string;
   slot?: number;

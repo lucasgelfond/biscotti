@@ -10,7 +10,8 @@ import { extension } from "../api/index.ts";
 
 // ssh VMs: a task VM the owner works in over ssh with their own pi (core/vm/task/box-pi), from Concourse or the app,
 // rather than one run of the task agent. Closed, it's kept (suspended) to open again. SSH_VM_WARM_REPO (owner/name),
-// SSH_VM_WARM_COUNT (1) and SSH_VM_WARM_SETUP keep some checked out and set up ahead of time. Each is a session of the
+// SSH_VM_WARM_COUNT (1) and SSH_VM_WARM_SETUP keep some checked out and set up ahead of time. Every 6 hours, ones not
+// opened or reopened for 6 hours go to sleep: closed and kept on disk, to open again. Each is a session of the
 // api plugin's ACP agent (kind "vm", its ssh address, host key and Preview in _meta.biscotti), with these methods:
 //
 //   _biscotti/vms/open    {key, repo?, base?, setup?}: one to ssh into -> SshVm
@@ -145,6 +146,10 @@ export default {
         throw err;
       }
     }
+    const IDLE_MS = Number(process.env.SSH_VM_IDLE_HOURS ?? 6) * 3600_000;
+    setInterval(() => {
+      for (const s of open.values()) if (Date.now() - s.opened > IDLE_MS) void close(s.id).catch((err) => console.error(`putting VM #${s.id} to sleep: ${err.message}`));
+    }, IDLE_MS).unref();
     async function close(id: number) {
       if (!open.delete(id)) return false;
       await vms.give(id);
@@ -168,7 +173,7 @@ export default {
       const vm = already ? undefined : await vms.reclaim(id, { model: "code" });
       if (!already && !vm) throw new Error(`no VM #${id} kept`);
       const hostKey = await prepare(vm ?? { slot: already!.slot, stop: async () => {} }, { key });
-      const s = already ? { ...already, hostKey: hostKey ?? already.hostKey } : await describe(id, vm!, repo, hostKey);
+      const s = already ? { ...already, hostKey: hostKey ?? already.hostKey, opened: Date.now() } : await describe(id, vm!, repo, hostKey);
       open.set(id, s);
       if (!already) shown(s, "Reopened");
       return s;
