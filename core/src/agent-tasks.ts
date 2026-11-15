@@ -1,5 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { Context } from "@earendil-works/chord/context";
+import { inputFrom } from "./ahp-durable.ts";
 import {
   type Conversation,
   type ConversationId,
@@ -551,7 +552,9 @@ Answer with JSON only: {"sites": [{"site": "example.com", "lessons": ["...", "..
           : task.moved
             ? "[This task was moved here from another machine part-way through. Your home folder is as it was there, without caches such as node_modules, virtualenvs and Docker's data: reinstall or restart what you need. Open pages and running programs didn't come along.] Carry on with the goal."
             : task.goal;
-        const submission = await conversation.submit({ type: "input", content, requestId: `task-${id}-${Date.now()}` }, ctx);
+        // The goal is the main agent's, a follow-up the owner's, a move biscotti's.
+        const from = task.followup ? "user" : task.moved ? "systemNotification" : "agent";
+        const submission = await conversation.submit({ type: "input", content, requestId: `task-${id}-${Date.now()}`, ...inputFrom(from) }, ctx);
         await submission.wait(ctx);
         // A message that came as the run ended starts it again.
         await conversation.waitForIdle(ctx);

@@ -23,7 +23,7 @@ import { WebSocketServer } from "ws";
 import { AhpHost, ROOT } from "./ahp.ts";
 import { agentTasks, type TaskRun } from "./agent-tasks.ts";
 import { taskChats } from "./ahp-tasks.ts";
-import { DurableChat } from "./ahp-durable.ts";
+import { DurableChat, inputFrom } from "./ahp-durable.ts";
 import { listen, readBody } from "./http.ts";
 import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
 
@@ -296,7 +296,8 @@ export async function runAgent(sockets: string, _dir?: string) {
   }
 
   // One turn: the reply (everything said this run), or undefined when the message steered a run already going.
-  async function reply(session: string, message: string): Promise<string | undefined> {
+  // `origin`: who it's from (AHP's message kinds), the owner's ("user") or biscotti's own (a task report, a wake).
+  async function reply(session: string, message: string, origin = "user"): Promise<string | undefined> {
     const handle = await conversation(session);
     if (message.trim() === "/compact") {
       let said: string;
@@ -311,12 +312,13 @@ export async function runAgent(sockets: string, _dir?: string) {
       return said;
     }
     const text = `[${new Date().toString()}] ${message}`;
+    const entry = inputFrom(origin);
     const live = await harness.snapshot(LiveDoc, handle.id, ctx);
     if (live?.run !== undefined) {
-      await handle.submit({ type: "input", content: text, whenBusy: "steer" }, ctx);
+      await handle.submit({ type: "input", content: text, whenBusy: "steer", ...entry }, ctx);
       return undefined;
     }
-    const settled = await (await handle.submit({ type: "input", content: text }, ctx)).wait(ctx);
+    const settled = await (await handle.submit({ type: "input", content: text, ...entry }, ctx)).wait(ctx);
     await status(session, handle);
     if (settled.status !== "done") return `(That turn ended without an answer: ${(settled as { reason?: string }).reason ?? "unknown"}.)`;
     const context = await handle.context(ctx);
@@ -357,7 +359,18 @@ export async function runAgent(sockets: string, _dir?: string) {
     summaries = Object.keys(ids).map((session) => {
       const chat = host.get<{ status: number; modifiedAt: string }>(`${CHAT}${session}`);
       const made = created?.[session] ?? new Date(0).toISOString();
-      return { resource: `${SESSION}${session}`, provider: "biscotti", title: titleOf(session, titles), status: chat?.status ?? 1, createdAt: made, modifiedAt: chat?.modifiedAt ?? made, defaultChat: `${CHAT}${session}`, _meta: meta(session, doc) };
+      const own = { resource: `${CHAT}${session}`, title: titleOf(session, titles), status: chat?.status ?? 1, modifiedAt: chat?.modifiedAt ?? made, origin: { kind: "user" } };
+      return {
+        resource: `${SESSION}${session}`,
+        provider: "biscotti",
+        title: titleOf(session, titles),
+        status: chat?.status ?? 1,
+        createdAt: made,
+        modifiedAt: chat?.modifiedAt ?? made,
+        defaultChat: `${CHAT}${session}`,
+        chats: [own, ...sandboxes.summaries(session)],
+        _meta: meta(session, doc),
+      };
     });
     // Newest first.
     summaries.sort((a, b) => String(b.modifiedAt).localeCompare(String(a.modifiedAt)));
@@ -493,9 +506,9 @@ export async function runAgent(sockets: string, _dir?: string) {
       if (req.url === "/reload") return void (tasks.reload(), res.end(void registry.install(await biscotti())));
       // A task's run, for the gate: what it does, as lines, until it's done.
       if (req.url === "/task") return void (await tasks.run(JSON.parse(await readBody(req)) as TaskRun, res, registry));
-      const { text, session = "main" } = JSON.parse(await readBody(req)) as { text?: string; session?: string };
+      const { text, session = "main", origin } = JSON.parse(await readBody(req)) as { text?: string; session?: string; origin?: string };
       if (req.url === "/stop") return void res.end(void (await (await conversation(String(session))).abort(ctx)));
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await reply(String(session), String(text)) }));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await reply(String(session), String(text), origin) }));
     } catch (err) {
       console.error(err);
       // A task's run has its lines started already.

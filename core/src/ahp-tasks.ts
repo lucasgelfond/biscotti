@@ -171,7 +171,13 @@ export function taskChats(opts: {
         return { ...vm, channel: `${CHAT}main/${vm.id}` };
       },
       "x-biscotti/vms.reopen": async (p: Record<string, unknown>) => opts.method("vms.reopen", { sessionId: String(p.id ?? idOf(String(p.channel))), key: p.key }),
-      "x-biscotti/vms.close": async (p: Record<string, unknown>) => opts.method("vms.close", { sessionId: String(p.id ?? idOf(String(p.channel))), discard: Boolean(p.discard) }),
+      // Deleted for good (`discard`), its chat goes too.
+      "x-biscotti/vms.close": async (p: Record<string, unknown>) => {
+        const id = Number(p.id ?? idOf(String(p.channel)));
+        const closed = await opts.method("vms.close", { sessionId: String(id), discard: Boolean(p.discard) });
+        if (p.discard) await opts.method("remove", { id });
+        return closed;
+      },
     } as Record<string, (params: Record<string, unknown>) => Promise<unknown>>,
   };
 }

@@ -104,10 +104,11 @@ export async function connectAgent(
       req.end(JSON.stringify(run));
     });
   return turn;
-  async function turn(message: string, session = "main"): Promise<string | undefined> {
+  // `origin`: who it's from, for the owner's apps (AHP's message kinds): the owner ("user"), or biscotti itself.
+  async function turn(message: string, session = "main", origin = "user"): Promise<string | undefined> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return JSON.parse(await call(`${sockets}/agent.sock`, "POST", "/turn", JSON.stringify({ text: message, session }))).reply;
+        return JSON.parse(await call(`${sockets}/agent.sock`, "POST", "/turn", JSON.stringify({ text: message, session, origin }))).reply;
       } catch (err) {
         if (attempt >= 60 || !/ENOENT|ECONNREFUSED/.test(String(err))) throw err;
         await new Promise((r) => setTimeout(r, 2000));

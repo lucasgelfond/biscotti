@@ -68,6 +68,7 @@ export function board(db: Db, vms: Vms) {
   const listeners = new Set<(row: Row, e?: TaskEvent) => void>();
 
   function take(e: TaskEvent) {
+    if (!Number.isInteger(e.id)) throw new Error(`an event for no task (${e.type})`);
     let t = rows.get(e.id);
     if (!t) rows.set(e.id, (t = { id: e.id, kind: "sandbox", goal: "", status: "queued", started: e.at, updated: e.at, steps: [] }));
     t.updated = e.at;
@@ -90,6 +91,7 @@ export function board(db: Db, vms: Vms) {
     return t;
   }
   taskEvents.on("event", (e) => {
+    if (!Number.isInteger(e.id)) return;
     const t = take(e);
     for (const listener of listeners) listener(t, e);
   });

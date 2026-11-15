@@ -10,7 +10,13 @@ import type { AhpHost } from "./ahp.ts";
 
 type Part = { type: string; text?: string; id?: string; name?: string; arguments?: unknown };
 type Message = { role: string; content: string | Part[]; model?: string; usage?: { input: number; output: number; cacheRead?: number }; toolCallId?: string; toolName?: string; isError?: boolean };
-type Entry = { id: unknown; kind: string; model?: readonly Message[] };
+type Entry = { id: unknown; kind: string; data?: { origin?: string }; model?: readonly Message[] };
+
+// An input from someone other than the owner (AHP's message kinds: "agent", "systemNotification", …), as the entry
+// it's placed as, so the chat shows who it's from.
+const INPUT = "biscotti.input";
+export const inputFrom = (origin = "user") => (origin === "user" ? {} : { entry: { kind: INPUT, data: { origin } } });
+const originOf = (e: Entry) => ({ kind: (e.kind === INPUT && e.data?.origin) || "user" });
 
 const act = (action: object) => action as StateAction;
 const parts = (m: Message): Part[] => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content);
@@ -35,7 +41,7 @@ function turnsOf(entries: readonly Entry[], named: (id: string) => string) {
   for (const entry of entries) {
     const m = entry.model?.[0];
     if (!m) continue;
-    if (m.role === "user") turns.push({ id: String(entry.id), message: { text: said(textOf(m)), origin: { kind: "user" } }, responseParts: [], usage: undefined, state: "complete" });
+    if (m.role === "user") turns.push({ id: String(entry.id), message: { text: said(textOf(m)), origin: originOf(entry) }, responseParts: [], usage: undefined, state: "complete" });
     const turn = turns.at(-1);
     if (!turn) continue;
     if (m.role === "assistant") {
@@ -130,7 +136,7 @@ export class DurableChat {
       // A client's turn is already started; anything else (a text, a wake) starts its own.
       if (this.#turn && !this.#turn.placed) return void (this.#turn.placed = true);
       this.#turn = { id: String(e.id), started: Date.now(), placed: true };
-      this.#dispatch({ type: "chat/turnStarted", turnId: this.#turn.id, startedAt: now(), message: { text: said(textOf(m)), origin: { kind: "user" } } });
+      this.#dispatch({ type: "chat/turnStarted", turnId: this.#turn.id, startedAt: now(), message: { text: said(textOf(m)), origin: originOf(e) } });
       this.onStatus?.(8);
       return;
     }

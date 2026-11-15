@@ -95,9 +95,24 @@ test("the app sees a task as a sandbox chat of its session, with the task's own 
   expect(session.state._meta?.biscotti?.chats?.[sandbox]?.kind).toBe("sandbox");
 
   const chat = await c.subscribe(sandbox);
-  const state = chat.result.snapshot!.state as ReturnType<typeof chatReducer> & { turns: { message: { text: string }; responseParts: { kind: string; content?: string; toolCall?: { toolName?: string } }[] }[] };
-  expect(state.turns[0].message.text).toBe("run `echo seen-in-the-app`");
+  const state = chat.result.snapshot!.state as ReturnType<typeof chatReducer> & { turns: { message: { text: string; origin: { kind: string } }; responseParts: { kind: string; content?: string; toolCall?: { toolName?: string } }[] }[] };
+  // The goal is the main agent's, not the owner's.
+  expect(state.turns[0].message).toMatchObject({ text: "run `echo seen-in-the-app`", origin: { kind: "agent" } });
   expect(state.turns[0].responseParts.find((p) => p.kind === "toolCall")?.toolCall?.toolName).toBe("bash");
   expect(state.turns[0].responseParts.map((p) => (p as { content?: string }).content)).toContain("done: seen-in-the-app");
+  // Its report reaches the main agent as biscotti's own message, not the owner's; and the session lists its chats.
+  const report = async () => {
+    for (let i = 0; i < 300; i++) {
+      const main = await c.subscribe("ahp-chat:/main");
+      const turns = (main.result.snapshot!.state as { turns: { message: { text: string; origin: { kind: string } } }[] }).turns;
+      const found = turns.find((t) => t.message.text.startsWith("Task report"));
+      if (found) return found;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error("no task report in the main chat");
+  };
+  expect((await report()).message.origin).toEqual({ kind: "systemNotification" });
+  const { items } = await c.request("listSessions", { channel: "ahp-root://" });
+  expect((items.find((s) => s.resource === "ahp-session:/main") as { chats?: { resource: string }[] }).chats?.map((ch) => ch.resource)).toEqual(["ahp-chat:/main", sandbox]);
   ws.close();
 }, 120_000);

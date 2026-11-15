@@ -22,8 +22,10 @@ export async function standInVms(slots = [1, 2]) {
   const homes = new Map(slots.map((slot) => [slot, mkdtempSync(join(tmpdir(), `vm-${slot}-home-`))]));
   const host: Host = {
     slots,
-    restore: async (slot) => ({ slot, stop: async () => {} }),
-    resume: async (slot) => ({ slot, stop: async () => {} }),
+    // A VM put to sleep keeps its home, as a suspended one keeps its disk.
+    restore: async (slot) => ({ slot, stop: async () => {}, suspend: async () => {} }),
+    resume: async (slot) => ({ slot, stop: async () => {}, suspend: async () => {} }),
+    discard: async () => {},
     endpoint: (_slot, port) => (port === 4000 ? { host: "127.0.0.1", port: (box.address() as { port: number }).port } : { host: "127.0.0.1", port }),
     gate: () => ({ host: "127.0.0.1", port: 0, peer: () => undefined }),
     async env(slot, args, socket) {
