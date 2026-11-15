@@ -111,11 +111,13 @@ export async function runAgent(sockets: string, dir: string) {
         if (message.trim() === "/compact") {
           try {
             await session.compact();
+            return "Compacted: the conversation so far is summarized, freeing its context.";
+          } catch (err) {
+            return `Nothing compacted: ${(err as Error).message}`;
           } finally {
             await save();
             await status();
           }
-          return "Compacted: the conversation so far is summarized, freeing its context.";
         }
         const before = session.sessionManager.getEntries().length;
         try {

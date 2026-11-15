@@ -153,9 +153,10 @@ export default {
     setInterval(() => {
       for (const s of open.values()) if (Date.now() - s.opened > IDLE_MS) void close(s.id).catch((err) => console.error(`putting VM #${s.id} to sleep: ${err.message}`));
     }, IDLE_MS).unref();
-    async function close(id: number) {
+    // Closed: kept on disk to open again, or (`discard`) just stopped.
+    async function close(id: number, discard = false) {
       if (!open.delete(id)) return false;
-      await vms.give(id);
+      await (discard ? vms.drop(id) : vms.give(id));
       return true;
     }
 
@@ -183,8 +184,8 @@ export default {
     });
     extension("_biscotti/vms/close", async ({ sessionId, discard }) => {
       const id = Number(sessionId);
-      const closed = await close(id);
-      return { closed, discarded: discard ? await vms.forget(id) : false };
+      const closed = await close(id, Boolean(discard));
+      return { closed, discarded: discard ? closed || (await vms.forget(id)) : false };
     });
   },
 } satisfies Plugin;

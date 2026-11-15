@@ -292,7 +292,7 @@ export function createGate(opts: {
     },
     listen: (host: string, port: number, opts: { slot?: number; peer?: string | (() => string | undefined) } = {}) =>
       new Promise<Server>((resolve, reject) => {
-        const server = createServer(handler(opts.slot, opts.peer)).once("error", reject);
+        const server = createServer({ requestTimeout: 0 }, handler(opts.slot, opts.peer)).once("error", reject);
         server.listen(port, host, () => resolve(server));
       }),
   };

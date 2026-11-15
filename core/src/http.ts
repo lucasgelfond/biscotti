@@ -19,6 +19,8 @@ export async function readBody(stream: AsyncIterable<unknown>, max = MAX_BODY) {
 
 // Listens on `path`, readable and writable only by its owner: `uid` when we're root, otherwise us.
 export async function listen(server: Server, path: string, uid?: number) {
+  // A turn or a tool call can take longer than Node's 5-minute default.
+  server.requestTimeout = 0;
   rmSync(path, { force: true });
   await new Promise<void>((resolve) => server.listen(path, resolve));
   if (uid !== undefined && process.getuid?.() === 0) chownSync(path, uid, uid);
@@ -57,6 +59,7 @@ export function ownerApi(port = Number(process.env.API_PORT ?? 7700)) {
   return {
     route: (prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => unknown) => void routes.push([prefix, handler]),
     // Only once a plugin has added a route.
-    listen: () => (routes.length && port ? new Promise<Server>((resolve) => server.listen(port, "127.0.0.1", () => resolve(server))) : undefined),
+    // A prompt waits for its task's report, often longer than Node's 5-minute default.
+    listen: () => (routes.length && port ? new Promise<Server>((resolve) => ((server.requestTimeout = 0), server.listen(port, "127.0.0.1", () => resolve(server)))) : undefined),
   };
 }

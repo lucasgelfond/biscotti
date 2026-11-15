@@ -75,9 +75,9 @@ export const extension = (method: `_biscotti/${string}`, handler: Extension) => 
 // The board: every task's and VM's row, kept in the database across restarts.
 function board(ctx: Context) {
   ctx.db.run(sql`CREATE TABLE IF NOT EXISTS tasks (id integer PRIMARY KEY, kind text NOT NULL DEFAULT 'task', goal text NOT NULL, status text NOT NULL, slot integer, "where" text, repo text, ssh text, preview text, report text, steps text NOT NULL, started integer NOT NULL, updated integer NOT NULL)`);
-  for (const column of ["parent", "source"]) {
+  for (const column of ["parent text", "source text", "model text", "thinking text", "used integer", "size integer"]) {
     try {
-      ctx.db.run(sql.raw(`ALTER TABLE tasks ADD COLUMN ${column} text`));
+      ctx.db.run(sql.raw(`ALTER TABLE tasks ADD COLUMN ${column}`));
     } catch {}
   }
   const rows = new Map<number, Row>();
@@ -90,7 +90,8 @@ function board(ctx: Context) {
   rows.set(0, { id: 0, status: "done", steps: [], started: Date.now(), updated: Date.now(), ...texts, goal: texts?.goal || "Texts", kind: "main", source: "imessage" });
   const screenshots = new Map<number, string>();
   const save = (t: Row) =>
-    ctx.db.run(sql`INSERT OR REPLACE INTO tasks VALUES (${t.id}, ${t.kind}, ${t.goal}, ${t.status}, ${t.slot ?? null}, ${t.where ?? null}, ${t.repo ?? null}, ${t.ssh ? JSON.stringify(t.ssh) : null}, ${t.preview ?? null}, ${t.report ?? null}, ${JSON.stringify(t.steps)}, ${t.started}, ${t.updated}, ${t.parent ?? null}, ${t.source === undefined ? null : JSON.stringify(t.source)})`);
+    ctx.db.run(sql`INSERT OR REPLACE INTO tasks (id, kind, goal, status, slot, "where", repo, ssh, preview, report, steps, started, updated, parent, source, model, thinking, used, size)
+      VALUES (${t.id}, ${t.kind}, ${t.goal}, ${t.status}, ${t.slot ?? null}, ${t.where ?? null}, ${t.repo ?? null}, ${t.ssh ? JSON.stringify(t.ssh) : null}, ${t.preview ?? null}, ${t.report ?? null}, ${JSON.stringify(t.steps)}, ${t.started}, ${t.updated}, ${t.parent ?? null}, ${t.source === undefined ? null : JSON.stringify(t.source)}, ${t.model ?? null}, ${t.thinking ?? null}, ${t.used ?? null}, ${t.size ?? null})`);
   return {
     rows,
     screenshots,
