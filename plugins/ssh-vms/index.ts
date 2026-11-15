@@ -10,8 +10,9 @@ import { extension } from "../api/index.ts";
 
 // ssh VMs: a task VM the owner works in over ssh with their own pi (core/vm/task/box-pi), from Concourse or the app,
 // rather than one run of the task agent. Closed, it's kept (suspended) to open again. SSH_VM_WARM_REPO (owner/name),
-// SSH_VM_WARM_COUNT (1) and SSH_VM_WARM_SETUP keep some checked out and set up ahead of time. Every 6 hours, ones not
-// opened or reopened for 6 hours go to sleep: closed and kept on disk, to open again. Each is a session of the
+// SSH_VM_WARM_COUNT (1) and SSH_VM_WARM_SETUP keep some checked out and set up ahead of time. One stays up until it's
+// closed, or until every slot is taken and something else needs one: then the one opened longest ago goes to sleep
+// (closed and kept on disk, to open again). Each is a session of the
 // api plugin's ACP agent (kind "vm", its ssh address, host key and Preview in _meta.biscotti), with these methods:
 //
 //   _biscotti/vms/open    {key, repo?, base?, setup?, where?}: one to ssh into -> SshVm. `where`: "local" (this
@@ -105,13 +106,26 @@ export default {
     });
     const shown = (s: SshVm, text: string) => emit({ id: s.id, type: "started", kind: "vm", goal: `VM${s.repo ? ` on ${s.repo}` : ""}`, slot: s.slot, where: s.where, repo: s.repo, ssh: s.ssh, hostKey: s.hostKey, preview: s.preview, text });
 
+    // Put to sleep when its slot is needed (tasks.ts), the one opened or reopened longest ago first; a warm one no one
+    // has opened yet goes before any, thrown away, and one still being set up stays.
+    const sleep = (id: () => number) => ({
+      used: () => open.get(id())?.opened ?? (ready.some((r) => r.id === id()) ? 0 : Infinity),
+      async sleep() {
+        const i = ready.findIndex((r) => r.id === id());
+        if (i >= 0) return void (ready.splice(i, 1), await vms.drop(id()));
+        if (!(await close(id()))) throw new Error(`VM #${id()} is still being set up`);
+      },
+    });
+
     function warmUp() {
       while (ready.length + warming < warmCount) {
         warming++;
         void (async () => {
           let held: { id: number; vm: Vm } | undefined;
           try {
-            held = await vms.hold(`VM on ${warmRepo}`, { model: "code" });
+            let id = 0;
+            held = await vms.hold(`VM on ${warmRepo}`, { model: "code", sleep: sleep(() => id) });
+            id = held.id;
             await prepare(held.vm, { repo: await bundle(ctx, warmRepo!), setup: warmSetup });
             ready.push(held);
           } catch (err) {
@@ -135,7 +149,9 @@ export default {
       if (warm) warmUp();
       const goal = `VM${request.repo ? ` on ${request.repo}` : ""}`;
       const repo = !warm && request.repo ? await bundle(ctx, request.repo, request.base) : undefined;
-      const { id, vm } = warm ?? (await vms.hold(goal, { model: "code", fits }));
+      let held = 0;
+      const { id, vm } = warm ?? (await vms.hold(goal, { model: "code", fits, sleep: sleep(() => held) }));
+      held = id;
       try {
         emit({ id, type: "queued", kind: "vm", goal, repo: request.repo });
         const hostKey = await prepare(vm, { key: request.key, repo, setup: warm ? undefined : request.setup }, (line) => emit({ id, type: "step", tool: "setup", text: line.slice(0, 300) }));
@@ -149,10 +165,6 @@ export default {
         throw err;
       }
     }
-    const IDLE_MS = Number(process.env.SSH_VM_IDLE_HOURS ?? 6) * 3600_000;
-    setInterval(() => {
-      for (const s of open.values()) if (Date.now() - s.opened > IDLE_MS) void close(s.id).catch((err) => console.error(`putting VM #${s.id} to sleep: ${err.message}`));
-    }, IDLE_MS).unref();
     // Closed: kept on disk to open again, or (`discard`) just stopped.
     async function close(id: number, discard = false) {
       if (!open.delete(id)) return false;
@@ -174,7 +186,7 @@ export default {
       if (typeof key !== "string" || !KEY.test(key.trim())) throw new Error("an ssh public key, please");
       const already = open.get(id);
       const repo = already?.repo ?? vms.kept().find((k) => k.id === id)?.goal.match(/ on (.+)$/)?.[1];
-      const vm = already ? undefined : await vms.reclaim(id, { model: "code" });
+      const vm = already ? undefined : await vms.reclaim(id, { model: "code", sleep: sleep(() => id) });
       if (!already && !vm) throw new Error(`no VM #${id} kept`);
       const hostKey = await prepare(vm ?? { slot: already!.slot, stop: async () => {} }, { key });
       const s = already ? { ...already, hostKey: hostKey ?? already.hostKey, opened: Date.now() } : await describe(id, vm!, repo, hostKey);

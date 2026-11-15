@@ -119,6 +119,36 @@ test("a plugin holds a VM, keeps it, brings it back and deletes it, numbered wit
   expect(await vms.forget(id)).toBe(false);
 });
 
+test("when every slot holds a VM that may sleep, the one used longest ago sleeps for a newcomer; one without waits", async () => {
+  const log: string[] = [];
+  const vms = taskVms([], {}, file());
+  await vms.addHost(await host([1, 2], log));
+  const used = new Map<number, number>();
+  const sleeper = (id: () => number) => ({ used: () => used.get(id()) ?? 0, sleep: () => vms.give(id()) });
+  let a = 0;
+  let b = 0;
+  a = (await vms.hold("VM a", { sleep: sleeper(() => a) })).id;
+  used.set(a, 2000);
+  b = (await vms.hold("VM b", { sleep: sleeper(() => b) })).id;
+  used.set(b, 1000);
+  const slotOfB = vms.slotOf(b);
+
+  const c = await vms.hold("VM c");
+  expect(c.vm.slot).toBe(slotOfB);
+  expect(log).toContain(`suspend ${slotOfB} ${b}`);
+  expect(vms.kept().map((k) => k.id)).toEqual([b]);
+
+  // Now one slot is c's, which can't sleep: a newcomer waits for it rather than putting a to sleep.
+  let d: { id: number; vm: Vm } | undefined;
+  void vms.hold("VM d").then((held) => (d = held));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(d).toBeUndefined();
+  expect(log).not.toContain(`suspend ${vms.slotOf(a)} ${a}`);
+  await vms.give(c.id, false);
+  await until(() => d !== undefined);
+  expect(d!.vm.slot).toBe(c.vm.slot);
+});
+
 test("an overflow host is used only once the others' slots are taken", async () => {
   const vms = taskVms([], { busy: () => true });
   await vms.addHost(await host([101], [], { overflow: true }));

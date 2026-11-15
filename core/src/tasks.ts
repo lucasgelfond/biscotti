@@ -19,6 +19,7 @@ import {
   type RunOptions,
   type TaskOptions,
   type TaskResult,
+  type Sleep,
   type Vm,
   type Vms,
 } from "./plugin.ts";
@@ -78,7 +79,7 @@ export function taskVms(
   let last = saved.last;
   const save = () => file && writeFileSync(file, JSON.stringify({ last, kept }));
   const running = new Map<number, Running & { stopped: AbortController }>();
-  const held = new Map<number, { vm: Vm; goal: string }>();
+  const held = new Map<number, { vm: Vm; goal: string; sleep?: Sleep; sleeping?: boolean }>();
 
   // The best free slot that fits (this machine's before overflow ones), or the first one released that does.
   const acquire = (fits: (slot: number) => boolean = () => true) =>
@@ -86,8 +87,18 @@ export function taskVms(
       free.sort((a, b) => rank(a) - rank(b));
       const i = free.findIndex(fits);
       if (i >= 0) resolve(free.splice(i, 1)[0]);
-      else waiting.push({ fits, resolve });
+      else waiting.push({ fits, resolve }), makeRoom(fits);
     });
+  // When every slot that fits is held by a VM that may sleep (an ssh VM), the one used longest ago goes to sleep (kept,
+  // to open again) to make room. A slot with a task in it frees itself, so then the newcomer waits.
+  function makeRoom(fits: (slot: number) => boolean) {
+    const sleepers = [...held.values()].filter((h) => h.sleep && !h.sleeping && fits(h.vm.slot));
+    const slots = [...hostOf.keys()].filter((s) => fits(s) && s !== warm?.slot);
+    if (!sleepers.length || slots.some((s) => !sleepers.some((h) => h.vm.slot === s))) return;
+    const oldest = sleepers.sort((a, b) => a.sleep!.used() - b.sleep!.used())[0];
+    oldest.sleeping = true;
+    oldest.sleep!.sleep().catch((err) => ((oldest.sleeping = false), console.error(`putting a VM to sleep: ${err.message}`)));
+  }
   function release(slot: number) {
     hooks.onEnd?.(slot);
     const i = waiting.findIndex((w) => w.fits(slot));
@@ -224,10 +235,10 @@ export function taskVms(
     running: (): Running[] => [...running.values()].map(({ stopped, ...t }) => t),
     kept: (): Kept[] => [...kept],
     slotOf: (id: number) => running.get(id)?.slot ?? held.get(id)?.vm.slot,
-    async hold(goal: string, opts: { model?: string; fits?: (slot: number) => boolean } = {}) {
+    async hold(goal: string, opts: { model?: string; fits?: (slot: number) => boolean; sleep?: Sleep } = {}) {
       const id = ((last = Math.max(last, ...kept.map((k) => k.id)) + 1), save(), last);
       const vm = await fresh(opts.fits);
-      held.set(id, { vm, goal });
+      held.set(id, { vm, goal, sleep: opts.sleep });
       hooks.onStart?.(vm.slot, id, goal, opts.model);
       return { id, vm };
     },
@@ -237,11 +248,11 @@ export function taskVms(
       held.delete(id);
       await putAway(h.vm, id, h.goal, keep);
     },
-    async reclaim(id: number, model?: string) {
+    async reclaim(id: number, model?: string, sleep?: Sleep) {
       const k = takeKept(id);
       if (!k) return undefined;
       const vm = await bringBack(k);
-      held.set(id, { vm, goal: k.goal });
+      held.set(id, { vm, goal: k.goal, sleep });
       hooks.onStart?.(vm.slot, id, k.goal, model);
       return vm;
     },
@@ -442,7 +453,7 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
     hold: pool.hold,
     give: (id) => pool.give(id),
     drop: (id) => pool.give(id, false),
-    reclaim: (id, opts) => pool.reclaim(id, opts?.model),
+    reclaim: (id, opts) => pool.reclaim(id, opts?.model, opts?.sleep),
     forget: pool.forget,
     async watch(id) {
       const slot = pool.slotOf(id);

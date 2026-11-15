@@ -109,14 +109,22 @@ export interface Vms {
   kept(): Kept[];
   // A VM of the caller's own (not a task), numbered like tasks, until it gives it back: kept for later (`give`),
   // thrown away (`drop`), or deleted for good once kept (`forget`). `reclaim` brings a kept one back.
-  hold(goal: string, opts?: { model?: string; fits?: (slot: number) => boolean }): Promise<{ id: number; vm: Vm }>;
+  // One with `sleep` may be put to sleep (`sleep.sleep()`, which gives it back) when every slot is held and another
+  // needs one: the one whose `sleep.used()` is oldest.
+  hold(goal: string, opts?: { model?: string; fits?: (slot: number) => boolean; sleep?: Sleep }): Promise<{ id: number; vm: Vm }>;
   give(id: number): Promise<void>;
   drop(id: number): Promise<void>;
-  reclaim(id: number, opts?: { model?: string }): Promise<Vm | undefined>;
+  reclaim(id: number, opts?: { model?: string; sleep?: Sleep }): Promise<Vm | undefined>;
   forget(id: number): Promise<boolean>;
   // The live desktop of a running task's or held VM's.
   watch(id: number): Promise<string | undefined>;
   addHost(host: Host): Promise<void>;
+}
+
+// How a held VM goes to sleep for another that needs its slot, and when it was last used (ms since the epoch).
+export interface Sleep {
+  used(): number;
+  sleep(): Promise<void>;
 }
 
 export interface TaskOptions {
