@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { Context } from "@earendil-works/chord/context";
-import { inputFrom } from "./ahp-durable.ts";
+import { inputFrom } from "pi-durable-ahp";
 import {
   type Conversation,
   type ConversationId,
