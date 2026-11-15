@@ -31,7 +31,8 @@ export async function listen(server: Server, path: string, uid?: number) {
 // The response body, or an error for a status of 300 or more.
 export function call(socketPath: string, method: string, path: string, body?: string) {
   return new Promise<string>((resolve, reject) => {
-    const req = request({ socketPath, method, path, headers: { "Content-Type": "application/json" } }, (res) => {
+    // A connection each (see agent.ts's `call`).
+    const req = request({ socketPath, method, path, headers: { "Content-Type": "application/json" }, agent: false }, (res) => {
       readBody(res).then((text) => (res.statusCode! < 300 ? resolve(text) : reject(new Error(`${path}: ${res.statusCode} ${text}`))), reject);
     });
     req.on("error", reject).end(body);

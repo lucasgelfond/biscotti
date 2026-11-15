@@ -96,7 +96,7 @@ export async function connectAgent(
   // A task's run (agent-tasks.ts): what the agent does, as a stream of lines, until it's done or `stopped`.
   turn.task = (run: TaskRun, stopped: AbortSignal) =>
     new Promise<IncomingMessage>((resolve, reject) => {
-      const req = request({ socketPath: `${sockets}/agent.sock`, path: "/task", method: "POST", headers: { "content-type": "application/json" } }, (res) =>
+      const req = request({ socketPath: `${sockets}/agent.sock`, path: "/task", method: "POST", headers: { "content-type": "application/json" }, agent: false }, (res) =>
         res.statusCode === 200 ? resolve(res) : reject(new Error(`the agent couldn't run the task (${res.statusCode})`)),
       );
       req.on("error", reject);

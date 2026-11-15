@@ -58,10 +58,12 @@ export async function runAgent(sockets: string, _dir?: string) {
   const port = await new Promise<number>((resolve) => relay.listen(0, "127.0.0.1", () => resolve((relay.address() as { port: number }).port)));
   const gateUrl = `http://127.0.0.1:${port}`;
 
-  // The gate, with no time limit (a tool call may wait minutes on the owner's yes).
+  // The gate, with no time limit (a tool call may wait minutes on the owner's yes). Each request on a connection of its
+  // own: one kept alive between requests can be closed by the gate just as the next is sent (Node's server lets an
+  // idle connection go after 5 s), and that request is lost, e.g. a commit of the agent's storage.
   const call = (method: string, path: string, body?: string, headers: Record<string, string> = {}) =>
     new Promise<{ status: number; text: string }>((resolve, reject) => {
-      const req = request({ host: "127.0.0.1", port, method, path, headers }, (res) => {
+      const req = request({ host: "127.0.0.1", port, method, path, headers, agent: false }, (res) => {
         let text = "";
         res.setEncoding("utf8").on("data", (d: string) => (text += d)).on("end", () => resolve({ status: res.statusCode ?? 0, text }));
       });
@@ -86,7 +88,7 @@ export async function runAgent(sockets: string, _dir?: string) {
   // A stream of JSON lines from the gate, followed again whenever it ends (the gate restarted).
   const stream = (path: string, onLine: (line: Record<string, unknown>) => void) => {
     const again = () => setTimeout(() => stream(path, onLine), 2000);
-    const req = request({ host: "127.0.0.1", port, path }, (res) => {
+    const req = request({ host: "127.0.0.1", port, path, agent: false }, (res) => {
       if (res.statusCode !== 200) return void (res.resume(), res.statusCode === 404 || again());
       let buffer = "";
       res.setEncoding("utf8").on("data", (d: string) => {
@@ -94,7 +96,11 @@ export async function runAgent(sockets: string, _dir?: string) {
         for (let i = buffer.indexOf("\n"); i >= 0; i = buffer.indexOf("\n")) {
           const line = buffer.slice(0, i);
           buffer = buffer.slice(i + 1);
-          if (line.trim()) onLine(JSON.parse(line));
+          try {
+            if (line.trim()) onLine(JSON.parse(line));
+          } catch (err) {
+            console.error(`${path}: ${(err as Error).message}`);
+          }
         }
       });
       res.on("end", again).on("error", () => {});
@@ -180,7 +186,7 @@ export async function runAgent(sockets: string, _dir?: string) {
     ctx,
     call,
     daemon: (id) => [process.execPath, new URL("./env-pipe.ts", import.meta.url).pathname, sockets, String(id)],
-    onConversation: (id, conversation) => void sandboxes.started(id, conversation),
+    onConversation: (id, conversation) => void sandboxes.started(id, conversation).catch((err) => console.error(`#${id}'s chat: ${(err as Error).message}`)),
   });
 
   const database = new RemoteSqliteDatabase(async (req: SqlRequest) => {
@@ -237,10 +243,12 @@ export async function runAgent(sockets: string, _dir?: string) {
             doc.created = { ...doc.created, [session]: new Date().toISOString() };
           }, ctx);
           // A new session, for the apps' catalogues.
-          void catalogue().then((all) => host.notify(ROOT, "root/sessionAdded", { summary: all.find((s) => s.resource === `ahp-session:/${session}`) }));
+          void catalogue()
+            .then((all) => host.notify(ROOT, "root/sessionAdded", { summary: all.find((s) => s.resource === `ahp-session:/${session}`) }))
+            .catch((err) => console.error(`the apps' catalogue: ${(err as Error).message}`));
         }
         sessionOf.set(String(handle.id), session);
-        void follow(session, handle);
+        void follow(session, handle).catch((err) => console.error(`following ${session}: ${(err as Error).message}`));
         return handle;
       })();
       conversations.set(session, found);
@@ -366,7 +374,9 @@ export async function runAgent(sockets: string, _dir?: string) {
     const chat = new DurableChat({ host, harness, conversation: handle, uri: chatUri, ctx, onStatus, named: (id) => names[id] ?? id });
     function onStatus(status: number) {
       host.dispatch(uri, { type: "session/chatUpdated", chat: chatUri, changes: { status, modifiedAt: new Date().toISOString() } } as unknown as StateAction);
-      void catalogue().then(() => host.notify(ROOT, "root/sessionSummaryChanged", { session: uri, changes: { status, modifiedAt: new Date().toISOString() } }));
+      void catalogue()
+        .then(() => host.notify(ROOT, "root/sessionSummaryChanged", { session: uri, changes: { status, modifiedAt: new Date().toISOString() } }))
+        .catch((err) => console.error(`the apps' catalogue: ${(err as Error).message}`));
     }
     await chat.open(title);
     chats.set(chatUri, chat);
@@ -386,13 +396,16 @@ export async function runAgent(sockets: string, _dir?: string) {
     named: (id) => names[id] ?? id,
     changed(session) {
       const uri = `${SESSION}${session}`;
-      void sessions().then(async (doc) => {
-        if (!(session in doc.ids)) return;
-        const _meta = meta(session, doc);
-        if (host.has(uri)) host.dispatch(uri, { type: "session/metaChanged", _meta } as unknown as StateAction);
-        await catalogue();
-        host.notify(ROOT, "root/sessionSummaryChanged", { session: uri, changes: { _meta } });
-      });
+      // (While the agent's storage reopens, the next change brings it up to date.)
+      void sessions()
+        .then(async (doc) => {
+          if (!(session in doc.ids)) return;
+          const _meta = meta(session, doc);
+          if (host.has(uri)) host.dispatch(uri, { type: "session/metaChanged", _meta } as unknown as StateAction);
+          await catalogue();
+          host.notify(ROOT, "root/sessionSummaryChanged", { session: uri, changes: { _meta } });
+        })
+        .catch((err) => console.error(`session ${session}'s chats: ${(err as Error).message}`));
     },
   });
   const host: AhpHost = new AhpHost(
@@ -463,10 +476,10 @@ export async function runAgent(sockets: string, _dir?: string) {
             host.dispatch(`${SESSION}${session}`, { type: "session/chatUpdated", chat: channel, changes: { title } } as unknown as StateAction);
             await catalogue();
             host.notify(ROOT, "root/sessionSummaryChanged", { session: `${SESSION}${session}`, changes: { title } });
-          });
+          }).catch((err) => console.error(`titling ${session}: ${(err as Error).message}`));
           void chat.started(a.turnId, a.message?.text ?? "").catch((err) => console.error(`a turn from an app: ${(err as Error).message}`));
         }
-        if (a.type === "chat/turnCancelled") void chat.cancel();
+        if (a.type === "chat/turnCancelled") void chat.cancel().catch((err) => console.error(`cancelling a turn: ${(err as Error).message}`));
       },
     },
     { name: "biscotti", version: process.env.BISCOTTI_VERSION ?? "dev" },

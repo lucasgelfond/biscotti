@@ -428,6 +428,8 @@ async function readRun(
       clearTimeout(limit);
       clearInterval(idle);
       stopped.removeEventListener("abort", stop);
+      // The agent went away in the middle of it (it restarted): its run stops there.
+      if ("complete" in stream && !stream.complete) return reject(new Error("the agent stopped in the middle of the task (it restarted)"));
       resolve({ report: report || "The task ended without a report.", screenshot, bundle });
     });
   });
