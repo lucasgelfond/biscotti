@@ -82,7 +82,7 @@ function board(ctx: Context) {
   }
   // The owner's texts are main session 0, whatever was saved for it before.
   const texts = rows.get(0);
-  rows.set(0, { id: 0, goal: "Texts", status: "done", steps: [], started: Date.now(), updated: Date.now(), ...texts, kind: "main", source: "imessage" });
+  rows.set(0, { id: 0, status: "done", steps: [], started: Date.now(), updated: Date.now(), ...texts, goal: texts?.goal || "Texts", kind: "main", source: "imessage" });
   const screenshots = new Map<number, string>();
   const save = (t: Row) =>
     ctx.db.run(sql`INSERT OR REPLACE INTO tasks VALUES (${t.id}, ${t.kind}, ${t.goal}, ${t.status}, ${t.slot ?? null}, ${t.where ?? null}, ${t.repo ?? null}, ${t.ssh ? JSON.stringify(t.ssh) : null}, ${t.preview ?? null}, ${t.report ?? null}, ${JSON.stringify(t.steps)}, ${t.started}, ${t.updated}, ${t.parent ?? null}, ${t.source === undefined ? null : JSON.stringify(t.source)})`);
