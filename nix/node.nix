@@ -91,6 +91,7 @@ in
             tailscale up --auth-key="$secret?ephemeral=false&preauthorized=true" --advertise-tags=tag:biscotti-node --hostname="biscotti-node-$k"
           fi
           tailscale serve --bg --https=10441 http://10.200.1.2:6901
+          tailscale serve --bg --https=10541 http://10.200.1.2:8000
 
           docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
           vm_source=$({ cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum; echo ${toString vms.memMiB} ${toString vms.workGiB}; } | sha256sum | cut -d' ' -f1)

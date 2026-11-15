@@ -84,6 +84,8 @@
       plugins=$(jq -r '.plugins[]' "$STATE/biscotti.json")
       has() { grep -qx "$1" <<< "$plugins"; }
       for n in $(seq ${toString vms.slots}); do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
+      # Each slot's preview of what a task made (its port 8000).
+      for n in $(seq ${toString vms.slots}); do tailscale serve --bg --https=$((10540 + n)) "http://10.200.$n.2:8000"; done
       # Each slot's sshd, for boxes.
       for n in $(seq ${toString vms.slots}); do tailscale serve --bg --tcp=$((2200 + n)) "tcp://10.200.$n.2:22"; done
       # The vault's one-time forms, and Google's and other services' sign-in callbacks.

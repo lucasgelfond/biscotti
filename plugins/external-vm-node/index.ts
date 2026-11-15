@@ -99,6 +99,7 @@ export function nodes(): Host | undefined {
     endpoint: (slot, port) => ({ host: name(slot), port: port === 22 ? 2222 : port }),
     gate: (slot) => ({ host: here ?? "127.0.0.1", port: 18000 + slot, peer: () => peers.get(slot) }),
     watch: async (slot) => `https://${name(slot)}:10441/biscotti.html#password=${(await vms(slot, "GET", "/vnc-password").catch(() => "")).trim()}`,
+    site: (slot) => `https://${name(slot)}:10541/`,
   };
 }
 

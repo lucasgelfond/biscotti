@@ -6,6 +6,7 @@ import { call } from "./http.ts";
 import {
   emit,
   endpoints,
+  taskEvents,
   bool,
   input,
   int,
@@ -47,7 +48,8 @@ const USE_CHECK_MS = Number(process.env.VM_USE_CHECK_MS ?? 5 * 60_000);
 export const SLOTS = Array.from({ length: Number(process.env.VM_SLOTS ?? 2) }, (_, i) => i + 1);
 
 // This machine's VMs, from the vms service over its socket (vms-main.ts). Their live desktops are on the tailnet at
-// 10440 + slot (`tailscale serve`), the password in the link's fragment, which the browser never sends to the server.
+// 10440 + slot (`tailscale serve`), the password in the link's fragment, which the browser never sends to the server;
+// their port 8000 (a preview of what a task made) at 10540 + slot.
 export function localHost(socketPath: string, vmDir: string): Host {
   const vm = (slot: number): Vm => ({
     slot,
@@ -62,6 +64,7 @@ export function localHost(socketPath: string, vmDir: string): Host {
     watch: process.env.TAILNET_HOST
       ? (slot) => `https://${process.env.TAILNET_HOST}:${10440 + slot}/biscotti.html#password=${existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : ""}`
       : undefined,
+    site: process.env.TAILNET_HOST ? (slot) => `https://${process.env.TAILNET_HOST}:${10540 + slot}/` : undefined,
     active: (slot) => sessions(slot) > 0,
   };
 }
@@ -523,6 +526,10 @@ export function taskTools(vms: Vms, doing?: (slot: number) => string | undefined
 // `ask` gets the daily question for the owner about the VMs still around.
 export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host, report: (goal: string, result: TaskResult, parent?: string) => void, file?: string, ask?: (text: string) => void) {
   const parents = new Map<number, string>();
+  // What each task's results go through before they're reported (RunOptions.after), its follow-ups' too.
+  const afters = new Map<number, (result: TaskResult) => Promise<TaskResult>>();
+  taskEvents.on("event", (e) => void (e.type === "done" && afters.delete(e.id)));
+  const after = (id: number) => (r: Promise<TaskResult>) => r.then((result) => afters.get(id)?.(result) ?? result);
   // Messages for tasks still waiting for a VM, given to the VM when it starts.
   const waiting = new Map<number, string[]>();
   const pool = taskVms(
@@ -549,11 +556,16 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
     r.then((result) => report(goal, result, parent), (err) => report(goal, { report: `The task failed: ${err.message}` }, parent));
 
   const vms: Vms = {
-    run: (goal, opts) => pool.run(goal, opts).result,
+    run(goal, opts) {
+      const { id, result } = pool.run(goal, opts);
+      if (opts?.after) afters.set(id, opts.after);
+      return after(id)(result);
+    },
     start(goal, opts) {
       const { id, result } = pool.run(goal, opts);
       if (opts?.parent) parents.set(id, opts.parent);
-      void reportTo(goal, opts?.parent)(result);
+      if (opts?.after) afters.set(id, opts.after);
+      void reportTo(goal, opts?.parent)(after(id)(result));
       return id;
     },
     tell(id, message) {
@@ -561,10 +573,10 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
       if (task) emit({ id, type: "told", text: message });
       if (task?.slot !== undefined) return (gate.tell(task.slot, message), "told");
       if (task) return (waiting.set(id, [...(waiting.get(id) ?? []), message]), "queued");
-      const k = pool.kept().find((t) => t.id === id);
-      const resumed = k && pool.resume(id, message);
+      const goal = pool.alive().find((v) => v.id === id)?.goal;
+      const resumed = goal !== undefined && pool.resume(id, message);
       if (!resumed) return "none";
-      void reportTo(k.goal, parents.get(id))(resumed);
+      void reportTo(goal, parents.get(id))(after(id)(resumed));
       return "resumed";
     },
     reserve: pool.reserve,
@@ -583,6 +595,10 @@ export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host
     async watch(id) {
       const slot = pool.slotOf(id);
       return slot === undefined ? undefined : await pool.host(slot)?.watch?.(slot);
+    },
+    async site(id) {
+      const slot = pool.slotOf(id);
+      return slot === undefined ? undefined : await pool.host(slot)?.site?.(slot);
     },
     async addHost(host) {
       for (const slot of host.slots) {

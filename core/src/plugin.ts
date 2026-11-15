@@ -55,6 +55,8 @@ export interface Host {
   gate?(slot: number): { host: string; port: number; peer(): string | undefined };
   // The slot's live desktop.
   watch?(slot: number): string | Promise<string>;
+  // The slot's VM's web server (its port 8000), for a preview of what a task made.
+  site?(slot: number): string | Promise<string>;
   // Whether someone's on the slot's VM (an ssh or desktop session).
   active?(slot: number): boolean | Promise<boolean>;
   // A host that costs money to run: used only once every other host's slots are taken, and never kept warm.
@@ -106,8 +108,16 @@ export interface Alive {
 }
 
 // `parent`: the main session that started it, where its report goes. A task's VM is deleted once it's done, unless
-// `keep` (or vms.keep) keeps it open.
-export type RunOptions = TaskOptions & { id?: number; fits?: (slot: number) => boolean; extra?: Record<string, unknown>; parent?: string; keep?: boolean };
+// `keep` (or vms.keep) keeps it open. `after` makes something of each run's result before it's reported, the first
+// run's and each follow-up's (a coding task's commits pushed).
+export type RunOptions = TaskOptions & {
+  id?: number;
+  fits?: (slot: number) => boolean;
+  extra?: Record<string, unknown>;
+  parent?: string;
+  keep?: boolean;
+  after?: (result: TaskResult) => Promise<TaskResult>;
+};
 
 export interface Vms {
   // A task whose report comes back to the caller. `fits` limits the slots it may take; `id` carries on a kept task's
@@ -131,8 +141,9 @@ export interface Vms {
   drop(id: number): Promise<void>;
   reclaim(id: number, opts?: { model?: string; sleep?: Sleep }): Promise<Vm | undefined>;
   forget(id: number): Promise<boolean>;
-  // The live desktop of a running task's or held VM's.
+  // The live desktop of a running task's or held VM's, and its web server (a preview).
   watch(id: number): Promise<string | undefined>;
+  site(id: number): Promise<string | undefined>;
   // A task's VM kept open once it's done (it's deleted otherwise), or an asleep one woken and kept open; false when
   // there's no such task or VM.
   keep(id: number): Promise<boolean>;

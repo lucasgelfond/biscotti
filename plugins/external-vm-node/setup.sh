@@ -13,7 +13,7 @@
 #   "grants": [
 #     { "src": ["tag:biscotti"], "dst": ["tag:biscotti-node"], "ip": ["tcp:7400", "tcp:4000", "tcp:3211", "tcp:6901", "tcp:9223", "tcp:2222"] },
 #     { "src": ["tag:biscotti-node"], "dst": ["tag:biscotti"], "ip": ["tcp:18101-18199"] },
-#     { "src": ["autogroup:member"], "dst": ["tag:biscotti-node"], "ip": ["tcp:10441", "tcp:2222"] }
+#     { "src": ["autogroup:member"], "dst": ["tag:biscotti-node"], "ip": ["tcp:10441", "tcp:10541", "tcp:2222"] }
 #   ]
 set -euo pipefail
 REGION=$1 GATE=$2 REV=$3 TYPE=${4:-m8i.large}

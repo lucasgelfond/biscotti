@@ -39,6 +39,8 @@ export interface Summary {
   ssh?: { host: string; port: number; user: string };
   hostKey?: string;
   preview?: string;
+  // A task's app, running in its VM (a coding task's preview).
+  site?: string;
   report?: string;
   parent?: string;
   source?: unknown;
@@ -75,7 +77,7 @@ export const extension = (method: `_biscotti/${string}`, handler: Extension) => 
 // The board: every task's and VM's row, kept in the database across restarts.
 function board(ctx: Context) {
   ctx.db.run(sql`CREATE TABLE IF NOT EXISTS tasks (id integer PRIMARY KEY, kind text NOT NULL DEFAULT 'task', goal text NOT NULL, status text NOT NULL, slot integer, "where" text, repo text, ssh text, preview text, report text, steps text NOT NULL, started integer NOT NULL, updated integer NOT NULL)`);
-  for (const column of ["parent text", "source text", "model text", "thinking text", "used integer", "size integer"]) {
+  for (const column of ["parent text", "source text", "model text", "thinking text", "used integer", "size integer", "site text"]) {
     try {
       ctx.db.run(sql.raw(`ALTER TABLE tasks ADD COLUMN ${column}`));
     } catch {}
@@ -90,8 +92,8 @@ function board(ctx: Context) {
   rows.set(0, { id: 0, status: "done", steps: [], started: Date.now(), updated: Date.now(), ...texts, goal: texts?.goal || "Texts", kind: "main", source: "imessage" });
   const screenshots = new Map<number, string>();
   const save = (t: Row) =>
-    ctx.db.run(sql`INSERT OR REPLACE INTO tasks (id, kind, goal, status, slot, "where", repo, ssh, preview, report, steps, started, updated, parent, source, model, thinking, used, size)
-      VALUES (${t.id}, ${t.kind}, ${t.goal}, ${t.status}, ${t.slot ?? null}, ${t.where ?? null}, ${t.repo ?? null}, ${t.ssh ? JSON.stringify(t.ssh) : null}, ${t.preview ?? null}, ${t.report ?? null}, ${JSON.stringify(t.steps)}, ${t.started}, ${t.updated}, ${t.parent ?? null}, ${t.source === undefined ? null : JSON.stringify(t.source)}, ${t.model ?? null}, ${t.thinking ?? null}, ${t.used ?? null}, ${t.size ?? null})`);
+    ctx.db.run(sql`INSERT OR REPLACE INTO tasks (id, kind, goal, status, slot, "where", repo, ssh, preview, site, report, steps, started, updated, parent, source, model, thinking, used, size)
+      VALUES (${t.id}, ${t.kind}, ${t.goal}, ${t.status}, ${t.slot ?? null}, ${t.where ?? null}, ${t.repo ?? null}, ${t.ssh ? JSON.stringify(t.ssh) : null}, ${t.preview ?? null}, ${t.site ?? null}, ${t.report ?? null}, ${JSON.stringify(t.steps)}, ${t.started}, ${t.updated}, ${t.parent ?? null}, ${t.source === undefined ? null : JSON.stringify(t.source)}, ${t.model ?? null}, ${t.thinking ?? null}, ${t.used ?? null}, ${t.size ?? null})`);
   return {
     rows,
     screenshots,
@@ -99,7 +101,7 @@ function board(ctx: Context) {
       let t = rows.get(e.id);
       if (!t) rows.set(e.id, (t = { id: e.id, kind: "sandbox", goal: "", status: "queued", started: e.at, updated: e.at, steps: [] }));
       t.updated = e.at;
-      for (const field of ["goal", "kind", "repo", "ssh", "hostKey", "preview", "slot", "where", "parent", "source", "model", "thinking", "used", "size"] as const) if (e[field] !== undefined) (t as unknown as Record<string, unknown>)[field] = e[field];
+      for (const field of ["goal", "kind", "repo", "ssh", "hostKey", "preview", "site", "slot", "where", "parent", "source", "model", "thinking", "used", "size"] as const) if (e[field] !== undefined) (t as unknown as Record<string, unknown>)[field] = e[field];
       // A main session is titled by what the owner first said in it.
       if (e.type === "told" && t.kind === "main" && t.goal === "New session" && e.text) t.goal = e.text;
       if (e.type === "told") t.status = "running";

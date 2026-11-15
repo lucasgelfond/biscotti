@@ -1,5 +1,6 @@
 import { declined, input, localTools, mcpTools, merge, secret, text, type Context, type Plugin } from "@biscotti/core";
-import { codeTask } from "./code.ts";
+import { codeTasks } from "./code.ts";
+import { extension } from "../api/index.ts";
 
 // GitHub's remote MCP server with the owner's fine-grained token, from .env or the vault ("GitHub", field "token").
 // Biscotti works on GitHub freely (branches, commits, pull requests, comments, edits); it asks the owner first only
@@ -18,8 +19,9 @@ export default {
   prompt: `GitHub: repos, issues and pull requests through the GitHub tools (load them with \`tool_search\`, e.g. "github pull request"). Go ahead with branches, commits, pull requests, comments and edits without checking with the user; deleting or closing anything asks them itself. If
 GitHub isn't connected, \`github_connect\` says how.
 
-Code changes: \`code_task\` has a coding agent make the change in a VM and opens a draft pull request. Text the user
-the PR link from its report. Never merge pull requests; that's the user's call.`,
+Code changes: \`code_task\` has a coding agent make the change in a VM and pushes it to a branch; with preview, the app
+stays running from that branch for the owner to use. Text the owner the links from its report. A pull request only
+once they ask (\`code_pull_request\`); never merge one, that's their call.`,
 
   async tools(ctx) {
     const pat = token(ctx);
@@ -43,13 +45,23 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
       // Named as GitHub's, so tool_search finds them by it.
       return (await tools.list()).filter((t) => !MERGE.test(t.name)).map((t) => ({ ...t, description: `GitHub: ${t.description ?? ""}` }));
     }
-    return merge({ ...tools, list }, localTools([codeTask(ctx, pat)]));
+    return merge({ ...tools, list }, localTools(codeTasks(ctx, pat)));
   },
 
   // Once a token is saved to the vault, restart (the service restarts us, and the agent reloads) to load GitHub's tools.
   // Connected, every hour: a VM still around whose pull request was merged or closed is deleted.
   async start(ctx) {
-    if (token(ctx)) return void setInterval(() => void cleanUp(ctx), Number(process.env.PR_CHECK_MS ?? 3600_000)).unref();
+    if (token(ctx)) {
+      setInterval(() => void cleanUp(ctx), Number(process.env.PR_CHECK_MS ?? 3600_000)).unref();
+      // The owner's apps read GitHub through biscotti's token (pull requests, checks, diffs), so they need none of
+      // their own: _biscotti/github {path} -> GitHub's JSON for a GET of one of the repos' read endpoints.
+      extension("_biscotti/github", async ({ path }) => {
+        if (typeof path !== "string" || !/^\/repos\/[\w.-]+\/[\w.-]+\/(pulls|commits|compare|check-runs|actions|branches|contents)(\/|\?|$)/.test(path)) throw new Error("only reads of a repo's pulls, commits, compare, checks, branches or contents");
+        const res = await fetch(`https://api.github.com${path}`, { headers: { Authorization: `Bearer ${token(ctx)}`, Accept: "application/vnd.github+json" } });
+        return { status: res.status, body: await res.json().catch(() => null) };
+      });
+      return;
+    }
     const timer = setInterval(() => {
       if (!token(ctx)) return;
       clearInterval(timer);

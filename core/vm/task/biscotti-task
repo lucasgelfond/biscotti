@@ -55,22 +55,23 @@ pi.stdout.setEncoding("utf8").on("data", (chunk) => {
   }
 });
 
-// A coding task's repo arrives as a git bundle: checked out in ~/repo on its own branch with no remote (nothing in the
-// VM can push), and the commits made on it go back as a bundle for the host to review and open as a pull request.
+// A coding task's repo arrives as a git bundle: checked out in ~/repo with no remote (nothing in the VM can push), with
+// jj alongside git (colocated), and the commits made on it go back as a bundle for the host to review and push to a
+// branch.
 const REPO = "/home/cua/repo";
 // How long one tool call may run without output before the host may count the task as gone quiet.
 const TOOL_QUIET_MAX_MS = 30 * 60_000;
 const git = (...args) => execFileSync("git", ["-C", REPO, ...args], { encoding: "utf8" }).trim();
 const CODING = `This is a coding task, not an errand: ignore the browsing guidelines' 3-minute target and take the time the change needs.
 
-The repository is checked out in ~/repo on a branch of its own, with no remote: you can't push, and don't try. Your commits become a draft pull request the owner reviews; nothing is merged.
+The repository is checked out in ~/repo with no remote: you can't push, and don't try. It's a jj (Jujutsu) repo colocated with git: use jj for version control (jj st, jj diff, jj describe -m, jj new), not git commands that write. Your changes go to a branch on GitHub for the owner to look at; nothing is merged.
 
 Work like this:
 1. Orient: read the README and any contributor or agent notes (AGENTS.md, CLAUDE.md, CONTRIBUTING), find how the project installs, builds and tests (package.json scripts, Makefile, pyproject, CI config under .github/), and read the code the change touches. Search with rg and fd rather than reading whole trees.
 2. Set up: install dependencies the way the project does (its lockfile's package manager; a venv for Python). If setup fails, say exactly what failed rather than working around it silently.
 3. Change: make the smallest change that fully does the goal, in the code's own style. Add or update tests for behavior you change.
 4. Check: run the tests, type checker, linter or build the project has, fix what you broke, and run them again. Long installs and test runs are fine; run a server or watcher in the background (with & and a log file) and stop it when done.
-5. Commit with clear messages. Never merge, rebase onto other branches or rewrite existing commits.
+5. Describe your changes with clear messages (jj describe -m, then jj new to start the next one). Whatever's left in the working copy at the end is committed for you. Never merge or rebase onto other branches.
 
 Installed: git, node 22 with npm and pnpm, python3 with venv and pip, gcc and make (build-essential), rg, fd, jq, sqlite3, and Docker with docker compose (dockerd is running; use it for the services the project needs, such as a database, or its own compose file); sudo works for anything else (apt-get install).
 
@@ -89,8 +90,27 @@ function checkout(bundle) {
   return git("rev-parse", "HEAD");
 }
 
-// The commits since `base`, with anything left uncommitted committed first.
+// jj alongside git in the checkout. It has no remote, so trunk() would be the root: diffs are against `base`, the
+// commit it started from.
+function colocate(base) {
+  const env = { ...process.env, HOME };
+  const who = ["--config", "user.name=biscotti", "--config", "user.email=biscotti@users.noreply.github.com"];
+  execFileSync("jj", [...who, "git", "init", "--colocate", REPO], { stdio: "ignore", env });
+  execFileSync("jj", ["-R", REPO, "config", "set", "--repo", 'revset-aliases."trunk()"', base], { stdio: "ignore", env });
+  execFileSync("jj", ["-R", REPO, "config", "set", "--repo", "user.name", "biscotti"], { stdio: "ignore", env });
+  execFileSync("jj", ["-R", REPO, "config", "set", "--repo", "user.email", "biscotti@users.noreply.github.com"], { stdio: "ignore", env });
+}
+
+// The commits since `base`, with anything left uncommitted committed first: in jj, the working copy's change (described
+// if it isn't yet) and a new empty one on top, so git's HEAD (jj's @-) has it.
 function commits(base) {
+  if (existsSync(`${REPO}/.jj`)) {
+    const jj = (...args) => execFileSync("jj", ["-R", REPO, ...args], { encoding: "utf8", env: { ...process.env, HOME } }).trim();
+    if (jj("log", "--no-graph", "-r", "@", "-T", "empty") === "false") {
+      if (!jj("log", "--no-graph", "-r", "@", "-T", "description")) jj("describe", "-m", "Changes at the end of the task");
+      jj("new");
+    }
+  }
   git("add", "-A");
   if (git("status", "--porcelain")) git("commit", "-q", "-m", "Uncommitted changes at the end of the task");
   if (git("rev-parse", "HEAD") === base) return undefined;
@@ -372,11 +392,7 @@ async function setUpBox({ key, repo, setup }, socket) {
       execFileSync("chown", ["-R", "cua:cua", `${HOME}/.ssh`]);
     }
     if (repo) {
-      const base = checkout(repo);
-      const jj = (...args) => execFileSync("jj", ["-R", REPO, ...args], { stdio: "ignore", env: { ...process.env, HOME } });
-      execFileSync("jj", ["git", "init", "--colocate", REPO], { stdio: "ignore", env: { ...process.env, HOME } });
-      // The checkout has no remote, so trunk() would be the root: diffs are against the commit the box started from.
-      jj("config", "set", "--repo", 'revset-aliases."trunk()"', base);
+      colocate(checkout(repo));
     }
     if (setup) {
       const child = spawn("bash", ["-lc", setup], { cwd: existsSync(REPO) ? REPO : HOME, stdio: ["ignore", "pipe", "pipe"] });
@@ -422,7 +438,10 @@ createServer({ allowHalfOpen: true }, (socket) => {
       base = task.moved.base;
     }
     try {
-      if (task.repo && !followup && !task.moved) base = checkout(task.repo);
+      if (task.repo && !followup && !task.moved) {
+        base = checkout(task.repo);
+        colocate(base);
+      }
     } catch (err) {
       socket.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `Couldn't check out the repo: ${err.message}` }] } })}\n`);
       return socket.end();
