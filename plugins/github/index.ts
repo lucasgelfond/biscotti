@@ -4,22 +4,10 @@ import { codeTask } from "./code.ts";
 // GitHub's remote MCP server with the owner's fine-grained token, from .env or the vault ("GitHub", field "token").
 // Biscotti works on GitHub freely (branches, commits, pull requests, comments, edits); it asks the owner first only
 // before deleting, removing or closing something. Nothing merges: biscotti opens pull requests for the user to review,
-// so merge tools are left out. Only the owner's few: pull requests (open, change, read), code (read, branch, push) and
-// their repos.
+// so merge tools are left out.
 
 const URL = "https://api.githubcopilot.com/mcp/";
 const TOOLSETS = "context,repos,issues,pull_requests,users";
-const TOOLS = new Set([
-  "create_pull_request",
-  "update_pull_request",
-  "pull_request_read",
-  "list_pull_requests",
-  "get_file_contents",
-  "create_branch",
-  "push_files",
-  "create_or_update_file",
-  "search_repositories",
-]);
 const MERGE = /merge/i;
 const DESTRUCTIVE = /delete|remove/i;
 
@@ -47,14 +35,13 @@ the PR link from its report. Never merge pull requests; that's the user's call.`
       ]);
     const tools = mcpTools(URL, { Authorization: `Bearer ${pat}`, "X-MCP-Toolsets": TOOLSETS }, async (client, name, args) => {
       if (MERGE.test(name)) return text("biscotti doesn't merge; send the user the pull request link.");
-      if (!TOOLS.has(name)) return text(`biscotti doesn't use GitHub's ${name}.`);
       const destructive = DESTRUCTIVE.test(name) || args.state === "closed";
       if (destructive && !(await ctx.ask(`GitHub: ${name} with ${JSON.stringify(args)}?`))) return declined;
       return client.callTool({ name, arguments: args }) as never;
     });
     async function list() {
       // Named as GitHub's, so tool_search finds them by it.
-      return (await tools.list()).filter((t) => TOOLS.has(t.name) && !MERGE.test(t.name)).map((t) => ({ ...t, description: `GitHub: ${t.description ?? ""}` }));
+      return (await tools.list()).filter((t) => !MERGE.test(t.name)).map((t) => ({ ...t, description: `GitHub: ${t.description ?? ""}` }));
     }
     return merge({ ...tools, list }, localTools([codeTask(ctx, pat)]));
   },
