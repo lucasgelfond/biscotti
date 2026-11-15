@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 50 1750 860" width="1750" height="860">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 50 1750 830" width="1750" height="830">
   <!-- biscotti's architecture, drawn like a terminal diagram. Dashed boxes are plugins; gray ones are for later. -->
   <style>
     text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; letter-spacing: -0.01em; fill: #000; }
@@ -30,7 +30,7 @@
       <path d="M0 0V8" style="stroke: #2f5fb3; stroke-opacity: 0.22; shape-rendering: auto"/>
     </pattern>
   </defs>
-  <rect x="0" y="50" width="1750" height="860" style="fill: #fff; stroke: none"/>
+  <rect x="0" y="50" width="1750" height="830" style="fill: #fff; stroke: none"/>
 
   <!-- outside -->
   <rect x="40" y="128" width="220" height="64"/><text class="l" x="150" y="168">iMessage</text>
@@ -74,22 +74,26 @@
   <rect class="d" x="340" y="748" width="200" height="56"/><text class="l" x="440" y="783">artifacts</text>
   <rect class="d" x="560" y="748" width="200" height="56"/><text class="l" x="660" y="783">embeddings</text>
 
-  <!-- cloud -->
-  <text class="h" x="1460" y="203">cloud</text>
-  <rect x="1460" y="220" width="250" height="136"/><text class="l" x="1585" y="252">llm provider</text>
-  <rect x="1480" y="264" width="210" height="36" style="fill: url(#hatch)"/><text class="s" x="1585" y="287">pi-claude-code</text>
-  <rect class="d later" x="1480" y="308" width="101" height="36"/><text class="s later" x="1530" y="331">Bifrost</text>
-  <rect class="d later" x="1589" y="308" width="101" height="36"/><text class="s later" x="1640" y="331">Switchyard</text>
-  <rect class="d" x="1460" y="372" width="250" height="64"/><text class="l" x="1585" y="412">Gmail</text>
-  <rect class="d" x="1460" y="452" width="250" height="64"/><text class="l" x="1585" y="492">Google Calendar</text>
-  <rect class="d" x="1460" y="532" width="250" height="64"/><text class="l" x="1585" y="572">GitHub</text>
-  <rect class="d" x="1460" y="612" width="250" height="64"/><text class="l" x="1585" y="652">Exa</text>
-  <rect class="vm" x="1460" y="696" width="250" height="90" style="fill: url(#fchatch)"/>
-  <text class="s fc" x="1585" y="730">Firecracker</text>
-  <text class="l" x="1585" y="764">EC2 overflow</text>
-  <rect x="1460" y="802" width="250" height="90" style="fill: url(#machatch); stroke: #2f5fb3"/>
-  <text class="s" x="1585" y="836" style="fill: #2f5fb3">macOS</text>
-  <text class="l" x="1585" y="870">Swift via pi-env</text>
+  <!-- the two ways out: the tailnet (our own machines and model routing) and the cloud -->
+  <text class="h" x="1460" y="96">Tailscale</text>
+  <rect x="1460" y="110" width="250" height="120"/><text class="l" x="1585" y="142">llm routing</text>
+  <rect x="1480" y="154" width="210" height="30" style="fill: url(#hatch)"/><text class="s" x="1585" y="174">pi-claude-code</text>
+  <rect class="d later" x="1480" y="192" width="101" height="30"/><text class="s later" x="1530" y="212">Bifrost</text>
+  <rect class="d later" x="1589" y="192" width="101" height="30"/><text class="s later" x="1640" y="212">Switchyard</text>
+  <rect class="vm" x="1460" y="246" width="250" height="90" style="fill: url(#fchatch)"/>
+  <text class="s fc" x="1585" y="280">Firecracker</text>
+  <text class="l" x="1585" y="314">EC2 overflow</text>
+  <g style="opacity: 0.5">
+    <rect x="1460" y="352" width="250" height="64" style="fill: url(#machatch); stroke: #2f5fb3; stroke-dasharray: 6 5"/>
+    <text class="l" x="1585" y="392">macOS</text>
+  </g>
+
+  <text class="h" x="1460" y="456">cloud</text>
+  <rect x="1460" y="470" width="250" height="64"/><text class="l" x="1585" y="510">llm provider</text>
+  <rect class="d" x="1460" y="550" width="250" height="64"/><text class="l" x="1585" y="590">Gmail</text>
+  <rect class="d" x="1460" y="630" width="250" height="64"/><text class="l" x="1585" y="670">Google Calendar</text>
+  <rect class="d" x="1460" y="710" width="250" height="64"/><text class="l" x="1585" y="750">GitHub</text>
+  <rect class="d" x="1460" y="790" width="250" height="64"/><text class="l" x="1585" y="830">Exa</text>
 
   <!-- wires; pi-durable and the VMs reach everything outside, and their state, only through the gate -->
   <path d="M150 192V220" marker-start="url(#a)" marker-end="url(#a)"/>
@@ -100,11 +104,12 @@
   <path d="M710 265H750" marker-end="url(#a)"/>
   <path d="M620 220V194H1230V220" marker-end="url(#a)"/>
   <path d="M1050 440H1090" marker-end="url(#a)"/>
-  <path d="M1370 244H1460" marker-end="url(#a)"/>
-  <path d="M1370 404H1460" marker-end="url(#a)"/>
-  <path d="M1370 484H1460" marker-end="url(#a)"/>
-  <path d="M1370 564H1460" marker-end="url(#a)"/>
-  <path d="M1370 644H1460" marker-end="url(#a)"/>
-  <path d="M1230 660V741H1460" marker-end="url(#a)"/>
-  <path d="M1230 741V847H1460" marker-end="url(#a)"/>
+  <path d="M1370 240H1415V170H1460" marker-end="url(#a)"/>
+  <path d="M1370 291H1460" marker-end="url(#a)"/>
+  <path class="d" d="M1370 384H1460" marker-end="url(#a)" style="opacity: 0.5"/>
+  <path d="M1370 502H1460" marker-end="url(#a)"/>
+  <path d="M1370 582H1460" marker-end="url(#a)"/>
+  <path d="M1370 650H1415V662H1460" marker-end="url(#a)"/>
+  <path d="M1415 662V742H1460" marker-end="url(#a)"/>
+  <path d="M1415 742V822H1460" marker-end="url(#a)"/>
 </svg>
