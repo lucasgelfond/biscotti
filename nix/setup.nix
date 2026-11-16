@@ -67,7 +67,8 @@
 
       # A Pi has no clock battery: until NTP sets the time, every TLS certificate looks invalid.
       until [ "$(timedatectl show -p NTPSynchronized --value)" = yes ]; do sleep 2; done
-      docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
+      # With the read-only deploy key for private dependencies, as compose builds it (core/host/compose.yaml).
+      docker build -q --ssh default=/var/lib/biscotti/deploy-keys/pi-durable-acp-ahp -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
       notify() { docker run --rm --network host --env-file "$ENV" biscotti/agent node plugins/channels/spectrum/notify.ts "$1" || true; }
 
       # Tailscale: text the owner the login link.
