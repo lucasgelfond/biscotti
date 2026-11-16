@@ -1,5 +1,6 @@
 import { createHmac, randomInt } from "node:crypto";
-import { bool, declined, input, list, localTools, optional, saveSecret, secret, str, text, type LocalTool, type Plugin, vmEndpoint } from "@biscotti/core";
+import { bool, declined, input, list, localTools, optional, saveSecret, secret, str, text, type LocalTool, type Plugin } from "@biscotti/core";
+import { vmEndpoint } from "@biscotti/tasks";
 
 // Types vault values into a task VM's page, over Chrome DevTools: no model ever sees them. Asks the owner first, naming
 // the site the typing would go to.

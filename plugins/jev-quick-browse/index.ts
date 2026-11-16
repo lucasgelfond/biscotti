@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { input, localTools, optional, secrets, str, text, type Plugin } from "@biscotti/core";
+import { vms } from "@biscotti/tasks";
 import { browser } from "../secure-fill/index.ts";
 import { browse } from "./loop.ts";
 
@@ -77,8 +78,8 @@ comparing options across pages, several sites, or when browse comes back unsure.
           }),
           async run({ goal, url, values }, caller) {
             const errand = String(goal);
-            void ctx
-              .vms!.run(JSON.stringify({ goal: errand, url, values }), { runner: RUNNER, timeoutMs: 10 * 60_000, parent: caller.session })
+            void vms(ctx)
+              .run(JSON.stringify({ goal: errand, url, values }), { runner: RUNNER, timeoutMs: 10 * 60_000, parent: caller.session })
               .then(({ report, screenshot }) => ctx.deliver(`Browse report (${errand}): ${report}`, screenshot, caller.session))
               .catch((err: Error) => ctx.deliver(`Browse report (${errand}): browsing failed: ${err.message}`, undefined, caller.session));
             return text("Browsing.");

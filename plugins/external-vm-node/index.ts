@@ -1,7 +1,8 @@
 import { lookup } from "node:dns/promises";
 import { networkInterfaces } from "node:os";
 import { DescribeInstancesCommand, EC2Client, RunInstancesCommand, StartInstancesCommand, StopInstancesCommand } from "@aws-sdk/client-ec2";
-import { type Host, type Plugin, stillRunning, type Vm } from "@biscotti/core";
+import type { Plugin } from "@biscotti/core";
+import { type Host, stillRunning, type Vm, vms } from "@biscotti/tasks";
 import { HttpError } from "@biscotti/core/http";
 
 // External VM nodes: EC2 machines (nested virtualization) that each run one task VM, used only once this machine's
@@ -103,6 +104,6 @@ export function nodes(): Host | undefined {
 export default {
   async start(ctx) {
     const host = nodes();
-    if (host) await ctx.vms.addHost(host);
+    if (host) await vms(ctx).addHost(host);
   },
 } satisfies Plugin;

@@ -10,7 +10,7 @@ import { createInterface } from "node:readline";
 import { createGate } from "../../core/src/gate.ts";
 import { openDb } from "../../core/src/memory.ts";
 import type { Context, Plugin } from "../../core/src/plugin.ts";
-import { noVms } from "../support.ts";
+import { none } from "../support.ts";
 import { restore } from "../../plugins/firecracker/firecracker.ts";
 import { SLOTS } from "../../plugins/firecracker/firecracker.ts";
 import vault from "../../core/src/vault.ts";
@@ -205,7 +205,7 @@ const phoenix = process.env.CU_PHOENIX ? (() => {
 // TODO: through Vms.run, as production runs tasks: the VMs' port 4000 now takes only setup, not goals.
 const scratch = mkdtempSync(join(tmpdir(), "cu-"));
 // The owner says yes to whatever a task asks (a vault fill on a site): what is graded is what the task does with it.
-const ctx: Context = { db: openDb(process.env.CU_DB ?? `${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {}, vms: noVms };
+const ctx: Context = { db: openDb(process.env.CU_DB ?? `${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {}, gate: none("gate"), agent: none("agent") };
 gate.add(await vault.tools!(ctx));
 for (const name of (process.env.CU_PLUGINS ?? "secure-fill,vision,lessons").split(",").filter(Boolean)) {
   const plugin: Plugin = (await import(`../../plugins/${name}/index.ts`)).default;

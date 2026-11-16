@@ -1,113 +1,131 @@
-import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createNetServer, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
-import type { TaskRun } from "./agent-tasks.ts";
-import type { Board } from "./board.ts";
-import { appMethods } from "./plugin.ts";
-import { call, listen, readBody } from "./http.ts";
+import { type CancellationToken, CancellationTokenSource, createMessageConnection, type MessageConnection, ResponseError, SocketMessageReader, SocketMessageWriter } from "vscode-jsonrpc/node.js";
+import { listen } from "./http.ts";
 import type { Db } from "./memory.ts";
-import type { SqlRequest, sqlBridge } from "./sql-bridge.ts";
+import { appMethods } from "./plugin.ts";
 import { transcripts } from "./schema.ts";
 
-// The gate's side of the main agent (agent.ts): the agent's way in (its model and tools through `gate`, the system
-// prompt, its durable state through `sql`, each session's transcript for memory, what it's doing) on a socket only it
-// shares, and each turn sent to the agent's own socket. The main agent has many sessions (conversations): "main" (the owner's texts) or another's number; all
-// of them are one memory (memory.ts searches every transcript).
+// The gate's side of the main agent (agent.ts), on two sockets only the agent's user may open. gate.sock: its model
+// calls and the gate's tools (gate.handle, as task VMs have them), and the raw pipes plugins add (pi-env into a task's
+// VM). link.sock: one JSON-RPC connection the agent opens and starts with a hello (the system prompt, the models'
+// names, the apps' methods and the plugins' agent sides), then says it's ready; on it go the turns, each session's
+// transcript for memory, the apps' methods, and plugins' requests both ways. A new gate is a new connection, so the
+// agent says hello again and takes up its tools and prompt.
+
+export interface AgentLink {
+  // A request of the agent, sent once it's ready (it may be starting, or back after a restart); `signal` cancels it.
+  // Rejects when the agent goes away first.
+  request<T = unknown>(method: string, params?: unknown, signal?: AbortSignal): Promise<T>;
+  // A notification for the agent, dropped if it isn't there.
+  notify(method: string, params?: unknown): void;
+  // The agent's requests of a plugin (its agent side's).
+  handle(method: string, fn: (params: any, signal: AbortSignal) => unknown): void;
+  // Each time the agent is ready.
+  onReady(fn: () => void): void;
+  // A raw upgrade on gate.sock, its path starting with `prefix`.
+  upgrade(prefix: string, fn: (req: IncomingMessage, socket: Duplex) => void): void;
+}
+
+export const signalOf = (token: CancellationToken) => {
+  const aborted = new AbortController();
+  token.onCancellationRequested(() => aborted.abort());
+  return aborted.signal;
+};
+
 export async function connectAgent(
   sockets: string,
   opts: {
     db: Db;
-    sql: ReturnType<typeof sqlBridge>;
     prompt: string;
     // The models' names (main, task, code) -> the provider's ids, for the owner's apps.
     models: Record<string, string>;
+    // The plugins' agent sides (Plugin.agent).
+    plugins: string[];
     gate: (req: IncomingMessage, res: ServerResponse) => void;
-    // pi-env's daemon in a task's VM, for the agent's tools there (an upgrade to /env/<id>, env-pipe.ts).
-    env: (id: number, args: string[], socket: Duplex) => Promise<void>;
-    // The tasks' and VMs' board, for the owner's apps (AHP chats, agent.ts).
-    board: Board;
   },
 ) {
-  const { db } = opts;
-  const server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://gate");
-    const session = url.searchParams.get("session") || "main";
-    if (url.pathname === "/prompt") return void res.end(opts.prompt);
-    if (url.pathname === "/models") return void res.end(JSON.stringify(opts.models));
-    // pi-durable's storage: its own encrypted database, so nothing the agent sends reaches the vault or memory.
-    if (url.pathname === "/sql" && req.method === "POST") {
-      return void readBody(req)
-        .then(async (body) => res.end(JSON.stringify({ answer: await opts.sql.handle(JSON.parse(body) as SqlRequest) })))
-        .catch((err) => res.writeHead(400).end(String((err as Error).message ?? err)));
-    }
-    // The board as it changes: every row, then each change, a JSON line each.
-    if (url.pathname === "/board") {
-      const { board } = opts;
-      res.writeHead(200, { "content-type": "application/x-ndjson" });
-      const line = (row: Parameters<Parameters<Board["on"]>[0]>[0]) => void res.write(`${JSON.stringify(board.summary(row))}\n`);
-      for (const row of board.rows.values()) line(row);
-      const off = board.on((row) => line(row));
-      return void res.on("close", off);
-    }
-    // The apps' methods (appMethod), as the agent passes them on (x-biscotti/<name> over AHP).
-    if (url.pathname.startsWith("/x/") && req.method === "POST") {
-      const method = appMethods.get(decodeURIComponent(url.pathname.slice("/x/".length)));
-      if (!method) return void res.writeHead(404).end("no such method");
-      const gone = new AbortController();
-      res.on("close", () => gone.abort());
-      return void readBody(req)
-        .then(async (body) => res.end(JSON.stringify((await method(body ? JSON.parse(body) : {}, gone.signal)) ?? null)))
-        .catch((err) => res.writeHead(400).end(String((err as Error).message ?? err)));
-    }
-    if (url.pathname !== "/transcript" || req.method !== "POST") return opts.gate(req, res);
-    // What each session said, as text, for memory's search.
-    readBody(req).then(
-      (body) => {
-        const rows = JSON.parse(body) as { id: string; entry: unknown; text: string | null }[];
-        if (rows.length) db.insert(transcripts).values(rows.map((r) => ({ id: r.id, entry: r.entry, text: r.text, session }))).onConflictDoNothing().run();
-        res.end();
-      },
-      (err) => res.writeHead(400).end(String(err)),
-    );
-  });
-  server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
-    // The agent may hang up while the daemon is being set up.
-    socket.on("error", () => socket.destroy());
-    const id = Number(new URL(req.url ?? "/", "http://gate").pathname.match(/^\/env\/(\d+)$/)?.[1]);
-    if (!id) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
-    const args = String(req.headers["pi-env-arguments"] ?? "").split(" ").filter(Boolean);
-    opts.env(id, args, socket).catch((err) => socket.end(`HTTP/1.1 502 Bad Gateway\r\n\r\n${(err as Error).message}`));
-  });
-  // Only the agent's user (uid 1000, in its own container) may connect.
-  await listen(server, `${sockets}/gate.sock`, 1000);
-  // TODO: a hello from the agent once it listens (prompt, models and tools back), instead of /reload here and the
-  // agent's and turn()'s retries.
-  // An agent still running from before this gate started has the old one's tools.
-  await call(`${sockets}/agent.sock`, "POST", "/reload").catch(() => {});
+  const handlers = new Map<string, (params: any, signal: AbortSignal) => unknown>();
+  const readied: (() => void)[] = [];
+  const upgrades: [string, (req: IncomingMessage, socket: Duplex) => void][] = [];
+  let ready = Promise.withResolvers<MessageConnection>();
+  let current: MessageConnection | undefined;
 
-  // One turn of the agent in `session`: its reply, or undefined when the message steered one already underway. The
-  // agent may still be starting.
-  // A task's run (agent-tasks.ts): what the agent does, as a stream of lines, until it's done or `stopped`.
-  turn.task = (run: TaskRun, stopped: AbortSignal) =>
-    new Promise<IncomingMessage>((resolve, reject) => {
-      const req = request({ socketPath: `${sockets}/agent.sock`, path: "/task", method: "POST", headers: { "content-type": "application/json" }, agent: false }, (res) =>
-        res.statusCode === 200 ? resolve(res) : reject(new Error(`the agent couldn't run the task (${res.statusCode})`)),
-      );
-      req.on("error", reject);
-      stopped.addEventListener("abort", () => req.destroy(stopped.reason as Error), { once: true });
-      req.end(JSON.stringify(run));
+  handlers.set("hello", () => ({ prompt: opts.prompt, models: opts.models, methods: [...appMethods.keys()], plugins: opts.plugins }));
+  handlers.set("method", ({ name, params }: { name: string; params?: Record<string, unknown> }, signal) => {
+    const method = appMethods.get(name);
+    if (!method) throw new ResponseError(-32601, `no method ${name}`);
+    return method(params ?? {}, signal);
+  });
+
+  const server = createServer(opts.gate);
+  server.on("upgrade", (req: IncomingMessage, socket: Duplex) => {
+    // The agent may hang up while a pipe is being set up.
+    socket.on("error", () => socket.destroy());
+    const upgrade = upgrades.find(([prefix]) => req.url?.startsWith(prefix))?.[1];
+    if (!upgrade) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
+    upgrade(req, socket);
+  });
+  const connections = new Set<Socket>();
+  const link = createNetServer((socket) => {
+    connections.add(socket);
+    socket.on("close", () => connections.delete(socket));
+    const conn = createMessageConnection(new SocketMessageReader(socket), new SocketMessageWriter(socket));
+    conn.onRequest((method, params, token) => {
+      const handler = handlers.get(method);
+      if (!handler) throw new ResponseError(-32601, `no method ${method}`);
+      return handler(params, signalOf(token));
     });
-  // The owner's message for a task's run under way, which steers it.
-  turn.tell = (id: number, message: string) => call(`${sockets}/agent.sock`, "POST", `/task/${id}/tell`, JSON.stringify({ message })).then(() => {});
-  return turn;
-  // `origin`: who it's from, for the owner's apps (AHP's message kinds): the owner ("user"), or biscotti itself.
-  async function turn(message: string, session = "main", origin = "user"): Promise<string | undefined> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return JSON.parse(await call(`${sockets}/agent.sock`, "POST", "/turn", JSON.stringify({ text: message, session, origin }))).reply;
-      } catch (err) {
-        if (attempt >= 60 || !/ENOENT|ECONNREFUSED/.test(String(err))) throw err;
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-    }
-  }
+    conn.onNotification("transcript", ({ session, rows }: { session: string; rows: { id: string; entry: unknown; text: string | null }[] }) => {
+      if (rows.length) opts.db.insert(transcripts).values(rows.map((r) => ({ ...r, session }))).onConflictDoNothing().run();
+    });
+    conn.onNotification("ready", () => {
+      current = conn;
+      ready.resolve(conn);
+      for (const fn of readied) fn();
+    });
+    conn.onClose(() => {
+      // Its requests still waiting are rejected.
+      conn.dispose();
+      if (current !== conn) return;
+      current = undefined;
+      ready = Promise.withResolvers();
+    });
+    socket.on("error", () => socket.destroy());
+    conn.listen();
+  });
+
+  const agent: AgentLink = {
+    async request<T>(method: string, params?: unknown, signal?: AbortSignal) {
+      const conn = await ready.promise;
+      signal?.throwIfAborted();
+      const cancel = new CancellationTokenSource();
+      signal?.addEventListener("abort", () => cancel.cancel(), { once: true });
+      return conn.sendRequest<T>(method, params, cancel.token).catch((err: Error) => {
+        if (signal?.aborted) throw signal.reason;
+        throw current === conn ? err : new Error("the agent stopped in the middle of it (it restarted)");
+      });
+    },
+    notify: (method, params) => void current?.sendNotification(method, params),
+    handle: (method, fn) => void handlers.set(method, fn),
+    onReady: (fn) => void readied.push(fn),
+    upgrade: (prefix, fn) => void upgrades.push([prefix, fn]),
+  };
+
+  // One turn in `session`: the agent's reply, or undefined when the message steered one already under way. `origin`:
+  // who it's from, for the owner's apps (AHP's message kinds): the owner ("user"), or biscotti itself.
+  const turn = async (message: string, session = "main", origin = "user") => (await agent.request<{ reply?: string }>("turn", { text: message, session, origin })).reply;
+  // Listening, once the plugins have added their tools and methods: an agent already running says hello at once.
+  const open = async () => {
+    await listen(server, `${sockets}/gate.sock`, 1000);
+    await listen(link, `${sockets}/link.sock`, 1000);
+  };
+  // Stopped (a test's gate making way for the next, as a restart does): the agent's link ends.
+  const close = () => {
+    server.close();
+    link.close();
+    for (const socket of connections) socket.destroy();
+  };
+  return { agent, turn, open, close };
 }

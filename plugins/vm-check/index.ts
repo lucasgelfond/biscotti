@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { type Alive, aliveLine, type Plugin } from "@biscotti/core";
+import type { Plugin } from "@biscotti/core";
+import { sql } from "drizzle-orm";
+import { type Alive, aliveLine, vms } from "@biscotti/tasks";
 
 // Once a day, from VM_CHECK_HOUR (10) local time, the main agent asks the owner which of the VMs still around can go.
 
@@ -11,16 +12,17 @@ export function vmCheck(alive: Alive[], now = Date.now()) {
 
 export default {
   async start(ctx) {
-    // The day it last asked, kept across restarts (the pool's file, from when the check was its).
-    const checked = `${ctx.dir}/tasks.checked`;
-    // TODO: into SQLite, instead of this file.
-    let asked = existsSync(checked) ? readFileSync(checked, "utf8") : "";
+    // The day it last asked, kept across restarts.
+    ctx.db.run(sql`CREATE TABLE IF NOT EXISTS vm_check (asked text NOT NULL)`);
+    let asked = ctx.db.get<{ asked: string }>(sql`SELECT asked FROM vm_check`)?.asked ?? "";
     const hour = Number(process.env.VM_CHECK_HOUR ?? 10);
     const check = () => {
       const today = new Date().toDateString();
       if (new Date().getHours() >= hour && asked !== today) {
-        writeFileSync(checked, (asked = today));
-        const text = vmCheck(ctx.vms.alive());
+        asked = today;
+        ctx.db.run(sql`DELETE FROM vm_check`);
+        ctx.db.run(sql`INSERT INTO vm_check (asked) VALUES (${today})`);
+        const text = vmCheck(vms(ctx).alive());
         if (text) void ctx.deliver(text);
       }
       const next = new Date();

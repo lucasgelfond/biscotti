@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@biscotti/core": "workspace:*"
+    "@biscotti/core": "workspace:*",
+    "@biscotti/tasks": "workspace:*",
+    "drizzle-orm": "0.45.4"
   }
 }

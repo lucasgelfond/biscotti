@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { type Host, type Plugin, stillRunning, type Vm } from "@biscotti/core";
+import type { Plugin } from "@biscotti/core";
+import { type Host, stillRunning, type Vm, vms } from "@biscotti/tasks";
 import { call } from "@biscotti/core/http";
 import { SLOTS } from "./firecracker.ts";
 
@@ -57,6 +58,6 @@ export function sessions(slot: number, tables = ["/proc/net/tcp", "/proc/net/tcp
 export default {
   async start(ctx) {
     if (!process.env.VMS_SOCKET) return;
-    await ctx.vms.addHost(localHost(process.env.VMS_SOCKET, ctx.env("VM_DIR")));
+    await vms(ctx).addHost(localHost(process.env.VMS_SOCKET, ctx.env("VM_DIR")));
   },
 } satisfies Plugin;

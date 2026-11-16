@@ -93,7 +93,7 @@ in
           tailscale serve --bg --https=10441 http://10.200.1.2:6901
           tailscale serve --bg --https=10541 http://10.200.1.2:8000
 
-          # TODO: the read-only deploy key for pi-durable-acp-ahp (core/Dockerfile's ssh mount), as on the Pi.
+          # TODO: the read-only deploy key for pi-durable-ahp (core/Dockerfile's ssh mount), as on the Pi.
           docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
           vm_source=$({ cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum; echo ${toString vms.memMiB} ${toString vms.workGiB}; } | sha256sum | cut -d' ' -f1)
           if [ ! -f "$STATE/vm/desktop.snap" ] || [ "$(cat "$STATE/vm/source" 2>/dev/null)" != "$vm_source" ]; then

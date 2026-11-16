@@ -1,12 +1,14 @@
 import { expect, test } from "vitest";
-import lessons from "../plugins/lessons/index.ts";
+import lessons, { lessonsFor } from "../plugins/lessons/index.ts";
 import { testContext } from "./support.ts";
 
 // What one task learns about a site reaches the next task on it, and only that one.
 
 async function tools() {
-  const t = await lessons.tools!(testContext());
-  const call = async (name: string, args: Record<string, unknown> = {}) => ((await (name === "lessons" || name === "forget_lesson" ? t : t.tasks!).call(name, args, { slot: 1 })).content[0] as { text: string }).text;
+  const ctx = testContext();
+  const t = await lessons.tools!(ctx);
+  const call = async (name: string, args: Record<string, unknown> = {}) =>
+    name === "lessons_for" ? lessonsFor(ctx.db, String(args.goal)) : ((await (name === "lessons" || name === "forget_lesson" ? t : t.tasks!).call(name, args, { slot: 1 })).content[0] as { text: string }).text;
   return call;
 }
 

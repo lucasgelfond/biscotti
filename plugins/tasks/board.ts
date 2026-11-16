@@ -1,9 +1,9 @@
 import { sql } from "drizzle-orm";
-import type { Db } from "./memory.ts";
-import { taskEvents, type TaskEvent, type Vms } from "./plugin.ts";
+import type { Db } from "@biscotti/core";
+import { taskEvents, type TaskEvent, type Vms } from "./types.ts";
 
 // The board: every task's (a sandbox's) and VM's row, from what happens to them (taskEvents), kept in the database
-// across restarts, for the owner's apps (AHP chats beside the session that started each, sandboxes.ts).
+// across restarts, for the owner's apps (AHP chats beside the session that started each, chats.ts).
 
 export interface Row {
   id: number;
@@ -32,11 +32,9 @@ const FIELDS = ["goal", "kind", "repo", "ssh", "hostKey", "preview", "site", "sl
 export type Board = ReturnType<typeof board>;
 export function board(db: Db, vms: Vms) {
   db.run(sql`CREATE TABLE IF NOT EXISTS tasks (id integer PRIMARY KEY, kind text NOT NULL DEFAULT 'sandbox', goal text NOT NULL, status text NOT NULL, slot integer, "where" text, repo text, ssh text, preview text, site text, report text, parent text, started integer NOT NULL, updated integer NOT NULL)`);
-  // TODO: remove once every install has started since (the kinds' old names, on the Pi's).
-  db.run(sql`UPDATE tasks SET kind = CASE kind WHEN 'task' THEN 'sandbox' ELSE 'vm' END WHERE kind IN ('task', 'box')`);
   const rows = new Map<number, Row>();
   for (const r of db.all<Record<string, unknown>>(sql`SELECT * FROM tasks WHERE kind IN ('sandbox', 'vm') ORDER BY updated DESC LIMIT ${ROWS}`).reverse()) {
-    const row = Object.fromEntries(Object.entries(r).filter(([k, v]) => v !== null && k !== "steps")) as unknown as Row;
+    const row = Object.fromEntries(Object.entries(r).filter(([, v]) => v !== null)) as unknown as Row;
     rows.set(row.id, { ...row, ssh: r.ssh ? JSON.parse(String(r.ssh)) : undefined });
   }
   const save = (t: Row) =>
@@ -47,8 +45,14 @@ export function board(db: Db, vms: Vms) {
     for (const listener of listeners) listener(row);
   };
 
+  function forget(id: number) {
+    rows.delete(id);
+    db.run(sql`DELETE FROM tasks WHERE id = ${id}`);
+    tell({ id, kind: "gone", goal: "", status: "done", started: 0, updated: Date.now() });
+  }
   taskEvents.on("event", (e) => {
     if (!Number.isInteger(e.id)) return;
+    if (e.type === "deleted") return forget(e.id);
     let t = rows.get(e.id);
     if (!t) rows.set(e.id, (t = { id: e.id, kind: "sandbox", goal: "", status: "queued", started: e.at, updated: e.at }));
     t.updated = e.at;
@@ -75,11 +79,6 @@ export function board(db: Db, vms: Vms) {
     on(listener: (row: Row) => void) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
-    },
-    forget(id: number) {
-      rows.delete(id);
-      db.run(sql`DELETE FROM tasks WHERE id = ${id}`);
-      tell({ id, kind: "gone", goal: "", status: "done", started: 0, updated: Date.now() });
     },
   };
 }

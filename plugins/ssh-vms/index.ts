@@ -1,4 +1,5 @@
-import { appMethod, emit, taskEvents, type Context, type Plugin, type Sleep, type Vm } from "@biscotti/core";
+import { appMethod, type Context, type Plugin } from "@biscotti/core";
+import { emit, type Sleep, taskEvents, type Vm, vms as vmsOf } from "@biscotti/tasks";
 import { bundleRepo, githubToken } from "@biscotti/github/git";
 
 // ssh VMs: a task VM the owner works in over ssh with their own pi (core/vm/task/box-pi), from Concourse or the app,
@@ -10,8 +11,8 @@ import { bundleRepo, githubToken } from "@biscotti/github/git";
 //
 //   vms.open    {key, repo?, base?, setup?, where?}: one to ssh into -> SshVm. `where`: a kind of machine, by its
 //               host's label ("local" for this machine's VMs, "cloud" for an external node's, …); any, by default
-//   vms.reopen  {sessionId, key}: a closed one open again, adding that key -> SshVm
-//   vms.close   {sessionId, discard?}: closed (kept, to open again), or deleted for good
+//   vms.reopen  {id, key}: a closed one open again, adding that key -> SshVm
+//   vms.close   {id, discard?}: closed (kept, to open again), or deleted for good, its chat too
 
 interface SshVm {
   id: number;
@@ -36,7 +37,7 @@ async function bundle(ctx: Context, repo: string, base?: string) {
 
 export default {
   async start(ctx) {
-    const vms = ctx.vms;
+    const vms = vmsOf(ctx);
     const open = new Map<number, SshVm>();
     const warmRepo = process.env.SSH_VM_WARM_REPO;
     const warmSetup = process.env.SSH_VM_WARM_SETUP || undefined;
@@ -129,8 +130,8 @@ export default {
       if (signal.aborted) await close(s.id);
       return s;
     });
-    appMethod("vms.reopen", async ({ sessionId, key }) => {
-      const id = Number(sessionId);
+    appMethod("vms.reopen", async ({ id: n, key }) => {
+      const id = Number(n);
       if (typeof key !== "string" || !KEY.test(key.trim())) throw new Error("an ssh public key, please");
       const already = open.get(id);
       const repo = already?.repo ?? vms.kept().find((k) => k.id === id)?.goal.match(/ on (.+)$/)?.[1];
@@ -142,10 +143,13 @@ export default {
       if (!already) shown(s, "Reopened");
       return s;
     });
-    appMethod("vms.close", async ({ sessionId, discard }) => {
-      const id = Number(sessionId);
+    appMethod("vms.close", async ({ id: n, discard }) => {
+      const id = Number(n);
       const closed = await close(id, Boolean(discard));
-      return { closed, discarded: discard ? closed || (await vms.remove(id)) : false };
+      if (!discard) return { closed, discarded: false };
+      const discarded = closed || (await vms.remove(id));
+      emit({ id, type: "deleted" });
+      return { closed, discarded };
     });
   },
 } satisfies Plugin;

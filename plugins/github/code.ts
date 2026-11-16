@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bool, emit, input, int, optional, str, text, type Context, type LocalTool, type TaskResult } from "@biscotti/core";
+import { bool, input, int, optional, str, text, type Context, type LocalTool } from "@biscotti/core";
+import { emit, type TaskResult, vms } from "@biscotti/tasks";
+import { sql } from "drizzle-orm";
 import { bundleRepo, githubApi, gitAs, REPO } from "./git.ts";
 
 // Coding tasks with no token in the VM: a git bundle in, its commits out (made with jj in the VM); the gate checks them
@@ -12,12 +14,26 @@ import { bundleRepo, githubApi, gitAs, REPO } from "./git.ts";
 // around is deleted once its pull request is merged or closed (index.ts).
 
 const TIMEOUT_MS = 90 * 60_000;
+// The coding agent's instructions, besides a task's.
+const CODING = readFileSync(new URL("./CODING.md", import.meta.url), "utf8");
+// The task's commits since `base` (its checkout, in ~/repo, by the VM's setup), with anything left uncommitted
+// committed first (in jj, the working copy's change, described if it isn't yet, and a new empty one on top, so git's
+// HEAD has it), as a bundle at /tmp/out.bundle; prints "none" when there are none.
+export const COMMITS = (base: string) => `set -e
+cd ~/repo
+if [ -d .jj ] && [ "$(jj log --no-graph -r @ -T empty)" = false ]; then
+  [ -n "$(jj log --no-graph -r @ -T description)" ] || jj describe -m "Changes at the end of the task"
+  jj new
+fi
+git add -A
+[ -z "$(git status --porcelain)" ] || git commit -q -m "Uncommitted changes at the end of the task"
+if [ "$(git rev-parse HEAD)" = "${base}" ]; then echo none; else git bundle create -q /tmp/out.bundle ${base}..HEAD; echo bundled; fi`;
 const MAX_BUNDLE = 50 * 1024 * 1024;
 const PREVIEW = `
 
 Preview: the owner wants to use what you made, so once it works, leave it running for them: serve the app on 0.0.0.0:8000, detached so it outlives you (setsid nohup … > /tmp/preview.log 2>&1 &), and check it answers with curl. Don't use the app in the VM's browser beyond a quick look (a screenshot that it renders): the VM has 2 CPUs and no GPU, so heavy work in a page (training, rendering, long computations) starves everything, the preview server and you included. Close the browser when you're done looking (pkill -f chromium). A production build served statically, or the project's preview or dev server, whichever is closest to how it ships. It's reached through a proxy under another host name, so let the server answer any Host header (e.g. Vite's server.allowedHosts: true, or --host 0.0.0.0). Say in your report how it's served.`;
 
-// What each coding task works on, by task number (kept in the data directory across restarts).
+// What each coding task works on, by task number (kept in the database across restarts).
 interface Work {
   repo: string;
   base: string;
@@ -33,10 +49,9 @@ export function codeTasks(ctx: Context, token: string): LocalTool[] {
   const git = gitAs(token);
   const api = githubApi(token) as (path: string, init?: RequestInit) => Promise<any>;
 
-  // TODO: into SQLite, instead of this file.
-  const file = join(ctx.dir, "code-tasks.json");
-  const works = new Map<number, Work>(existsSync(file) ? Object.entries(JSON.parse(readFileSync(file, "utf8"))).map(([id, w]) => [Number(id), w as Work]) : []);
-  const save = () => writeFileSync(file, JSON.stringify(Object.fromEntries(works)));
+  ctx.db.run(sql`CREATE TABLE IF NOT EXISTS code_tasks (id integer PRIMARY KEY, work text NOT NULL)`);
+  const works = new Map(ctx.db.all<{ id: number; work: string }>(sql`SELECT * FROM code_tasks`).map((r) => [r.id, JSON.parse(r.work) as Work]));
+  const save = (id: number) => ctx.db.run(sql`INSERT OR REPLACE INTO code_tasks (id, work) VALUES (${id}, ${JSON.stringify(works.get(id))})`);
 
   // The VM's commits: on top of the base, inside the size limit, and nothing under .github/ (a pushed branch runs the
   // repo's workflows, with its secrets; a changed one would run the VM's code there).
@@ -58,18 +73,18 @@ export function codeTasks(ctx: Context, token: string): LocalTool[] {
   async function push(id: number, result: TaskResult): Promise<TaskResult> {
     const w = works.get(id)!;
     w.report = result.report;
-    save();
-    const site = w.preview ? await ctx.vms.site(id) : undefined;
+    save(id);
+    const site = w.preview ? await vms(ctx).site(id) : undefined;
     if (site) emit({ id, type: "started", site, text: `Preview: ${site}` });
     const served = site ? ` Its preview, running from that branch in its VM: ${site}` : "";
-    if (!result.bundle) return { ...result, report: `Code task #${id} on ${w.repo} made no new commits.${served}\n${result.report}` };
+    if (!result.collected) return { ...result, report: `Code task #${id} on ${w.repo} made no new commits.${served}\n${result.report}` };
     const dir = mkdtempSync(join(tmpdir(), "code-task-"));
     try {
       // A bare repo with just the task's base commit, to check the commits against and push from.
       const work = join(dir, "repo.git");
       await git(dir, "init", "-q", "--bare", work);
       await git(work, "fetch", "-q", "--depth", "1", `https://github.com/${w.repo}.git`, w.sha);
-      const { stat } = await review(work, w.sha, result.bundle);
+      const { stat } = await review(work, w.sha, result.collected);
       // Forced: a follow-up's commits replace the branch (jj may have rewritten the earlier ones).
       await git(work, "push", "-q", "-f", `https://github.com/${w.repo}.git`, `biscotti-work:refs/heads/${w.branch}`);
       const compare = `https://github.com/${w.repo}/compare/${w.base}...${w.branch}`;
@@ -84,11 +99,22 @@ export function codeTasks(ctx: Context, token: string): LocalTool[] {
 
   async function start(repo: string, goal: string, base: string | undefined, preview: boolean, keep: boolean, parent?: string) {
     const checkout = await bundleRepo(token, repo, base);
-    const id = ctx.vms.reserve();
+    const id = vms(ctx).reserve();
     const branch = `biscotti/${goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}-${randomBytes(2).toString("hex")}`;
     works.set(id, { repo, base: checkout.branch, sha: checkout.sha, branch, goal, preview });
-    save();
-    const result = await ctx.vms.run(preview ? goal + PREVIEW : goal, { id, repo: checkout.bundle, model: "code", timeoutMs: TIMEOUT_MS, parent, keep: keep || preview, after: (r) => push(id, r) });
+    save(id);
+    const result = await vms(ctx).run(preview ? goal + PREVIEW : goal, {
+      id,
+      repo: checkout.bundle,
+      model: "code",
+      instructions: CODING,
+      check: false,
+      collect: { command: COMMITS(checkout.sha), file: "/tmp/out.bundle" },
+      timeoutMs: TIMEOUT_MS,
+      parent,
+      keep: keep || preview,
+      after: (r) => push(id, r),
+    });
     return result.report;
   }
 
@@ -105,7 +131,6 @@ export function codeTasks(ctx: Context, token: string): LocalTool[] {
         keep: optional(bool("Keep its VM open once it's done, when the owner asks to. Otherwise it's deleted once done (unless preview).")),
       }),
       async run({ repo, goal, base, preview, keep }, caller) {
-        if (!ctx.vms) return text("Coding tasks need task VMs, which this machine doesn't have.");
         if (typeof repo !== "string" || !REPO.test(repo)) return text("repo should be owner/name.");
         start(repo, String(goal), base ? String(base) : undefined, preview === true, keep === true, caller.session)
           .catch((err: Error) => `Code task on ${repo} failed: ${err.message}`)
@@ -129,8 +154,8 @@ export function codeTasks(ctx: Context, token: string): LocalTool[] {
         // Drafts aren't available on every plan.
         const pr = await pull(true).catch((err: Error) => (/draft/i.test(err.message) ? pull(false) : Promise.reject(err)));
         w.pr = pr.html_url;
-        save();
-        ctx.vms?.note(Number(id), { pr: w.pr });
+        save(Number(id));
+        vms(ctx).note(Number(id), { pr: w.pr });
         return text(`Opened a draft pull request for #${id}: ${w.pr}. Text the owner the link; don't merge it.`);
       },
     },

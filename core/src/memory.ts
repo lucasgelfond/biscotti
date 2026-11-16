@@ -3,7 +3,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { input, int, localTools, str, text, type Recall, type Tools } from "./plugin.ts";
-import { memories, transcripts } from "./schema.ts";
+import { memories } from "./schema.ts";
 
 // Keyword search (FTS5) over transcripts and saved facts; Recall plugins' rankings are fused in by reciprocal rank.
 

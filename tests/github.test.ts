@@ -38,7 +38,7 @@ test("a VM whose pull request was merged or closed is deleted; one whose pull re
   const alive = [1, 2, 3].map((n) => ({ id: 40 + n, goal: "fix", asleep: true, used: 0, pr: `https://github.com/o/r/pull/${n}` }));
   const ctx = { db: undefined, vms: { alive: () => [...alive, { id: 50, goal: "box", asleep: false, used: 0 }], remove: async (id: number) => (removed.push(id), true) } };
   process.env.GITHUB_TOKEN ??= "t";
-  await cleanUp(ctx as never, `http://127.0.0.1:${(api.address() as { port: number }).port}`);
+  await cleanUp(ctx as never, ctx.vms as never, `http://127.0.0.1:${(api.address() as { port: number }).port}`);
   api.close();
   expect(removed).toEqual([41, 43]);
 });

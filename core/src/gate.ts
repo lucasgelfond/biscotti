@@ -168,18 +168,7 @@ export function createGate(opts: {
 
   // The models whose plugin backend failed recently, until when (see FALLBACK_STATUSES).
   const benched = new Map<string, number>();
-  // Model calls under way, by slot: a task waiting on the model (a slow or unreachable provider) isn't going quiet.
-  const thinking = new Map<number, number>();
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
-    if (!slot) return answerLlm(req, res);
-    thinking.set(slot, (thinking.get(slot) ?? 0) + 1);
-    try {
-      await answerLlm(req, res, slot);
-    } finally {
-      thinking.set(slot, thinking.get(slot)! - 1);
-    }
-  }
-  async function answerLlm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
     const name = slot ? (slotModels.get(slot) ?? "task") : body.model;
@@ -232,7 +221,7 @@ export function createGate(opts: {
   // A task VM slot's listener gets the task set, only from that slot's VM (`peer`), and only requests addressed to the
   // gate (no DNS rebinding from a page).
   // `peer` may be a function, for a machine whose address is known only once it's up (external-vm-node's).
-  // The main agent runs tasks too (agent-tasks.ts): its calls for one (?task=<id>) are that task's VM's, in the slot
+  // The main agent runs tasks too (the tasks plugin): its calls for one (?task=<id>) are that task's VM's, in the slot
   // `locate` finds it in.
   let locate: ((task: number) => number | undefined) | undefined;
   const handler = (vmSlot?: number, peer?: string | (() => string | undefined)) => (req: IncomingMessage, res: ServerResponse) => {
@@ -270,7 +259,6 @@ export function createGate(opts: {
     },
     // The slot's oldest tool call in progress, if any.
     busy: (slot: number) => calls.get(slot)?.[0],
-    thinking: (slot: number) => (thinking.get(slot) ?? 0) > 0,
     // The main agent's requests (the model, its tools), for a listener of the caller's choosing.
     handle: handler(),
     locate: (find: (task: number) => number | undefined) => void (locate = find),
@@ -293,3 +281,6 @@ export function createGate(opts: {
       }),
   };
 }
+
+// What the plugin that runs task VMs (tasks) uses of the gate.
+export type Slots = Pick<ReturnType<typeof createGate>, "listen" | "assign" | "route" | "proposed" | "busy" | "tell" | "locate">;

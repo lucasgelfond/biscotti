@@ -5,25 +5,27 @@ import { join } from "node:path";
 import { runAgent } from "../core/src/agent.ts";
 import { start } from "../core/src/biscotti.ts";
 import { openDb } from "../core/src/memory.ts";
-import type { Context, Host, Plugin, Vms } from "../core/src/plugin.ts";
+import type { Context, Plugin } from "../core/src/plugin.ts";
 import { asTexts, tapbacks } from "../plugins/channels/spectrum/index.ts";
+import tasks, { type Host, vms as vmsOf } from "../plugins/tasks/index.ts";
 
 // biscotti as main.ts starts it, with a stand-in phone that splits texts and takes tapbacks as iMessage does: `say`
 // texts it (resolving once it replied), `sent` is its texts.
 
 export const newDataDir = () => mkdtempSync(join(tmpdir(), "biscotti-"));
 
-// Task VMs for a context with no pool behind it: every call says so.
-export const noVms = new Proxy({} as Vms, {
-  get: (_target, name) => () => {
-    throw new Error(`no task VMs in this test (${String(name)})`);
-  },
-});
+// What a test's context has none of (the gate's slots, the agent): every call says so.
+export const none = <T extends object>(what: string) =>
+  new Proxy({} as T, {
+    get: (_target, name) => () => {
+      throw new Error(`no ${what} in this test (${String(name)})`);
+    },
+  });
 
 // A plugin's context with no gate behind it: every question is a yes unless `ask` says otherwise.
 export function testContext(overrides: Partial<Context> = {}): Context {
   const dir = newDataDir();
-  return { db: openDb(`${dir}/biscotti.db`, "test-key"), dir, env: (n) => n, ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {}, vms: noVms, ...overrides };
+  return { db: openDb(`${dir}/biscotti.db`, "test-key"), dir, env: (n) => n, ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {}, gate: none("gate"), agent: none("agent"), ...overrides };
 }
 
 // A headless Chrome showing `url`, its DevTools at the returned `url` once it's up.
@@ -35,11 +37,10 @@ export async function chrome(port: number, url: string, args: string[] = []) {
   return { url: devtools, close: () => proc.kill() };
 }
 
-// With `restart` (an earlier boot), a new gate over its data and sockets, as after the service restarts: its agent
-// keeps running. `vms`: stand-in task VMs.
-// `dir`: the data directory (a new one by default); `restart`: the agent of an earlier boot, kept; `vms`: a machine for
-// task VMs (stand-in-vm.ts, or a real one).
-export async function boot(names: (string | Plugin)[], { dir = newDataDir(), restart, vms }: { dir?: string; restart?: { sockets: string; gateUrl: string }; vms?: Host } = {}) {
+// With the tasks plugin, as biscotti.json always has it. `dir`: the data directory (a new one by default); `restart`: an
+// earlier boot whose gate stops for a new one over its data and sockets, as when the service restarts, its agent kept;
+// `vms`: a machine for task VMs (stand-in-vm.ts, or a real one).
+export async function boot(names: (string | Plugin)[], { dir = newDataDir(), restart, vms }: { dir?: string; restart?: { sockets: string; gateUrl: string; close(): void }; vms?: Host } = {}) {
   const sent: string[] = [];
   const images: Buffer[] = [];
   const reactions: string[] = [];
@@ -56,13 +57,15 @@ export async function boot(names: (string | Plugin)[], { dir = newDataDir(), res
   );
   // The agent as in production, reaching the gate only through the sockets; its relay is the tests' way in too.
   const sockets = restart?.sockets ?? mkdtempSync(join(tmpdir(), "sockets-"));
-  const biscotti = await start({ plugins: [phone, ...plugins], dir, sockets, vms });
-  const gateUrl = restart?.gateUrl ?? (await runAgent(sockets)).gateUrl;
+  restart?.close();
+  const machine: Plugin = { start: async (ctx) => void (vms && (await vmsOf(ctx).addHost(vms))) };
+  const biscotti = await start({ plugins: [phone, tasks, ...plugins.filter((p) => p !== tasks), machine], dir, sockets });
+  const gateUrl = restart?.gateUrl ?? (await runAgent(sockets, { dir, key: "test-agent-key" })).gateUrl;
   const say = (text: string) => {
     tapback.seen({ react: async (emoji) => void reactions.push(emoji) });
     return biscotti.handle({ text });
   };
-  return { ...biscotti, gateUrl, dir, sockets, say, sent, images, reactions };
+  return { ...biscotti, vms: vmsOf(biscotti.ctx), gateUrl, dir, sockets, say, sent, images, reactions };
 }
 
 

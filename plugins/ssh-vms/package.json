@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@biscotti/core": "workspace:*",
-    "@biscotti/github": "workspace:*"
+    "@biscotti/github": "workspace:*",
+    "@biscotti/tasks": "workspace:*"
   }
 }

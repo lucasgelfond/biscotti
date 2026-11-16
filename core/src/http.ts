@@ -1,8 +1,7 @@
 import { chmodSync, chownSync, rmSync } from "node:fs";
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { connect, type Socket } from "node:net";
-import { createInterface } from "node:readline";
-import type { Duplex, Readable } from "node:stream";
+import { connect, type Server as NetServer, type Socket } from "node:net";
+import type { Duplex } from "node:stream";
 
 // HTTP between biscotti's processes, over unix sockets.
 
@@ -21,9 +20,9 @@ export async function readBody(stream: AsyncIterable<unknown>, max = MAX_BODY) {
 }
 
 // Listens on `path`, readable and writable only by its owner: `uid` when we're root, otherwise us.
-export async function listen(server: Server, path: string, uid?: number) {
+export async function listen(server: NetServer, path: string, uid?: number) {
   // A turn or a tool call can take longer than Node's 5-minute default.
-  server.requestTimeout = 0;
+  if ("requestTimeout" in server) server.requestTimeout = 0;
   rmSync(path, { force: true });
   await new Promise<void>((resolve) => server.listen(path, resolve));
   if (uid !== undefined && process.getuid?.() === 0) chownSync(path, uid, uid);
@@ -56,16 +55,6 @@ export async function call(socketPath: string, method: string, path: string, bod
   return text;
 }
 
-// Each line of `input` that's JSON, as it comes (others are skipped).
-export function jsonLines(input: Readable, onLine: (value: Record<string, unknown>) => void) {
-  return createInterface({ input, crlfDelay: Infinity }).on("line", (line) => {
-    if (!line.trim()) return;
-    try {
-      onLine(JSON.parse(line));
-    } catch {}
-  });
-}
-
 // A WebSocket (or any) upgrade passed through raw to `target` (a unix socket's path, or a host and port), as `path`
 // (default: its own) with `host` as its Host header (default: as it came).
 export function pipeUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, target: string | { host: string; port: number }, as: { path?: string; host?: string } = {}) {
@@ -79,26 +68,6 @@ export function pipeUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, 
   });
   upstream.on("error", () => socket.destroy());
   socket.on("error", () => upstream.destroy());
-}
-
-// A handler that passes requests through to a server (a unix socket's path, or a host and port; `path` maps the
-// request's), streamed both ways: ACP's Streamable HTTP holds a response open for as long as the client follows.
-export function passTo(target: string | { host: string; port: number }, path = (url: string) => url) {
-  return (req: IncomingMessage, res: ServerResponse) =>
-    new Promise<void>((resolve) => {
-      const to = typeof target === "string" ? { socketPath: target, headers: req.headers } : { ...target, headers: { ...req.headers, host: `${target.host}:${target.port}` } };
-      const upstream = request({ ...to, method: req.method, path: path(req.url ?? "/"), agent: false }, (answer) => {
-        // Sent at once: an event stream (text/event-stream) may say nothing for a while, and Node holds headers back
-        // until the body's first bytes.
-        res.writeHead(answer.statusCode ?? 502, answer.headers).flushHeaders();
-        answer.pipe(res);
-        answer.on("end", resolve).on("error", () => (res.destroy(), resolve()));
-      });
-      upstream.on("error", () => (res.headersSent ? res.destroy() : res.writeHead(502).end(), resolve()));
-      // The client gone, so is the request upstream.
-      res.on("close", () => (upstream.destroy(), resolve()));
-      req.pipe(upstream);
-    });
 }
 
 // The owner's API, for their apps: the routes plugins add (Context.route), on API_PORT on localhost. `tailscale serve`
@@ -122,8 +91,7 @@ export function ownerApi(port = Number(process.env.API_PORT ?? 7700)) {
       if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ error: (err as Error).message }));
     }
   });
-  // WebSocket upgrades (the Agent Host Protocol at /ahp, the Agent Client Protocol at /acp) passed through, raw, to a
-  // unix socket.
+  // WebSocket upgrades (the Agent Host Protocol at /ahp) passed through, raw, to a unix socket.
   const upgrades: [string, string][] = [];
   server.on("upgrade", (req: IncomingMessage, socket, head: Buffer) => {
     const target = upgrades.find(([prefix]) => new URL(req.url ?? "/", "http://api").pathname === prefix)?.[1];

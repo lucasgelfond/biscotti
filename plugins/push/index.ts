@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { appMethod, taskEvents, type Plugin } from "@biscotti/core";
+import { appMethod, type Plugin } from "@biscotti/core";
+import { taskEvents } from "@biscotti/tasks";
 import { ApnsClient, Errors, Notification } from "apns2";
 
 // Push notifications to the owner's phones (the Concourse app, in the dotfiles) when a task reports or fails, straight to Apple's APNs with a

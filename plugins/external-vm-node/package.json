@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@aws-sdk/client-ec2": "3.1161.0",
-    "@biscotti/core": "workspace:*"
+    "@biscotti/core": "workspace:*",
+    "@biscotti/tasks": "workspace:*"
   }
 }

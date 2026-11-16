@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import type { Duplex } from "node:stream";
 import { acceptHostKey, deployDaemon, detectPlatform, forgetHostKey, packagedDaemon, type SshTarget, sshArguments } from "@earendil-works/pi-env";
-import { taskEvents } from "./plugin.ts";
+import { taskEvents } from "./types.ts";
 
 // pi-env into task VMs, for the agent, which holds no key and has no network: the gate's own SSH key (made once), each
 // VM's host key as its setup reported it, and pi-env's daemon deployed to the VM and run over SSH, its framed protocol

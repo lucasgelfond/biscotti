@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { restore } from "../plugins/firecracker/firecracker.ts";
-import { taskEvents, type Host } from "../core/src/plugin.ts";
+import { COMMITS } from "../plugins/github/code.ts";
+import { taskEvents, type Host } from "../plugins/tasks/types.ts";
 import { SLOTS } from "../plugins/firecracker/firecracker.ts";
 import { endpoint, gateAt } from "../plugins/firecracker/index.ts";
 
@@ -83,10 +84,11 @@ test.skipIf(!onThePi)("fixes a bug in a repo it's given and returns the commits"
   const repo = buggyRepo();
   const goal = "greet() in greet.js should greet with a comma and an exclamation mark: greet('Ada') is 'Hello, Ada!'. Fix it, and check with npm test.";
 
-  const { bundle } = await vms!.run(goal, { repo: repo.bundle });
+  const base = execFileSync("git", ["-C", repo.dir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const { collected } = await vms!.run(goal, { repo: repo.bundle, model: "code", check: false, collect: { command: COMMITS(base), file: "/tmp/out.bundle" } });
 
-  expect(bundle).toBeDefined();
-  writeFileSync(`${repo.dir}.out.bundle`, bundle!);
+  expect(collected).toBeDefined();
+  writeFileSync(`${repo.dir}.out.bundle`, collected!);
   execFileSync("git", ["-C", repo.dir, "pull", "-q", "--ff-only", `${repo.dir}.out.bundle`, "HEAD"]);
   expect(execFileSync("node", ["test.js"], { cwd: repo.dir, encoding: "utf8" })).toContain("ok");
 });

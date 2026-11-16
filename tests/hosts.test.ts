@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
 import { afterAll, expect, test } from "vitest";
-import { appMethods, type Host, taskEvents } from "../core/src/plugin.ts";
+import { appMethods } from "../core/src/plugin.ts";
+import { type Host, taskEvents } from "../plugins/tasks/types.ts";
 import { model } from "./stand-in-model.ts";
 import { standInVms } from "./stand-in-vm.ts";
 import { until as wait } from "./wait.ts";
 
-// Every kind of machine tasks run on is asked the same things (Host, core/src/plugin.ts), so every one passes this
+// Every kind of machine tasks run on is asked the same things (Host, plugins/tasks/types.ts), so every one passes this
 // suite, through the whole stack: the real gate and agent with a scripted model, each task's commands run in its VM
 // through pi-env. The stand-in (pi-env's daemon on this machine) always. A real host where there is one:
 // HOST=firecracker on a machine with the vms service (the Pi or an EC2 node, its live service stopped, which holds the
@@ -96,11 +97,11 @@ test("a VM to ssh into is set up with the owner's key, kept when closed, and the
   const open = appMethods.get("vms.open")!;
   const vm = (await open({ key }, new AbortController().signal)) as { id: number; hostKey?: string; ssh: { port: number } };
   expect(vm.hostKey).toMatch(/^ssh-ed25519 /);
-  await appMethods.get("vms.close")!({ sessionId: String(vm.id) }, new AbortController().signal);
+  await appMethods.get("vms.close")!({ id: vm.id }, new AbortController().signal);
   await until(() => states.get(vm.id) === "kept");
-  const again = (await appMethods.get("vms.reopen")!({ sessionId: String(vm.id), key }, new AbortController().signal)) as { id: number };
+  const again = (await appMethods.get("vms.reopen")!({ id: vm.id, key }, new AbortController().signal)) as { id: number };
   expect(again.id).toBe(vm.id);
-  const gone = (await appMethods.get("vms.close")!({ sessionId: String(vm.id), discard: true }, new AbortController().signal)) as { discarded: boolean };
+  const gone = (await appMethods.get("vms.close")!({ id: vm.id, discard: true }, new AbortController().signal)) as { discarded: boolean };
   expect(gone.discarded).toBe(true);
 }, 240_000);
 

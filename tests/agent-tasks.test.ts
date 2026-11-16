@@ -7,6 +7,7 @@ import { AhpClient } from "@microsoft/agent-host-protocol/client";
 import { WebSocketTransport } from "@microsoft/agent-host-protocol/ws";
 import { afterAll, expect, test } from "vitest";
 import WebSocket from "ws";
+import { COMMITS } from "../plugins/github/code.ts";
 import { model } from "./stand-in-model.ts";
 import { standInVms } from "./stand-in-vm.ts";
 import { until } from "./wait.ts";
@@ -87,7 +88,7 @@ test("the app sees a task as a sandbox chat of its session, with the task's own 
   ws.close();
 }, 120_000);
 
-test("a coding task changes the repo it's given, and its commits come back to be pushed", async () => {
+test("a task changes the repo it's given, and what it collects (its commits, as the github plugin asks) comes back", async () => {
   const { vms: pool } = await boot([], { vms: vms });
   const dir = mkdtempSync(join(tmpdir(), "task-repo-"));
   const git = (...args: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { encoding: "utf8" });
@@ -97,13 +98,14 @@ test("a coding task changes the repo it's given, and its commits come back to be
   git("commit", "-qm", "greet");
   git("bundle", "create", "-q", `${dir}.bundle`, "HEAD", "main");
 
-  const result = await pool!.run("run `cd ~/repo && sed -i.bak 's/Hello /Hello, /' greet.js && rm greet.js.bak && cat greet.js`", { repo: readFileSync(`${dir}.bundle`), model: "code" });
+  const collect = { command: COMMITS(git("rev-parse", "HEAD").trim()), file: "/tmp/out.bundle" };
+  const result = await pool!.run("run `cd ~/repo && sed -i.bak 's/Hello /Hello, /' greet.js && rm greet.js.bak && cat greet.js`", { repo: readFileSync(`${dir}.bundle`), model: "code", check: false, collect });
 
   // The VM's setup checked it out, the task changed it, and what it left uncommitted came back as a commit.
   expect(set.at(-1)?.box.repo).toBeDefined();
   expect(result.report).toContain("Hello, ");
-  expect(result.bundle).toBeDefined();
-  writeFileSync(`${dir}.out.bundle`, result.bundle!);
+  expect(result.collected).toBeDefined();
+  writeFileSync(`${dir}.out.bundle`, result.collected!);
   git("pull", "-q", "--ff-only", `${dir}.out.bundle`, "HEAD");
   expect(readFileSync(`${dir}/greet.js`, "utf8")).toContain('"Hello, " + name');
   expect(git("log", "-1", "--format=%s")).toContain("Uncommitted changes at the end of the task");

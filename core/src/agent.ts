@@ -1,31 +1,26 @@
-import { createServer, request } from "node:http";
+import { createServer } from "node:http";
 import { connect, createServer as createTcpServer } from "node:net";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels, createProvider } from "@earendil-works/pi-ai/models";
+import { BACKGROUND_CONTEXT, type Context as RunContext } from "@earendil-works/chord/context";
+import { NodeSqliteDatabase } from "@earendil-works/chord/sqlite/node";
+import { contentText } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import {
-  type Conversation,
-  type Extension,
-  createRegistry,
-  defineExtension,
-  Harness,
-  LiveDoc,
-  section,
-} from "@earendil-works/pi-durable";
+import { createModels, createProvider } from "@earendil-works/pi-ai/models";
+import { type ConversationId, createRegistry, defineExtension, defineTool, type Extension, Harness, LiveDoc, section, type ToolExecutionResult } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
-import { durableAhp, type Entry, inputFrom } from "pi-durable-acp-ahp";
-import { agentTasks, gateMcp, type Message, type TaskRun, textOf } from "./agent-tasks.ts";
-import { sandboxes } from "./sandboxes.ts";
-import { answer, jsonLines, listen, readBody } from "./http.ts";
-import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
+import { type CallToolResult, toLlmContent } from "@earendil-works/pi-mcp";
+import { type Chat, durableAhp, type Entry, inputFrom } from "pi-durable-ahp";
+import { createMessageConnection, type MessageConnection, SocketMessageReader, SocketMessageWriter } from "vscode-jsonrpc/node.js";
+import { answer, listen } from "./http.ts";
+import { openEncrypted } from "./memory.ts";
 
 // The main agent: pi-durable runs every conversation, each turn and tool call committed before it shows, so a run a
-// crash or restart cut off picks up where it was. It holds no keys and has no network: its storage (the gate's
-// encrypted database), its model, biscotti's tools and the system prompt all come through the gate's socket, and the
-// gate hands it each turn on the agent's own socket. Sessions: "main" (the owner's texts) and the others by number or
-// by the id an app gave them. The owner's apps see and drive them over the Agent Host Protocol (/ahp on its socket).
-// Tasks are conversations too (agent-tasks.ts), their tools in the task's VM.
+// crash or restart cut off picks up where it was. It holds no key of the gate's and has no network: its model and
+// biscotti's tools come through the gate's socket, and everything else over its link to the gate (connect.ts), which
+// it opens and starts with a hello. Its own storage is its own database, under a key of its own. Sessions: "main"
+// (the owner's texts) and the others by the id an app gave them; the owner's apps see and drive them over the Agent
+// Host Protocol (/ahp on its socket). Plugins may have a side here too (Plugin.agent): the tasks plugin's runs tasks.
 
 const ctx = BACKGROUND_CONTEXT;
 const MAIN_MODEL = { provider: "biscotti", modelId: "main" } as const;
@@ -33,7 +28,145 @@ const CONTEXT_WINDOW = 200_000;
 // What's said to the main agent carries when it was said, for the model; the apps show it without.
 const stamped = (text: string) => `[${new Date().toString()}] ${text}`;
 
-export async function runAgent(sockets: string) {
+type Part = { type: string; text?: string };
+export type Message = { role: string; content: string | Part[]; toolName?: string; toolCallId?: string; isError?: boolean };
+// What a message says, its text parts joined.
+export const textOf = (m: Message) => contentText(m.content as never).trim();
+
+// The gate: a path's answer on its socket, its status and text.
+export type GateCall = (method: string, path: string, body?: string, headers?: Record<string, string>) => Promise<{ status: number; text: string }>;
+type McpTool = { name: string; description?: string; inputSchema: object; _meta?: Record<string, unknown> };
+
+// MCP tools as pi-durable tools, each called (`call`) as whoever `as` names for its conversation (none: it isn't one
+// of theirs); with `deferred`, those marked deferred (a remote service's, the gate says) load through tool_search.
+export function asTools(list: McpTool[], as: (conversation: ConversationId) => Promise<string | undefined>, call: (who: string, name: string, args: Record<string, unknown>) => Promise<Partial<CallToolResult>>, opts: { deferred?: boolean } = {}) {
+  return list.map((t) =>
+    defineTool({
+      name: t.name,
+      description: t.description ?? "",
+      parameters: t.inputSchema,
+      ...(opts.deferred && t._meta?.["biscotti/deferred"] ? { deferred: true as const } : {}),
+      execute: async (args, api): Promise<ToolExecutionResult> => {
+        const who = await as(api.conversationId);
+        if (!who) return { output: [{ type: "text", text: "not here" }] as never, isError: true };
+        const result = await call(who, t.name, args as Record<string, unknown>);
+        return { output: toLlmContent({ content: result.content ?? [], structuredContent: result.structuredContent }) as never, isError: Boolean(result.isError) };
+      },
+    }),
+  );
+}
+
+// The gate's tools (its MCP endpoint, answering in JSON), as whoever `query` names: `session=<name>`, a main
+// session's; `task=<id>`, a task's VM's.
+export function gateMcp(call: GateCall) {
+  const rpc = async (query: string, method: string, params: object) => {
+    const res = await call("POST", `/mcp?${query}`, JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    });
+    if (res.status >= 300) throw new Error(`the gate: ${res.text}`);
+    const reply = JSON.parse(res.text) as { result?: unknown; error?: { message: string } };
+    if (reply.error) throw new Error(reply.error.message);
+    return reply.result as { tools?: McpTool[] } & Partial<CallToolResult>;
+  };
+  const tools = async (query: string, as: (conversation: ConversationId) => Promise<string | undefined>, opts: { deferred?: boolean } = {}) =>
+    asTools((await rpc(query, "tools/list", {})).tools ?? [], as, (who, name, args) => rpc(who, "tools/call", { name, arguments: args }), opts);
+  return { rpc, tools };
+}
+
+// What the gate says first (connect.ts).
+interface Hello {
+  prompt: string;
+  models: Record<string, string>;
+  methods: string[];
+  plugins: string[];
+}
+
+// The link to the gate, opened again whenever it ends (the gate restarted): a hello, `onHello`, then ready.
+function gateLink(sockets: string) {
+  const handlers = new Map<string, (params: any, signal: AbortSignal) => unknown>();
+  const notifications = new Map<string, (params: any) => void>();
+  let ready = Promise.withResolvers<MessageConnection>();
+  let onHello: (hello: Hello) => Promise<void>;
+  function open() {
+    const socket = connect(`${sockets}/link.sock`);
+    // The gate isn't listening yet (it's starting).
+    socket.once("error", () => setTimeout(open, 1000));
+    socket.once("connect", () => {
+      socket.removeAllListeners("error").on("error", () => socket.destroy());
+      const conn = createMessageConnection(new SocketMessageReader(socket), new SocketMessageWriter(socket));
+      // The gate's requests under way: each ends when the gate cancels it, or goes away.
+      const running = new Set<AbortController>();
+      conn.onRequest((method, params, token) => {
+        const handler = handlers.get(method);
+        if (!handler) throw new Error(`no method ${method}`);
+        const ended = new AbortController();
+        token.onCancellationRequested(() => ended.abort(new Error("stopped")));
+        running.add(ended);
+        return Promise.resolve(handler(params, ended.signal)).finally(() => running.delete(ended));
+      });
+      conn.onNotification((method, params) => notifications.get(method)?.(params));
+      conn.onClose(() => {
+        for (const ended of running) ended.abort(new Error("the gate went away"));
+        conn.dispose();
+        ready = Promise.withResolvers();
+        setTimeout(open, 1000);
+      });
+      conn.listen();
+      conn
+        .sendRequest<Hello>("hello")
+        .then((hello) => onHello(hello))
+        .then(() => (conn.sendNotification("ready"), ready.resolve(conn)))
+        .catch((err: Error) => (console.error(`the gate's hello: ${err.message}`), socket.destroy()));
+    });
+  }
+  return {
+    start(hello: (hello: Hello) => Promise<void>) {
+      onHello = hello;
+      open();
+    },
+    handle: (method: string, fn: (params: any, signal: AbortSignal) => unknown) => void handlers.set(method, fn),
+    on: (method: string, fn: (params: any) => void) => void notifications.set(method, fn),
+    request: async <T>(method: string, params?: unknown) => (await ready.promise).sendRequest<T>(method, params),
+    notify: async (method: string, params?: unknown) => void (await ready.promise).sendNotification(method, params),
+  };
+}
+
+// What a plugin's agent side (Plugin.agent, default-exporting a function of this) gets.
+export interface AgentApi {
+  harness(): Harness;
+  ctx: RunContext;
+  // The gate's answer on its socket (its tools, through gateMcp).
+  call: GateCall;
+  sockets: string;
+  // Its own requests of its gate side, and handlers for theirs.
+  link: Pick<ReturnType<typeof gateLink>, "request" | "notify" | "handle" | "on">;
+  registry: { install(e: Extension): void };
+  // A session's chats changed (AHP).
+  changed(session: string): void;
+}
+// And gives.
+export interface AgentPart {
+  // Where a conversation's tools run, when it isn't here (a task's VM).
+  env?(conversation: ConversationId): Promise<ExecutionEnv | undefined>;
+  // Once the agent has started: what its stop cut off is settled.
+  settle?(): Promise<void>;
+  // The gate is new (it restarted): its tools may have changed.
+  reload?(): void;
+  // Chats beside a session's own conversation, for AHP (a task's, a VM's), each with its record for the apps
+  // (the session's _meta.biscotti.chats).
+  chats?: {
+    list(session: string): Chat[];
+    records(session: string): Record<string, unknown>;
+    send(key: string, text: string): Promise<string | undefined>;
+    cancel(key: string): Promise<void>;
+    dispose(key: string): Promise<void>;
+  };
+}
+
+// `store`: the agent's own database's directory and key.
+export async function runAgent(sockets: string, store: { dir: string; key: string }) {
+  // pi-ai's fetch can't reach a unix socket: a port here relays to the gate's.
   const relay = createTcpServer((client) => {
     const gate = connect(`${sockets}/gate.sock`);
     client.pipe(gate).pipe(client);
@@ -42,46 +175,10 @@ export async function runAgent(sockets: string) {
   });
   const port = await new Promise<number>((resolve) => relay.listen(0, "127.0.0.1", () => resolve((relay.address() as { port: number }).port)));
   const gateUrl = `http://127.0.0.1:${port}`;
-
-  // The gate's answer (http.ts), named as the gate (it takes a task's calls only from the hosts it knows); the relay
-  // above is only for pi-ai's fetch, which can't reach a socket.
-  const call = (method: string, path: string, body?: string, headers: Record<string, string> = {}) => answer(`${sockets}/gate.sock`, method, path, body, { host: "gate", ...headers });
-  // Retried while the gate is starting.
-  const get = async (path: string) => {
-    for (;;) {
-      const res = await call("GET", path).catch(() => undefined);
-      if (res && res.status < 300) return res.text;
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-  };
-  // One of the gate's methods for the apps (appMethod).
-  const method = async (name: string, params: Record<string, unknown>) => {
-    const res = await call("POST", `/x/${encodeURIComponent(name)}`, JSON.stringify(params), { "content-type": "application/json" });
-    if (res.status >= 300) throw new Error(res.text || `${name} failed`);
-    return JSON.parse(res.text) as unknown;
-  };
-  // A stream of JSON lines from the gate, followed again whenever it ends (the gate restarted).
-  const stream = (path: string, onLine: (line: Record<string, unknown>) => void) => {
-    const again = () => setTimeout(() => stream(path, onLine), 2000);
-    const req = request({ socketPath: `${sockets}/gate.sock`, path, headers: { host: "gate" }, agent: false }, (res) => {
-      if (res.statusCode !== 200) return void (res.resume(), res.statusCode === 404 || again());
-      jsonLines(res, onLine);
-      res.on("end", again).on("error", () => {});
-    });
-    req.on("error", again);
-    req.end();
-  };
-
-  // biscotti's tools, as the gate lists them, each call stamped with its conversation's session. A remote service's
-  // (GitHub's, Notion's) the gate marks deferred: tool_search loads them when they're wanted.
+  // The gate's answer, named as the gate (it takes a task's calls only from the hosts it knows).
+  const call: GateCall = (method, path, body, headers = {}) => answer(`${sockets}/gate.sock`, method, path, body, { host: "gate", ...headers });
   const gateTools = gateMcp(call);
-  const sessionOf = new Map<string, string>();
-  let installed: Extension | undefined;
-  async function biscotti() {
-    const prompt = await get("/prompt");
-    const tools = await gateTools.tools("session=main", async (c) => `session=${encodeURIComponent(sessionOf.get(String(c)) ?? "main")}`, { deferred: true });
-    return (installed = defineExtension({ name: "biscotti", sections: [section("biscotti", () => prompt, { tag: false })], tools }));
-  }
+  const link = gateLink(sockets);
 
   const models = createModels();
   models.setProvider(
@@ -107,60 +204,36 @@ export async function runAgent(sockets: string) {
       api: openAICompletionsApi(),
     }),
   );
-  // The models' names for the owner's apps (the provider's ids for main, task and code), and biscotti's tools, at once:
-  // listing the tools waits on remote services.
-  const [named, extension] = await Promise.all([get("/models"), biscotti()]);
-  const names = JSON.parse(named) as Record<string, string>;
+
+  // pi-durable's storage. better-sqlite3 (for the cipher) refuses get and all on a statement that returns nothing,
+  // which chord's adapter (written for node:sqlite) may ask.
+  const sqlite = openEncrypted(`${store.dir}/durable.db`, store.key);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("busy_timeout = 5000");
+  const lenient = {
+    exec: (sql: string) => sqlite.exec(sql),
+    close: () => sqlite.close(),
+    prepare(sql: string) {
+      const s = sqlite.prepare(sql);
+      return s.reader ? s : { run: (...p: unknown[]) => s.run(...p), get: (...p: unknown[]) => void s.run(...p), all: (...p: unknown[]) => (s.run(...p), []) };
+    },
+  };
+
   const registry = createRegistry();
-  registry.install(extension);
   const toolSearch = createToolSearchExtension();
   registry.install(toolSearch);
-  // pi-env's daemon in a task's VM, through the gate (env-pipe.ts).
-  const tasks = agentTasks({
-    harness: () => harness,
-    ctx,
-    call,
-    daemon: (id) => [process.execPath, new URL("./env-pipe.ts", import.meta.url).pathname, sockets, String(id)],
-    registry,
-    onConversation: (id, conversation) => board.started(id, conversation.id),
-  });
-
-  const database = new RemoteSqliteDatabase(async (req: SqlRequest) => {
-    const res = await call("POST", "/sql", JSON.stringify(req), { "content-type": "application/json" });
-    if (res.status >= 300) throw new Error(`the gate's database: ${res.text}`);
-    return (JSON.parse(res.text) as { answer?: unknown }).answer;
-  });
-
-  // Open (and reopen, after the gate restarts mid-commit) over the gate's database; resume what was running.
+  // Each conversation's session, so the gate's tools know whose call it is.
+  const sessionOf = new Map<string, string>();
+  let installed!: Extension;
+  let names: Record<string, string> = {};
+  // The apps' methods (x-biscotti/<name>), passed to the gate as they come: the ones it said it has.
+  const methods: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {};
+  const parts: AgentPart[] = [];
   let harness!: Harness;
-  async function open() {
-    harness = await Harness.open(
-      await SqliteStorage.open(database, { prefix: "pi_" }),
-      {
-        models,
-        registry,
-        // The main agent's sessions have biscotti's tools; tasks choose their own (agent-tasks.ts).
-        settings: () => ({ compaction: { reserveTokens: 16_384 }, extensions: [installed!, toolSearch] }),
-        env: ({ conversationId }) => tasks.env(conversationId),
-        onReport: (report) => console.error(`pi-durable: ${report.kind}${report.error ? `: ${String(report.error)}` : ""}`),
-      },
-      ctx,
-    );
-    harness.resume();
-    void harness.closed.then(async (end) => {
-      if (end.kind !== "failed") return;
-      ahp.reset();
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 2000));
-        if (await open().then(() => true, () => false)) return;
-      }
-    });
-  }
-  await open();
-  await tasks.settle();
+  let ahp!: ReturnType<typeof durableAhp>;
+  const api: AgentApi = { harness: () => harness, ctx, call, sockets, link, registry, changed: (session) => ahp.changed(session) };
 
-  // What each session says, as it's committed, for memory (the gate's searchable transcript).
-  // What each session says, as it's committed (the package's watch of it), for memory: the gate's searchable transcript.
+  // What each session says, as it's committed, for memory: the gate's searchable transcript.
   const transcribe = (session: string, entries: readonly Entry[]) => {
     const rows = entries.flatMap((entry) => {
       const message = entry.model?.[0];
@@ -168,13 +241,13 @@ export async function runAgent(sockets: string) {
       const said = textOf(message as Message);
       return [{ id: String(entry.id), entry, text: said && (message.role === "user" || message.role === "assistant") ? `${message.role}: ${said}` : null }];
     });
-    if (rows.length) void call("POST", `/transcript?session=${encodeURIComponent(session)}`, JSON.stringify(rows)).catch(() => {});
+    if (rows.length) void link.notify("transcript", { session, rows });
   };
 
   // One turn: the reply (everything said this run), or undefined when the message steered a run already going.
   // `origin`: who it's from (AHP's message kinds), the owner's ("user") or biscotti's own (a task report, a wake).
   async function reply(session: string, message: string, origin = "user"): Promise<string | undefined> {
-    const handle = await conversation(session);
+    const handle = await ahp.conversation(session);
     if (message.trim() === "/compact")
       return handle.compact(undefined, ctx).then(
         () => "Compacted: the conversation so far is summarized, freeing its context.",
@@ -199,75 +272,77 @@ export async function runAgent(sockets: string) {
     }
     return turn.join("\n\n");
   }
+  link.handle("turn", ({ text, session = "main", origin }: { text: string; session?: string; origin?: string }) => reply(String(session), String(text), origin).then((r) => ({ reply: r })));
 
-  // The owner's apps see and drive the sessions over the Agent Host Protocol (/ahp) or the Agent Client Protocol (/acp,
-  // pi-durable-acp-ahp): "main" is the owner's texts (the root conversation), the others an app's; a session's tasks and
-  // VMs are chats beside it (sandboxes.ts).
-  const board = sandboxes({
-    method,
-    follow: stream,
-    conversation: (id) => tasks.conversationId(id),
-    changed: (session) => ahp.changed(session),
-  });
-  const ahp = durableAhp({
-    harness: () => harness,
-    context: ctx,
-    info: { name: "biscotti", version: process.env.BISCOTTI_VERSION ?? "dev" },
-    agent: { provider: "biscotti", displayName: "biscotti", description: "biscotti's main agent" },
-    create: (session) =>
-      session === "main" ? harness.root(ctx, { agent: { model: MAIN_MODEL } }) : harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: MAIN_MODEL } }, ctx),
-    opened: (session, handle) => void sessionOf.set(String(handle.id), session),
-    // A session's own conversation only: its tasks' and VMs' chats aren't the owner's.
-    committed: (session, entries, key) => key === undefined && transcribe(session, entries),
-    title: (session) => (session === "main" ? "Texts" : undefined),
-    meta: (session) => ({ biscotti: { kind: "main", model: names.main, size: CONTEXT_WINDOW, ...(session === "main" && { source: "imessage" }), chats: board.records(session) } }),
-    chats: (session) => board.chats(session),
-    send: (_session, key, text) => board.send(key, text),
-    cancel: (_session, key) => board.cancel(key),
-    dispose: (_session, key) => board.dispose(key),
-    named: (id) => names[id] ?? id,
-    // Inputs carry the time they were sent, for the model; the chat shows what was said.
-    input: stamped,
-    said: (text) => text.replace(/^\[[^\]]*\] /, ""),
-    // Each also by its ACP name's (_biscotti/vms/open is x-biscotti/vms/open; the app's is x-biscotti/vms.open).
-    methods: Object.fromEntries(
-      Object.entries(board.methods).flatMap(([name, run]) => [name, name.replace(/\.(?=[^/]*$)/, "/")].map((n) => [n, (params: Record<string, unknown>) => run(params)])),
-    ),
-  });
-  const conversation = (session: string) => ahp.conversation(session);
-  // The owner's texts are a session from the start, not only once something's said in them.
-  await conversation("main");
-  const acp = ahp.acp({ contextWindow: CONTEXT_WINDOW });
-  const path = (url = "/") => new URL(url, "http://agent").pathname;
+  // Started on the first hello: the plugins' sides, the conversations, and the sessions the apps see.
+  async function start(hello: Hello) {
+    for (const plugin of hello.plugins) parts.push((await import(plugin)).default(api) as AgentPart);
+    harness = await Harness.open(
+      await SqliteStorage.open(new NodeSqliteDatabase(lenient as never), { prefix: "pi_" }),
+      {
+        models,
+        registry,
+        // The main agent's sessions have biscotti's tools; a plugin's conversations (tasks) choose their own.
+        settings: () => ({ compaction: { reserveTokens: 16_384 }, extensions: [installed, toolSearch] }),
+        env: async ({ conversationId }) => {
+          for (const part of parts) {
+            const env = await part.env?.(conversationId);
+            if (env) return env;
+          }
+          return undefined;
+        },
+        onReport: (report) => console.error(`pi-durable: ${report.kind}${report.error ? `: ${String(report.error)}` : ""}`),
+      },
+      ctx,
+    );
+    harness.resume();
+    for (const part of parts) await part.settle?.();
+    // "main" is the owner's texts (the root conversation), the others an app's; a session's tasks and VMs are chats
+    // beside it (the tasks plugin's).
+    const chats = parts.find((p) => p.chats)?.chats;
+    ahp = durableAhp({
+      harness: () => harness,
+      context: ctx,
+      info: { name: "biscotti", version: process.env.BISCOTTI_VERSION ?? "dev" },
+      agent: { provider: "biscotti", displayName: "biscotti", description: "biscotti's main agent" },
+      create: (session) =>
+        session === "main" ? harness.root(ctx, { agent: { model: MAIN_MODEL } }) : harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: MAIN_MODEL } }, ctx),
+      opened: (session, handle) => void sessionOf.set(String(handle.id), session),
+      // A session's own conversation only: its tasks' and VMs' chats aren't the owner's.
+      committed: (session, entries, key) => key === undefined && transcribe(session, entries),
+      title: (session) => (session === "main" ? "Texts" : undefined),
+      meta: (session) => ({ biscotti: { kind: "main", model: names.main, size: CONTEXT_WINDOW, ...(session === "main" && { source: "imessage" }), chats: chats?.records(session) ?? {} } }),
+      chats: (session) => chats?.list(session) ?? [],
+      send: (_session, key, text) => chats?.send(key, text) ?? Promise.resolve("no such chat"),
+      cancel: (_session, key) => chats?.cancel(key) ?? Promise.resolve(),
+      dispose: (_session, key) => chats?.dispose(key) ?? Promise.resolve(),
+      named: (id) => names[id] ?? id,
+      // Inputs carry the time they were sent, for the model; the chat shows what was said.
+      input: stamped,
+      said: (text) => text.replace(/^\[[^\]]*\] /, ""),
+      methods,
+    });
+    // The owner's texts are a session from the start, not only once something's said in them.
+    await ahp.conversation("main");
+  }
 
-  const server = createServer(async (req, res) => {
-    try {
-      // A restarted gate may bring new tools and a new prompt: reinstalled in place; running work keeps its own.
-      if (req.url === "/reload") return void (tasks.reload(), res.end(void registry.install(await biscotti())));
-      // A task's run, for the gate: what it does, as lines, until it's done.
-      if (req.url === "/task") return void (await tasks.run(JSON.parse(await readBody(req)) as TaskRun, res));
-      // The owner's message for a task's run under way here.
-      const told = req.url?.match(/^\/task\/(\d+)\/tell$/);
-      if (told) {
-        const { message } = JSON.parse(await readBody(req)) as { message: string };
-        return void res.writeHead((await tasks.tell(Number(told[1]), String(message))) ? 200 : 404).end();
-      }
-      // ACP's Streamable HTTP.
-      if (path(req.url) === "/acp") return void acp.http(req, res);
-      const { text, session = "main", origin } = JSON.parse(await readBody(req)) as { text?: string; session?: string; origin?: string };
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ reply: await reply(String(session), String(text), origin) }));
-    } catch (err) {
-      console.error(err);
-      // A task's run has its lines started already.
-      if (!res.headersSent) res.writeHead(500);
-      res.end(String(err));
-    }
+  // Each hello (the first, and a restarted gate's): its tools and prompt, its models' names and its methods.
+  const started = Promise.withResolvers<void>();
+  link.start(async (hello) => {
+    const tools = await gateTools.tools("session=main", async (c) => `session=${encodeURIComponent(sessionOf.get(String(c)) ?? "main")}`, { deferred: true });
+    installed = defineExtension({ name: "biscotti", sections: [section("biscotti", () => hello.prompt, { tag: false })], tools });
+    registry.install(installed);
+    names = hello.models;
+    for (const name of Object.keys(methods)) delete methods[name];
+    for (const name of hello.methods) methods[`x-biscotti/${name}`] = (params) => link.request("method", { name, params });
+    if (harness) for (const part of parts) part.reload?.();
+    else await start(hello);
+    started.resolve();
   });
-  server.on("upgrade", (req, socket, head) => {
-    if (path(req.url) === "/ahp") return ahp.upgrade(req, socket, head);
-    if (path(req.url) === "/acp") return acp.upgrade(req, socket, head);
-    socket.destroy();
-  });
+  await started.promise;
+
+  const server = createServer((_req, res) => void res.writeHead(404).end());
+  server.on("upgrade", (req, socket, head) => (new URL(req.url ?? "/", "http://agent").pathname === "/ahp" ? ahp.upgrade(req, socket, head) : socket.destroy()));
   await listen(server, `${sockets}/agent.sock`);
   return { gateUrl };
 }

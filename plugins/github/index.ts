@@ -1,4 +1,5 @@
 import { appMethod, declined, input, localTools, mcpTools, merge, text, type Context, type Plugin } from "@biscotti/core";
+import { type Vms, vms } from "@biscotti/tasks";
 import { codeTasks } from "./code.ts";
 import { githubApi, githubToken as token } from "./git.ts";
 
@@ -73,14 +74,14 @@ once they ask (\`code_pull_request\`); never merge one, that's their call.`,
 } satisfies Plugin;
 
 const PULL = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/;
-export async function cleanUp(ctx: Context, api = "https://api.github.com") {
+export async function cleanUp(ctx: Context, pool: Pick<Vms, "alive" | "remove"> = vms(ctx), api = "https://api.github.com") {
   const get = githubApi(token(ctx)!, api);
-  for (const v of ctx.vms.alive()) {
+  for (const v of pool.alive()) {
     const [, repo, n] = v.pr?.match(PULL) ?? [];
     if (!repo) continue;
     const pull = (await get(`/repos/${repo}/pulls/${n}`).catch(() => undefined)) as { state: string; merged_at: string | null } | undefined;
     if (pull?.state !== "closed") continue;
     console.log(`VM #${v.id}: ${v.pr} was ${pull.merged_at ? "merged" : "closed"}, so it's deleted`);
-    await ctx.vms.remove(v.id);
+    await pool.remove(v.id);
   }
 }

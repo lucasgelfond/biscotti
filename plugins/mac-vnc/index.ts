@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { escapeHtml, input, localTools, optional, str, text, type Plugin } from "@biscotti/core";
-import { passTo, pipeUpgrade } from "@biscotti/core/http";
+import { request, type IncomingMessage, type ServerResponse } from "node:http";
+import { pipeUpgrade } from "@biscotti/core/http";
 
 // The owner's home Mac in the browser: noVNC and websockify run on the Mac (mac/install.sh), and this proxies to them
 // over the tailnet under an expiring, unguessable path. Tailnet-only (tailscale serve on :9443/mac, never Funnel).
@@ -90,3 +91,23 @@ lasts two hours.`,
     server.listen(PORT, "127.0.0.1");
   },
 } satisfies Plugin;
+
+// A handler that passes requests through to a server (a unix socket's path, or a host and port; `path` maps the
+// request's), streamed both ways.
+function passTo(target: string | { host: string; port: number }, path = (url: string) => url) {
+  return (req: IncomingMessage, res: ServerResponse) =>
+    new Promise<void>((resolve) => {
+      const to = typeof target === "string" ? { socketPath: target, headers: req.headers } : { ...target, headers: { ...req.headers, host: `${target.host}:${target.port}` } };
+      const upstream = request({ ...to, method: req.method, path: path(req.url ?? "/"), agent: false }, (answer) => {
+        // Sent at once: an event stream (text/event-stream) may say nothing for a while, and Node holds headers back
+        // until the body's first bytes.
+        res.writeHead(answer.statusCode ?? 502, answer.headers).flushHeaders();
+        answer.pipe(res);
+        answer.on("end", resolve).on("error", () => (res.destroy(), resolve()));
+      });
+      upstream.on("error", () => (res.headersSent ? res.destroy() : res.writeHead(502).end(), resolve()));
+      // The client gone, so is the request upstream.
+      res.on("close", () => (upstream.destroy(), resolve()));
+      req.pipe(upstream);
+    });
+}

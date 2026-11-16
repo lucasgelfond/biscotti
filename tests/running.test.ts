@@ -3,45 +3,38 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createServer, type AddressInfo, type Server } from "node:net";
-import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { createGate } from "../core/src/gate.ts";
-import type { TaskRun } from "../core/src/agent-tasks.ts";
-import { localTools, taskEvents, text, type Caller, type Host, type Vm } from "../core/src/plugin.ts";
+import { openDb } from "../core/src/memory.ts";
+import { type Caller, type Context, text, localTools } from "../core/src/plugin.ts";
+import { taskEvents, type Host, type TaskResult, type TaskRun, type Vm } from "../plugins/tasks/types.ts";
 import { until } from "./wait.ts";
 
 // The task pool's bookkeeping with stand-in VMs: what's running, stopping one, when a task counts as quiet, kept VMs
 // and leases. Read before tasks.ts loads.
-process.env.TASK_IDLE_MS = "400";
 process.env.VM_USE_CHECK_MS = "30";
-const { taskVms, gateTasks } = await import("../core/src/tasks.ts");
+const { taskVms } = await import("../plugins/tasks/pool.ts");
+const { default: tasks, vms: vmsOf } = await import("../plugins/tasks/index.ts");
 const { vmCheck } = await import("../plugins/vm-check/index.ts");
 const { sessions } = await import("../plugins/firecracker/index.ts");
 
-// The task agent (the main agent's, agent-tasks.ts), its run's lines: "silent" says nothing, "wait <ms>" says nothing
-// for that long and then reports, anything else is reported at once. A follow-up is reported as "followup <message>".
-function lines(task: TaskRun) {
-  const stream = new PassThrough();
+// The task agent (the tasks plugin's side in the main agent), its run: "silent" never reports (until it's stopped),
+// "wait <ms>" reports after that long, anything else at once. A follow-up is reported as "followup <message>".
+function answer(task: TaskRun, stopped: AbortSignal) {
   const said = task.followup ? `followup ${task.goal}` : task.goal;
-  if (said !== "silent")
-    setTimeout(() => stream.end(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `done: ${said}` }] } })}\n`), Number(said.match(/^wait (\d+)/)?.[1] ?? 0));
-  return stream;
+  return new Promise<TaskResult>((resolve, reject) => {
+    stopped.addEventListener("abort", () => reject(stopped.reason), { once: true });
+    if (said !== "silent") setTimeout(() => resolve({ report: `done: ${said}` }), Number(said.match(/^wait (\d+)/)?.[1] ?? 0));
+  });
 }
-const run = async (_slot: number, task: TaskRun) => lines(task);
+const run = async (_slot: number, task: TaskRun, _opts: unknown, stopped: AbortSignal) => answer(task, stopped);
 // What the agent was told for each task, and each run it was asked for.
 const told: [number, string][] = [];
 const started: TaskRun[] = [];
-const agent = {
-  key: () => "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIStandIn gate",
-  trust: async () => {},
-  pipe: async () => {},
-  run: async (task: TaskRun) => (started.push(task), lines(task)),
-  tell: async (id: number, message: string) => void told.push([id, message]),
-};
 // A pool whose tasks that agent runs.
-const pool = (hooks: Partial<Parameters<typeof taskVms>[0]> = {}, saved?: string) => taskVms({ run, ...hooks }, saved);
+const pool = (hooks: Partial<Parameters<typeof taskVms>[0]> = {}, saved?: Context["db"]) => taskVms({ run, ...hooks }, saved);
 
 // The VM's setup (its box mode, for pi-env): done at once.
 async function setup() {
@@ -64,7 +57,7 @@ async function host(slots: number[], log: string[] = [], extra: Partial<Host> = 
     ...extra,
   };
 }
-const file = () => join(mkdtempSync(join(tmpdir(), "pool-")), "tasks.json");
+const file = () => openDb(join(mkdtempSync(join(tmpdir(), "pool-")), "biscotti.db"), "k");
 
 test("lists running and queued tasks, and stopping one frees its slot for the queued one", async () => {
   const vms = pool({ busy: () => true });
@@ -82,14 +75,12 @@ test("lists running and queued tasks, and stopping one frees its slot for the qu
   vms.stop(3);
 });
 
-test("a task in a tool call (like waiting on the owner's yes) isn't quiet; one that's only silent is", async () => {
-  let inToolCall = true;
-  const vms = pool({ busy: () => inToolCall });
+test("a task that runs out of time is cut off, and its slot freed", async () => {
+  const vms = pool();
   await vms.addHost(await host([1]));
 
-  expect((await vms.launch("wait 1200").result).report).toBe("done: wait 1200");
-  inToolCall = false;
-  await expect(vms.launch("silent").result).rejects.toThrow("the task went quiet");
+  await expect(vms.launch("silent", { timeoutMs: 300 }).result).rejects.toThrow("the task ran out of time");
+  expect((await vms.launch("find flights").result).report).toBe("done: find flights");
 });
 
 test("a finished task's VM is deleted, and numbering carries on after a restart", async () => {
@@ -256,7 +247,8 @@ test("an overflow host is used only once the others' slots are taken", async () 
   for (const t of vms.running()) vms.stop(t.id);
 });
 
-// The gate: each slot's listener, tell_task to a running or queued task, and the tool calls' stamps.
+// The gate: each slot's listener, tell_task to a running or queued task, and the tool calls' stamps; the tasks plugin
+// over it, its agent a stand-in that answers as `answer` does.
 async function gated() {
   const gate = createGate({ llm: { url: "http://127.0.0.1:9", key: "k" }, models: {}, send: async () => {} });
   const servers = new Map<number, Server>();
@@ -268,9 +260,24 @@ async function gated() {
   };
   const reports: string[] = [];
   const parents: (string | undefined)[] = [];
-  const local = await host([1, 2], [], { gate: () => ({ host: "127.0.0.1", port: 0, peer: () => "127.0.0.1" }) });
-  const { vms, tools } = await gateTasks(gate, local, (_goal, { report }, parent) => (reports.push(report), parents.push(parent)), file(), agent);
-  const said = async (name: string, args: Record<string, unknown> = {}, caller?: Caller) => ((await localTools(tools).call(name, args, caller)).content[0] as { text: string }).text;
+  const agent: Context["agent"] = {
+    async request<T>(method: string, params?: unknown, signal?: AbortSignal) {
+      if (method === "tasks/steer") return void told.push([(params as { id: number }).id, (params as { message: string }).message]) as T;
+      started.push(params as TaskRun);
+      return (await answer(params as TaskRun, signal!)) as T;
+    },
+    notify: () => {},
+    handle: () => {},
+    onReady: () => {},
+    upgrade: () => {},
+  };
+  const dir = mkdtempSync(join(tmpdir(), "gated-"));
+  const deliver = async (said: string, _image?: Buffer, parent?: string) => void (reports.push(said.split("\n").slice(1).join("\n")), parents.push(parent));
+  const ctx: Context = { db: openDb(`${dir}/biscotti.db`, "k"), dir, env: (n) => n, ask: async () => true, deliver, send: async () => {}, route: () => {}, gate, agent };
+  const vms = vmsOf(ctx);
+  await vms.addHost(await host([1, 2], [], { gate: () => ({ host: "127.0.0.1", port: 0, peer: () => "127.0.0.1" }) }));
+  const tools = await tasks.tools!(ctx);
+  const said = async (name: string, args: Record<string, unknown> = {}, caller?: Caller) => ((await tools.call(name, args, caller)).content[0] as { text: string }).text;
   return { gate, vms, said, reports, parents, close: () => servers.forEach((s) => s.close()) };
 }
 

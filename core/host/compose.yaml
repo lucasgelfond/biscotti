@@ -10,7 +10,7 @@ services:
       context: ../..
       dockerfile: core/Dockerfile
       # The read-only deploy key for private dependencies (core/Dockerfile).
-      ssh: ["default=/var/lib/biscotti/deploy-keys/pi-durable-acp-ahp"]
+      ssh: ["default=/var/lib/biscotti/deploy-keys/pi-durable-ahp"]
     image: biscotti/agent
     network_mode: host
     env_file: /var/lib/biscotti/.env
@@ -63,8 +63,9 @@ services:
       - /run/biscotti-vms:/run/biscotti-vms
     restart: unless-stopped
 
-  # The main agent: no keys, no data and no network. It reaches the gate only through the socket in /run/biscotti, so
-  # whatever steers it can't read a secret or approve anything.
+  # The main agent: no network, and none of the gate's keys or data: its own database (its conversations) under a key
+  # of its own. It reaches the gate only through the sockets in /run/biscotti, so whatever steers it can't read a
+  # secret or approve anything.
   agent:
     image: biscotti/agent
     command: ["node", "core/src/agent-main.ts"]
@@ -77,7 +78,10 @@ services:
     environment:
       HOME: /tmp
       TZ: ${TZ:-America/New_York}
+      DATA_DIR: /data
+      AGENT_DB_KEY: ${AGENT_DB_KEY:?}
     volumes:
       - /run/biscotti:/run/biscotti
+      - /var/lib/biscotti/agent:/data
     depends_on: [gate]
     restart: unless-stopped

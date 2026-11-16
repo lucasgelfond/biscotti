@@ -55,9 +55,12 @@ importers:
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
-      pi-durable-acp-ahp:
-        specifier: github:lucasgelfond/pi-durable-acp-ahp#1a5eb08
-        version: git+https://git@github.com:lucasgelfond/pi-durable-acp-ahp.git#1a5eb08c6bcc7d77cacc79a63ea314542f2e86b5(@earendil-works/chord@1.5.2(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(zod@4.6.7)
+      pi-durable-ahp:
+        specifier: github:lucasgelfond/pi-durable-ahp#9fc0d72999fd82d37de5d04d07b6863ab3626cd2
+        version: git+https://git@github.com:lucasgelfond/pi-durable-ahp.git#9fc0d72999fd82d37de5d04d07b6863ab3626cd2(@earendil-works/chord@1.5.2(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(zod@4.6.7)
+      vscode-jsonrpc:
+        specifier: 8.2.1
+        version: 8.2.1
     devDependencies:
       drizzle-kit:
         specifier: 0.31.11
@@ -122,18 +125,30 @@ importers:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
 
   plugins/firecracker:
     dependencies:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
 
   plugins/github:
     dependencies:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
 
   plugins/google:
     dependencies:
@@ -149,12 +164,18 @@ importers:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
 
   plugins/lessons:
     dependencies:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
@@ -200,6 +221,9 @@ importers:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
       apns2:
         specifier: 12.2.0
         version: 12.2.0
@@ -215,6 +239,9 @@ importers:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
 
   plugins/ssh-vms:
     dependencies:
@@ -224,6 +251,30 @@ importers:
       '@biscotti/github':
         specifier: workspace:*
         version: link:../github
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
+
+  plugins/tasks:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@earendil-works/pi-durable':
+        specifier: 1.5.2
+        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
+      '@earendil-works/pi-env':
+        specifier: 1.5.2
+        version: 1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
+      '@earendil-works/pi-mcp':
+        specifier: 1.5.2
+        version: 1.5.2
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
+      pi-durable-ahp:
+        specifier: github:lucasgelfond/pi-durable-ahp#9fc0d72999fd82d37de5d04d07b6863ab3626cd2
+        version: git+https://git@github.com:lucasgelfond/pi-durable-ahp.git#9fc0d72999fd82d37de5d04d07b6863ab3626cd2(@earendil-works/chord@1.5.2(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(zod@4.6.7)
 
   plugins/vision:
     dependencies:
@@ -236,6 +287,12 @@ importers:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/tasks':
+        specifier: workspace:*
+        version: link:../tasks
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@opentelemetry/api@1.9.1)(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)
 
   site:
     devDependencies:
@@ -2478,8 +2535,8 @@ packages:
   path-to-regexp@8.4.2:
     resolution: {integrity: sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA==}
 
-  pi-durable-acp-ahp@git+https://git@github.com:lucasgelfond/pi-durable-acp-ahp.git#1a5eb08c6bcc7d77cacc79a63ea314542f2e86b5:
-    resolution: {commit: 1a5eb08c6bcc7d77cacc79a63ea314542f2e86b5, repo: git@github.com:lucasgelfond/pi-durable-acp-ahp.git, type: git}
+  pi-durable-ahp@git+https://git@github.com:lucasgelfond/pi-durable-ahp.git#9fc0d72999fd82d37de5d04d07b6863ab3626cd2:
+    resolution: {commit: 9fc0d72999fd82d37de5d04d07b6863ab3626cd2, repo: git@github.com:lucasgelfond/pi-durable-ahp.git, type: git}
     version: 0.1.0
     hasBin: true
     peerDependencies:
@@ -2817,6 +2874,10 @@ packages:
         optional: true
       jsdom:
         optional: true
+
+  vscode-jsonrpc@8.2.1:
+    resolution: {integrity: sha512-kdjOSJ2lLIn7r1rtrMbbNCHjyMPfRnowdKjBQ+mGq6NAW5QY2bEZC/khaC5OR8svbbjvLEaIXkOq45e2X9BIbQ==}
+    engines: {node: '>=14.0.0'}
 
   web-streams-polyfill@3.3.3:
     resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
@@ -5026,7 +5087,7 @@ snapshots:
 
   path-to-regexp@8.4.2: {}
 
-  pi-durable-acp-ahp@git+https://git@github.com:lucasgelfond/pi-durable-acp-ahp.git#1a5eb08c6bcc7d77cacc79a63ea314542f2e86b5(@earendil-works/chord@1.5.2(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(zod@4.6.7):
+  pi-durable-ahp@git+https://git@github.com:lucasgelfond/pi-durable-ahp.git#9fc0d72999fd82d37de5d04d07b6863ab3626cd2(@earendil-works/chord@1.5.2(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(zod@4.6.7):
     dependencies:
       '@agentclientprotocol/sdk': 2.2.0(zod@4.6.7)
       '@earendil-works/chord': 1.5.2(esbuild@0.28.2)(ws@8.18.3)
@@ -5378,6 +5439,8 @@ snapshots:
       '@types/node': 22.20.5
     transitivePeerDependencies:
       - msw
+
+  vscode-jsonrpc@8.2.1: {}
 
   web-streams-polyfill@3.3.3: {}
 

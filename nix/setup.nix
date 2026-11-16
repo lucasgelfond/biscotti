@@ -61,6 +61,9 @@
       set_default TASK_MODEL "$(get MODEL)"
       set_default TZ America/New_York
       set_default DB_KEY "$(openssl rand -hex 32)"
+      # The main agent's own database's key (its conversations), and its directory, its user's.
+      set_default AGENT_DB_KEY "$(openssl rand -hex 32)"
+      install -d -o 1000 -g 1000 -m 700 "$STATE/agent"
       set_default FIRECRACKER_BIN ${firecracker}/bin/firecracker
       # The installer picks a free name, so it can show the Google redirect URI upfront.
       set_default TS_HOSTNAME biscotti
@@ -68,7 +71,7 @@
       # A Pi has no clock battery: until NTP sets the time, every TLS certificate looks invalid.
       until [ "$(timedatectl show -p NTPSynchronized --value)" = yes ]; do sleep 2; done
       # With the read-only deploy key for private dependencies, as compose builds it (core/host/compose.yaml).
-      docker build -q --ssh default=/var/lib/biscotti/deploy-keys/pi-durable-acp-ahp -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
+      docker build -q --ssh default=/var/lib/biscotti/deploy-keys/pi-durable-ahp -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
       notify() { docker run --rm --network host --env-file "$ENV" biscotti/agent node plugins/channels/spectrum/notify.ts "$1" || true; }
 
       # Tailscale: text the owner the login link.

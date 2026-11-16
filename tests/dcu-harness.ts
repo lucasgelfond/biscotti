@@ -4,7 +4,7 @@ import type { Server } from "node:http";
 import { createGate } from "../core/src/gate.ts";
 import { openDb } from "../core/src/memory.ts";
 import type { Context } from "../core/src/plugin.ts";
-import { noVms } from "./support.ts";
+import { none } from "./support.ts";
 import vault, { secrets } from "../core/src/vault.ts";
 import dcu from "../plugins/jev-quick-browse/index.ts";
 import secureFill from "../plugins/secure-fill/index.ts";
@@ -38,7 +38,7 @@ export async function harness(port: number, approve: (question: string) => boole
     },
     secrets: () => secrets(db),
   });
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver: async () => {}, send: async () => {}, route: () => {}, vms: noVms };
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver: async () => {}, send: async () => {}, route: () => {}, gate: none("gate"), agent: none("agent") };
   for (const plugin of [vault, secureFill, dcu, vision]) gate.add(await plugin.tools!(ctx));
   const server: Server = await gate.listen("127.0.0.1", port + 1, { slot: 1, peer: "127.0.0.1" });
 

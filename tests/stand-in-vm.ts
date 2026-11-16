@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { localDaemon } from "@earendil-works/pi-env";
-import type { Host } from "../core/src/plugin.ts";
+import type { Host } from "../plugins/tasks/types.ts";
 
 // Task VMs on this machine, for tests and the dev host: a slot's "VM" is pi-env's own daemon here in a home of its
 // own, standing in for ssh into a task VM. As with a real one, a VM restored into a slot starts fresh (a new home), one

@@ -18,13 +18,15 @@
     "better-sqlite3-multiple-ciphers": "13.0.3",
     "croner": "10.0.1",
     "drizzle-orm": "0.45.4",
-    "pi-durable-acp-ahp": "github:lucasgelfond/pi-durable-acp-ahp#1a5eb08"
+    "pi-durable-ahp": "github:lucasgelfond/pi-durable-ahp#9fc0d72999fd82d37de5d04d07b6863ab3626cd2",
+    "vscode-jsonrpc": "8.2.1"
   },
   "devDependencies": {
     "drizzle-kit": "0.31.11"
   },
   "exports": {
     ".": "./src/plugin.ts",
-    "./http": "./src/http.ts"
+    "./http": "./src/http.ts",
+    "./agent": "./src/agent.ts"
   }
 }
