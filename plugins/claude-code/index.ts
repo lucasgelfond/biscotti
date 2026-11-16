@@ -62,6 +62,8 @@ function bundled() {
   }
 }
 // What pi-claude-code runs: claude-env.mjs, which hands Claude Code none of the gate's keys.
+// TODO: a shell wrapper instead of a Node process per call; thinking round-tripped as reasoning_details (pi-ai's
+// openai-completions keeps them) instead of the in-memory cache.
 const environment = (env: Env) => ({ ...env, CLAUDE_CODE_REAL: claude(env), PI_CLAUDE_CODE_COMMAND: new URL("./claude-env.mjs", import.meta.url).pathname });
 
 interface ChatMessage {

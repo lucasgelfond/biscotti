@@ -31,6 +31,8 @@ const decodeRow = mapRow(decode);
 export const encodeParams = (params: SqliteValue[]) => params.map(encode);
 
 // The gate's side. A transaction the agent leaves open (it died, or lost the socket) is rolled back after `idleMs`.
+// TODO: over one upgraded socket (as /env is), so a transaction lasts as long as the connection: no request per
+// statement and no idle rollback.
 export function sqlBridge(path: string, key: string, idleMs = 30_000) {
   const db = openEncrypted(path, key);
   db.pragma("journal_mode = WAL");

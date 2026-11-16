@@ -13,6 +13,7 @@ export default {
   async start(ctx) {
     // The day it last asked, kept across restarts (the pool's file, from when the check was its).
     const checked = `${ctx.dir}/tasks.checked`;
+    // TODO: into SQLite, instead of this file.
     let asked = existsSync(checked) ? readFileSync(checked, "utf8") : "";
     const hour = Number(process.env.VM_CHECK_HOUR ?? 10);
     const check = () => {

@@ -47,6 +47,8 @@ const BROWSER = new Set(
 const PLAYWRIGHT = ["playwright-mcp", "--cdp-endpoint", "http://127.0.0.1:9222", "--caps", "vision", "--snapshot-mode", "none"];
 
 // A task's instructions, and a coding task's besides.
+// TODO: coding tasks, lessons and the browser out of core: what a run needs as TaskOptions (instructions, what to
+// collect from the VM after it, whether to check the final screen), the prompts from the plugins that own them.
 const PROMPT = readFileSync(new URL("../../prompts/TASK.md", import.meta.url), "utf8");
 const CODING = readFileSync(new URL("../../prompts/CODING.md", import.meta.url), "utf8");
 
@@ -484,6 +486,7 @@ Done means: the report answers everything the goal asks, with the facts it needs
         live.delete(key);
         void underway(id).catch(() => {});
       }
+      // TODO: the gate fetches the bundle and the screenshot over its own ssh, not base64 through the agent.
       if (doc.base) {
         // Everything since the base, every time: the gate pushes the whole branch.
         const bundled = await sh(id, COMMITS(doc.base), 300);

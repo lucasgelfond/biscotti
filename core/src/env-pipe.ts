@@ -3,6 +3,7 @@ import { connect } from "node:net";
 // pi-env's daemon in VM <id>, as a command for the agent's pi-env `Connection`: stdin and stdout piped through the
 // gate's socket (/env/<id>), which runs the daemon over SSH (vm-env.ts) with the arguments the `Connection` adds
 // (`serve --token <hex>`). Usage: node env-pipe.ts <sockets dir> <id> <daemon arguments…>
+// TODO: something smaller than a Node process per run to splice bytes (or a duplex transport from pi-env).
 const [sockets, id, ...args] = process.argv.slice(2);
 const request = [`GET /env/${encodeURIComponent(id)} HTTP/1.1`, "Host: gate", "Connection: Upgrade", "Upgrade: pi-env", `Pi-Env-Arguments: ${args.join(" ")}`];
 const socket = connect(`${sockets}/gate.sock`, () => socket.write(`${request.join("\r\n")}\r\n\r\n`));

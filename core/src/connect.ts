@@ -79,6 +79,8 @@ export async function connectAgent(
   });
   // Only the agent's user (uid 1000, in its own container) may connect.
   await listen(server, `${sockets}/gate.sock`, 1000);
+  // TODO: a hello from the agent once it listens (prompt, models and tools back), instead of /reload here and the
+  // agent's and turn()'s retries.
   // An agent still running from before this gate started has the old one's tools.
   await call(`${sockets}/agent.sock`, "POST", "/reload").catch(() => {});
 

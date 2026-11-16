@@ -363,6 +363,8 @@ export function taskVms(
 // A task's run, as the main agent reports it (agent-tasks.ts), a JSON line each: what it did and said (its last text is
 // the report), then a screenshot of the final screen and a coding task's new commits. It's cut off when it goes
 // quiet, runs out of time or is stopped.
+// TODO: one result from the agent ({report, screenshot, bundle}) and the idle rule there, where the open tool calls
+// and model calls are known, instead of lines, heartbeats and an idle timer here.
 async function readRun(
   lines: Promise<Readable>,
   { timeoutMs = TASK_TIMEOUT_MS }: Options,

@@ -202,6 +202,7 @@ const phoenix = process.env.CU_PHOENIX ? (() => {
 // The vault (empty; CU_DB keeps the database across runs, e.g. for lessons), and plugins whose task tools the VMs get:
 // by default biscotti's own (vault fills, zoom and lessons), e.g. CU_PLUGINS=secure-fill,vision,lessons,jev-quick-browse for
 // quick_browse too, or …,claude-code for the Claude subscription's models. Tasks run lean (CU_LEAN=0 for the full context).
+// TODO: through Vms.run, as production runs tasks: the VMs' port 4000 now takes only setup, not goals.
 const scratch = mkdtempSync(join(tmpdir(), "cu-"));
 // The owner says yes to whatever a task asks (a vault fill on a site): what is graded is what the task does with it.
 const ctx: Context = { db: openDb(process.env.CU_DB ?? `${scratch}/biscotti.db`, "bench"), dir: scratch, env: (n) => process.env[n] ?? "", ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {}, vms: noVms };
