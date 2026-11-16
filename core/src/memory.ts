@@ -8,10 +8,13 @@ import { memories, transcripts } from "./schema.ts";
 // Keyword search (FTS5) over transcripts and saved facts; Recall plugins' rankings are fused in by reciprocal rank.
 
 // Encrypted at rest with `key` (SQLite3 Multiple Ciphers).
-export function openDb(path: string, key: string) {
+export function openEncrypted(path: string, key: string) {
   const sqlite = new Database(path);
   sqlite.pragma(`key='${key}'`);
-  const db = drizzle(sqlite);
+  return sqlite;
+}
+export function openDb(path: string, key: string) {
+  const db = drizzle(openEncrypted(path, key));
   migrate(db, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
   return db;
 }

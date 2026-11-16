@@ -42,6 +42,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     trust: pipes.trust,
     pipe: pipes.pipe,
     run: (task, stopped) => turn.task(task, stopped),
+    tell: (id, message) => turn.tell(id, message),
   });
   const api = ownerApi();
   // The owner's apps reach the agent itself over the Agent Host Protocol, or the Agent Client Protocol (a WebSocket, or
@@ -68,7 +69,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     appMethod("tell", async (p) => ({ told: pool.tell(id(p), String(p.message ?? "")) }));
     appMethod("stop", async (p) => ({ stopped: pool.stop(id(p)) }));
     appMethod("remove", async (p) => {
-      const removed = (await pool.remove(id(p))) || (await pool.forget(id(p)));
+      const removed = await pool.remove(id(p));
       tasks.forget(id(p));
       return { removed };
     });

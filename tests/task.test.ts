@@ -6,6 +6,7 @@ import { expect, test } from "vitest";
 import { restore } from "../plugins/firecracker/firecracker.ts";
 import { taskEvents, type Host } from "../core/src/plugin.ts";
 import { SLOTS } from "../plugins/firecracker/firecracker.ts";
+import { endpoint, gateAt } from "../plugins/firecracker/index.ts";
 
 // Runs on the Pi, with the live service stopped (it holds the slots and the gate's ports): the real gate and agent
 // (its settings from the environment, as the service's), tasks in Firecracker VMs, their tools through pi-env.
@@ -13,9 +14,9 @@ const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const onThePi = existsSync("/dev/kvm") && existsSync(`${VM_DIR}/desktop.snap`);
 process.env.API_PORT = "0";
-const host: Host = { slots: SLOTS, restore: (slot) => restore(VM_DIR, FIRECRACKER, slot, 1100 + slot) };
+const host: Host = { slots: SLOTS, endpoint, gate: gateAt, restore: (slot) => restore(VM_DIR, FIRECRACKER, slot, 1100 + slot) };
 const { boot } = await import("./support.ts");
-const vms = onThePi ? (await boot([], undefined, undefined, host)).vms : undefined;
+const vms = onThePi ? (await boot([], { vms: host })).vms : undefined;
 const started: number[] = [];
 taskEvents.on("event", (e) => void (e.type === "started" && e.slot !== undefined && started.push(e.slot)));
 

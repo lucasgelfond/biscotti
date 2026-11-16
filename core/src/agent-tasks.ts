@@ -18,10 +18,8 @@ import {
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { createCodingTools } from "@earendil-works/pi-durable/tools";
 import { Connection, openProcess, RemoteExecutionEnv, type RemoteProcess } from "@earendil-works/pi-env";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { contentText } from "@earendil-works/pi-ai";
+import { type CallToolResult, McpClient, PipeTransport, toLlmContent } from "@earendil-works/pi-mcp";
 
 // Tasks, run by the main agent: each a conversation of its own whose tools work in the task's VM, which the gate holds
 // and sets up (tasks.ts). The shell and files are pi-env's daemon in the VM, reached through the gate (env-pipe.ts,
@@ -70,7 +68,8 @@ git add -A
 if [ "$(git rev-parse HEAD)" = "${base}" ]; then echo none; else git bundle create -q /tmp/out.bundle ${base}..HEAD; echo bundled; fi`;
 
 // Which conversation each task is (by its number), its id as a string.
-const Tasks = defineDoc<{ ids: Record<string, string> }>({ kind: "biscotti.tasks", version: 1, scope: "session", initial: () => ({ ids: {} }), checkpointWhen: () => true });
+// Each task's conversation, and the runs under way (by task, its conversation), to settle after a restart.
+const Tasks = defineDoc<{ ids: Record<string, string>; running?: Record<string, string> }>({ kind: "biscotti.tasks", version: 1, scope: "session", initial: () => ({ ids: {} }), checkpointWhen: () => true });
 // A task's number (its VM's), for a coding task the commit its checkout started from, and whether its last run was cut
 // off (the gate gave up on it: it went quiet, ran out of time or was stopped).
 const TaskDoc = defineDoc<{ id: number; base?: string; interrupted?: boolean }>({
@@ -94,6 +93,8 @@ export interface TaskRun {
   display?: string;
   // A plugin's own runner instead of the agent: its files, run with node, the goal on stdin; what it prints is the report.
   runner?: Record<string, string>;
+  // The owner's messages that came while it waited for a VM.
+  told?: string[];
 }
 
 type Line = Record<string, unknown> & { type: string };
@@ -101,56 +102,34 @@ type Part = { type: string; text?: string; id?: string; name?: string; arguments
 export type Message = { role: string; content: string | Part[]; toolName?: string; toolCallId?: string; isError?: boolean };
 const partsOf = (m: Message): Part[] => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content);
 // What a message says, its text parts joined.
-export const textOf = (m: Message) => partsOf(m).flatMap((p) => (p.type === "text" && p.text ? [p.text] : [])).join("\n").trim();
+export const textOf = (m: Message) => contentText(m.content as never).trim();
 const said = (text: string) => ({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } });
-
-// MCP over a program's stdin and stdout in the VM (pi-env's plain pipes), a line per message.
-class RemoteStdio implements Transport {
-  onmessage?: (message: JSONRPCMessage) => void;
-  onclose?: () => void;
-  onerror?: (error: Error) => void;
-  readonly #buffer = new ReadBuffer();
-  #process?: RemoteProcess;
-  readonly #open: (onStdout: (bytes: Uint8Array) => void) => Promise<RemoteProcess>;
-  constructor(open: (onStdout: (bytes: Uint8Array) => void) => Promise<RemoteProcess>) {
-    this.#open = open;
-  }
-  async start() {
-    this.#process = await this.#open((bytes) => {
-      this.#buffer.append(Buffer.from(bytes));
-      for (;;) {
-        let message: JSONRPCMessage | null;
-        try {
-          message = this.#buffer.readMessage();
-        } catch (err) {
-          this.onerror?.(err as Error);
-          continue;
-        }
-        if (!message) break;
-        this.onmessage?.(message);
-      }
-    });
-    void this.#process.exited.catch(() => {}).finally(() => this.onclose?.());
-  }
-  async send(message: JSONRPCMessage) {
-    this.#process?.write(serializeMessage(message));
-  }
-  async close() {
-    this.#process?.close();
-  }
-}
-
-// MCP results as pi-durable's: text and images.
-const outputOf = (content: Part[]) =>
-  content.flatMap((c): unknown[] => (c.type === "text" ? [{ type: "text", text: c.text ?? "" }] : c.type === "image" ? [{ type: "image", data: c.data, mimeType: c.mimeType }] : [])) as unknown as ToolExecutionResult["output"];
 
 // The gate: a path's answer, its status and text.
 export type GateCall = (method: string, path: string, body?: string, headers?: Record<string, string>) => Promise<{ status: number; text: string }>;
-type GateTool = { name: string; description?: string; inputSchema: object; _meta?: Record<string, unknown> };
+type McpTool = { name: string; description?: string; inputSchema: object; _meta?: Record<string, unknown> };
 
-// The gate's tools (its MCP endpoint), as whoever `query` names: `session=<name>`, a main session's; `task=<id>`, a
-// task's VM's. `tools` makes them pi-durable tools, each called as the query `as` gives for its conversation (none:
-// it isn't one of theirs); with `deferred`, those the gate marks deferred (a remote service's) load through tool_search.
+// MCP tools as pi-durable tools, each called (`call`) as whoever `as` names for its conversation (none: it isn't one
+// of theirs); with `deferred`, those marked deferred (a remote service's, the gate says) load through tool_search.
+export function asTools(list: McpTool[], as: (conversation: ConversationId) => Promise<string | undefined>, call: (who: string, name: string, args: Record<string, unknown>) => Promise<Partial<CallToolResult>>, opts: { deferred?: boolean } = {}) {
+  return list.map((t) =>
+    defineTool({
+      name: t.name,
+      description: t.description ?? "",
+      parameters: t.inputSchema,
+      ...(opts.deferred && t._meta?.["biscotti/deferred"] ? { deferred: true as const } : {}),
+      execute: async (args, api): Promise<ToolExecutionResult> => {
+        const who = await as(api.conversationId);
+        if (!who) return { output: [{ type: "text", text: "not here" }] as never, isError: true };
+        const result = await call(who, t.name, args as Record<string, unknown>);
+        return { output: toLlmContent({ content: result.content ?? [], structuredContent: result.structuredContent }) as never, isError: Boolean(result.isError) };
+      },
+    }),
+  );
+}
+
+// The gate's tools (its MCP endpoint, answering in JSON), as whoever `query` names: `session=<name>`, a main
+// session's; `task=<id>`, a task's VM's.
 export function gateMcp(call: GateCall) {
   const rpc = async (query: string, method: string, params: object) => {
     const res = await call("POST", `/mcp?${query}`, JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), {
@@ -158,25 +137,12 @@ export function gateMcp(call: GateCall) {
       accept: "application/json, text/event-stream",
     });
     if (res.status >= 300) throw new Error(`the gate: ${res.text}`);
-    const reply = JSON.parse(res.text.match(/^data: (.*)$/m)?.[1] ?? res.text) as { result?: unknown; error?: { message: string } };
+    const reply = JSON.parse(res.text) as { result?: unknown; error?: { message: string } };
     if (reply.error) throw new Error(reply.error.message);
-    return reply.result as { tools?: GateTool[]; content?: Part[]; isError?: boolean };
+    return reply.result as { tools?: McpTool[] } & Partial<CallToolResult>;
   };
   const tools = async (query: string, as: (conversation: ConversationId) => Promise<string | undefined>, opts: { deferred?: boolean } = {}) =>
-    ((await rpc(query, "tools/list", {})).tools ?? []).map((t) =>
-      defineTool({
-        name: t.name,
-        description: t.description ?? "",
-        parameters: t.inputSchema,
-        ...(opts.deferred && t._meta?.["biscotti/deferred"] ? { deferred: true as const } : {}),
-        execute: async (args, api): Promise<ToolExecutionResult> => {
-          const who = await as(api.conversationId);
-          if (!who) return { output: [{ type: "text", text: "not here" }] as never, isError: true };
-          const result = await rpc(who, "tools/call", { name: t.name, arguments: args });
-          return { output: outputOf(result.content ?? []), isError: result.isError };
-        },
-      }),
-    );
+    asTools((await rpc(query, "tools/list", {})).tools ?? [], as, (who, name, args) => rpc(who, "tools/call", { name, arguments: args }), opts);
   return { rpc, tools };
 }
 
@@ -186,16 +152,29 @@ export function agentTasks(opts: {
   call: GateCall;
   // The command that starts pi-env's daemon in VM `id`, before its `serve` arguments (env-pipe.ts, through the gate).
   daemon: (id: number) => string[];
+  // Where tasks' extensions are installed (the agent's registry).
+  registry: { install(e: Extension): void };
   // Task `id`'s conversation was just made, for its first run.
   onConversation?: (id: number, conversation: Conversation) => void;
 }) {
   const { ctx, call } = opts;
   const gate = gateMcp(call);
+  // A task conversation's record changed; a run under way here (`cid`) or over (none).
+  const mark = (cid: ConversationId, patch: { base?: string; interrupted?: boolean }) => opts.harness().commit(async (tx) => void Object.assign(await tx.doc(TaskDoc, cid), patch), ctx);
+  const underway = (id: number, cid?: ConversationId) =>
+    opts.harness().commit(async (tx) => {
+      const running = ((await tx.doc(Tasks)).running ??= {});
+      if (cid) running[String(id)] = String(cid);
+      else delete running[String(id)];
+    }, ctx);
+  // A run cut off: it stops, marked so its follow-up knows.
+  const interrupt = (c: Conversation) => Promise.all([c.abort(ctx).catch(() => {}), mark(c.id, { interrupted: true }).catch(() => {})]);
   // One of the gate's tools called as task `id`'s VM.
   const gateTool = async (id: number, name: string, args: object) => {
     const result = await gate.rpc(`task=${id}`, "tools/call", { name, arguments: args });
-    if (result.isError) throw new Error(`${name}: ${(result.content ?? []).map((c) => c.text ?? "").join("\n")}`);
-    return (result.content ?? []).map((c) => c.text ?? "").join("\n");
+    const said = contentText((result.content ?? []) as never);
+    if (result.isError) throw new Error(`${name}: ${said}`);
+    return said;
   };
   // One model call through the gate, as task `id` (its model), with the request's messages.
   const ask = async (messages: unknown[]) => {
@@ -204,7 +183,7 @@ export function agentTasks(opts: {
   };
 
   // Each VM's pi-env daemon (the files and shell of its tasks' tools) and its browser, once something needs them.
-  const vms = new Map<number, { connection: Connection; env: Promise<RemoteExecutionEnv>; browser?: Promise<Client> }>();
+  const vms = new Map<number, { connection: Connection; env: Promise<RemoteExecutionEnv>; browser?: Promise<McpClient> }>();
   function vm(id: number) {
     let found = vms.get(id);
     if (!found) {
@@ -228,8 +207,8 @@ export function agentTasks(opts: {
     const v = vm(id);
     v.browser ??= (async () => {
       const { home } = await v.connection.info();
-      const client = new Client({ name: "biscotti", version: "1" });
-      await client.connect(new RemoteStdio((onStdout) => openProcess(v.connection, { cwd: home, argv: PLAYWRIGHT, env: DISPLAY, onStdout, onStderr: () => {} })));
+      const client = new McpClient({ name: "biscotti", version: "1" });
+      await client.connect(new PipeTransport({ open: ({ onStdout, onStderr }) => openProcess(v.connection, { cwd: home, argv: PLAYWRIGHT, env: DISPLAY, onStdout, onStderr }) }));
       return client;
     })();
     v.browser.catch(() => (v.browser = undefined));
@@ -257,20 +236,20 @@ export function agentTasks(opts: {
     return (await sh(id, "scrot -o /tmp/screen.png").catch(() => undefined))?.ok ? file(id, "/tmp/screen.png") : undefined;
   }
 
-  const taskOf = async (conversationId: ConversationId, c: Context) => (await opts.harness().snapshot(TaskDoc, conversationId, c))?.id;
+  // The task whose run a conversation is (only a run under way calls its tools), as a string for asTools.
+  const taskId = (conversationId: ConversationId) => {
+    const id = live.get(String(conversationId))?.id;
+    return id === undefined ? undefined : String(id);
+  };
   // The tasks with a run under way here: only they have their VM (the gate puts it away, or deletes it, once a run is
   // over, so nothing reaches for it after).
   const active = new Set<number>();
 
-  // What each task's run is doing now, in this process: where its lines go, whether its result was checked yet, and
-  // what the requester has said since it started.
-  const live = new Map<string, { id: number; send: (line: Line) => void; checked: boolean; asked: string; said: string[] }>();
-  // What the requester said since the task started (the main agent's tell_task, which the gate holds for its VM).
-  const told = async (id: number) => {
-    const res = await call("GET", `/messages?task=${id}`).catch(() => undefined);
-    const got = res && res.status < 300 ? (JSON.parse(res.text) as unknown) : [];
-    return Array.isArray(got) ? got.map((m) => `[The requester, mid-task] ${String(m)}`) : [];
-  };
+  // Each task's run under way in this process, by its conversation: whether its result was checked yet, and what the
+  // requester has said since it started (the main agent's tell_task, which the gate passes on as it comes).
+  const live = new Map<string, { id: number; conversation: Conversation; checked: boolean; asked: string; said: string[] }>();
+  const mid = (message: string) => `[The requester, mid-task] ${message}`;
+  const steer = (run: { conversation: Conversation; said: string[] }, message: string) => (run.said.push(message), run.conversation.submit({ type: "input", content: message, whenBusy: "steer" }, ctx));
   const goalNow = (run: { asked: string; said: string[] }) =>
     run.said.length ? `${run.asked}\n\nLater messages from the requester (the latest wins where they differ):\n${run.said.join("\n")}` : run.asked;
 
@@ -305,12 +284,9 @@ Done means: the report answers everything the goal asks, with the facts it needs
   // the browser's are listed from the first task's VM that has a browser (they're the same for every VM).
   const coding = createCodingTools();
   let extensions: Extension[] | undefined;
-  async function install(id: number, registry: { install(e: Extension): void }) {
+  async function install(id: number) {
     if (extensions) return extensions;
-    const tools = await gate.tools(`task=${id}`, async (c) => {
-      const task = await taskOf(c, ctx);
-      return task === undefined ? undefined : `task=${task}`;
-    });
+    const tools = await gate.tools(`task=${id}`, async (c) => (taskId(c) ? `task=${taskId(c)}` : undefined));
     const fromGate = defineExtension({
       name: "biscotti-task",
       tools,
@@ -331,8 +307,6 @@ Done means: the report answers everything the goal asks, with the facts it needs
           async onYield(answer, api) {
             const run = live.get(String(api.conversationId));
             if (!run) return undefined;
-            const late = await told(run.id);
-            if (late.length) return (run.said.push(...late), { continue: late.join("\n") });
             if (run.checked) return undefined;
             run.checked = true;
             const missing = await check(run.id, goalNow(run), textOf(answer as unknown as Message)).catch(() => undefined);
@@ -343,39 +317,33 @@ Done means: the report answers everything the goal asks, with the facts it needs
       ],
     });
     const client = await browser(id).catch((err) => (console.error(`no browser in VM #${id}: ${(err as Error).message}`), undefined));
-    const listed = client ? (await client.listTools()).tools.filter((t) => BROWSER.has(t.name)) : [];
+    const listed = client ? (await client.listTools()).filter((t) => BROWSER.has(t.name)) : [];
     const web = defineExtension({
       name: "biscotti-browser",
-      tools: listed.map((t) =>
-        defineTool({
-          name: t.name,
-          description: t.description ?? "",
-          parameters: t.inputSchema as object,
-          execute: async (args, api): Promise<ToolExecutionResult> => {
-            const task = await taskOf(api.conversationId, ctx);
-            if (!task) return { output: [{ type: "text", text: "not a task" }] as never, isError: true };
-            const result = await (await browser(task)).callTool({ name: t.name, arguments: args as Record<string, unknown> });
-            return { output: outputOf(result.content as Part[]), isError: Boolean(result.isError) };
-          },
-        }),
-      ),
+      tools: asTools(listed as McpTool[], async (c) => taskId(c), async (who, name, args) => (await browser(Number(who))).callTool(name, args)),
     });
-    registry.install(coding);
-    registry.install(fromGate);
-    registry.install(web);
+    for (const extension of [coding, fromGate, web]) opts.registry.install(extension);
     const selected = [coding, fromGate, web];
     if (listed.length) extensions = selected;
     return selected;
   }
 
+  // Task `id`'s conversation (and its id alone, which reads less), once it has run.
+  async function conversationId(id: number) {
+    const known = (await opts.harness().snapshot(Tasks, ctx))?.ids[String(id)];
+    return known === undefined ? undefined : (Number(known) as unknown as ConversationId);
+  }
+  async function conversation(id: number) {
+    const known = await conversationId(id);
+    return known === undefined ? undefined : await opts.harness().conversation(known, ctx);
+  }
   // The conversation of task `id`: made for its first run, in its VM, with `instructions`.
-  async function conversationOf(id: number, model: string, instructions: string, registry: { install(e: Extension): void }): Promise<Conversation> {
+  async function conversationOf(id: number, model: string, instructions: string): Promise<Conversation> {
     const harness = opts.harness();
-    const known = (await harness.snapshot(Tasks, ctx))?.ids[String(id)];
-    const found = known && (await harness.conversation(Number(known) as unknown as ConversationId, ctx));
+    const found = await conversation(id);
     if (found) return found;
-    const selected = await install(id, registry);
-    const conversation = await harness.createConversation(
+    const selected = await install(id);
+    const made = await harness.createConversation(
       {
         ownership: { kind: "ownerless" },
         agent: { model: { provider: "biscotti", modelId: model }, extensions: selected, instructions },
@@ -383,9 +351,9 @@ Done means: the report answers everything the goal asks, with the facts it needs
       },
       ctx,
     );
-    await harness.commit(async (tx) => void ((await tx.doc(Tasks)).ids[String(id)] = String(conversation.id)), ctx);
-    opts.onConversation?.(id, conversation);
-    return conversation;
+    await harness.commit(async (tx) => void ((await tx.doc(Tasks)).ids[String(id)] = String(made.id)), ctx);
+    opts.onConversation?.(id, made);
+    return made;
   }
 
   // A plugin's own runner instead of the agent: its files run with node in the VM, the goal on stdin. Its stderr goes
@@ -425,7 +393,7 @@ Done means: the report answers everything the goal asks, with the facts it needs
 
   // One run of a task, its lines to `res` as it goes: what was asked (or a follow-up) to the task's conversation, the
   // requester's messages passed on while it works, then what the gate gets back at the end.
-  async function run(task: TaskRun, res: ServerResponse, registry: { install(e: Extension): void }) {
+  async function run(task: TaskRun, res: ServerResponse) {
     const send = (line: Line) => void (!res.destroyed && res.write(`${JSON.stringify(line)}\n`));
     res.writeHead(200, { "content-type": "application/x-ndjson" });
     const { id } = task;
@@ -441,20 +409,22 @@ Done means: the report answers everything the goal asks, with the facts it needs
       // Lessons from earlier tasks on the goal's sites (the lessons plugin's).
       const lessons = task.followup || task.coding ? undefined : await gateTool(id, "lessons_for", { goal: task.goal }).catch(() => undefined);
       const instructions = [PROMPT, ...(task.coding ? [CODING] : []), ...(lessons ? [lessons] : [])].join("\n\n");
-      const conversation = await conversationOf(id, task.model ?? "task", instructions, registry);
+      const conversation = await conversationOf(id, task.model ?? "task", instructions);
       const key = String(conversation.id);
       let doc = (await harness.snapshot(TaskDoc, conversation.id, ctx)) ?? { id };
       if (task.coding && !doc.base) {
         const base = (await sh(id, `git -C ~/${REPO} rev-parse HEAD`)).out;
-        await harness.commit(async (tx) => void ((await tx.doc(TaskDoc, conversation.id)).base = base), ctx);
+        await mark(conversation.id, { base });
         doc = { ...doc, base };
       }
-      const state = { id, send, checked: Boolean(task.coding || task.followup), asked: task.goal, said: [] as string[] };
+      const state = { id, conversation, checked: Boolean(task.coding || task.followup), asked: task.goal, said: [] as string[] };
       live.set(key, state);
+      await underway(id, conversation.id);
 
       // Its entries as lines, as they're committed; a heartbeat while a tool call runs (an install, a test run), up
       // to TOOL_QUIET_MAX_MS for any one call, after which the gate's idle limit applies.
-      const watch = await conversation.watch(ctx);
+      // Starting from its newest entry (the rest is the run before), keeping up to 200 new ones between looks.
+      const watch = await conversation.watch(ctx, { min: 1, max: 200 });
       const seen = new Set(watch.value.entries.map((e) => String(e.id)));
       const open = new Map<string, { name: string; since: number }>();
       watch.start(async (c) => {
@@ -467,7 +437,7 @@ Done means: the report answers everything the goal asks, with the facts it needs
             for (const p of partsOf(m)) {
               if (p.type !== "toolCall") continue;
               open.set(p.id!, { name: p.name!, since: Date.now() });
-              send({ type: "tool_execution_start", toolCallId: p.id, toolName: p.name, args: p.arguments });
+              send({ type: "tool_execution_start", toolCallId: p.id, toolName: p.name });
             }
             const text = textOf(m);
             if (text) send(said(text));
@@ -482,19 +452,10 @@ Done means: the report answers everything the goal asks, with the facts it needs
         const tools = [...open.values()].filter((t) => Date.now() - t.since < TOOL_QUIET_MAX_MS);
         if (tools.length) send({ type: "heartbeat", tools: tools.map((t) => t.name) });
       }, 30_000);
-      // The requester's messages reach it as they come: while it works they steer its next step.
-      const poll = setInterval(async () => {
-        const messages = await told(id);
-        if (!messages.length) return;
-        state.said.push(...messages);
-        for (const message of messages) await conversation.submit({ type: "input", content: message, whenBusy: "steer" }, ctx).catch(() => {});
-      }, 3000);
       // The gate gave up on this run (it went quiet, ran out of time or was stopped): it stops here too.
       let ended = false;
       res.on("close", () => {
-        if (ended) return;
-        void conversation.abort(ctx).catch(() => {});
-        void harness.commit(async (tx) => void ((await tx.doc(TaskDoc, conversation.id)).interrupted = true), ctx).catch(() => {});
+        if (!ended) void interrupt(conversation);
       });
       try {
         if (!task.followup) {
@@ -504,22 +465,24 @@ Done means: the report answers everything the goal asks, with the facts it needs
         const busy = (await harness.snapshot(LiveDoc, conversation.id, ctx))?.run !== undefined;
         if (busy && task.followup) await conversation.abort(ctx);
         const interrupted = busy || doc.interrupted;
-        if (doc.interrupted) await harness.commit(async (tx) => void ((await tx.doc(TaskDoc, conversation.id)).interrupted = false), ctx);
+        if (doc.interrupted) await mark(conversation.id, { interrupted: false });
         const content = task.followup
           ? `[The requester, following up${interrupted ? " on a run that was interrupted (it went quiet, ran out of time or was stopped; check what it got done)" : ""}] ${task.goal}`
           : task.goal;
         // The goal is the main agent's, a follow-up the owner's.
         const from = task.followup ? "user" : "agent";
         const submission = await conversation.submit({ type: "input", content, requestId: `task-${id}-${Date.now()}`, ...inputFrom(from) }, ctx);
+        // What the requester said while it waited for a VM steers it from the start; later messages as they come (tell).
+        for (const message of task.told ?? []) await steer(state, mid(message)).catch(() => {});
         await submission.wait(ctx);
         // A message that came as the run ended starts it again.
         await conversation.waitForIdle(ctx);
       } finally {
         ended = true;
-        clearInterval(poll);
         clearInterval(heartbeat);
         watch.stop?.();
         live.delete(key);
+        void underway(id).catch(() => {});
       }
       if (doc.base) {
         // Everything since the base, every time: the gate pushes the whole branch.
@@ -541,16 +504,20 @@ Done means: the report answers everything the goal asks, with the facts it needs
 
   return {
     run,
-    // Task `id`'s conversation, once it has run.
-    async conversation(id: number) {
-      const harness = opts.harness();
-      const known = (await harness.snapshot(Tasks, ctx))?.ids[String(id)];
-      return known ? await harness.conversation(Number(known) as unknown as ConversationId, ctx) : undefined;
+    conversation,
+    conversationId,
+    // The environment of a task's run under way (its VM's), for the Harness; none for any other conversation. Asked at
+    // every step of every conversation, so from memory.
+    async env(conversationId: ConversationId): Promise<ExecutionEnv | undefined> {
+      const run = live.get(String(conversationId));
+      return run && active.has(run.id) ? vm(run.id).env : undefined;
     },
-    // The environment of a task's conversation (its VM's), for the Harness; none for any other.
-    async env(conversationId: ConversationId, read: { snapshot: Harness["snapshot"] }, c: Context): Promise<ExecutionEnv | undefined> {
-      const task = await (read.snapshot as (doc: typeof TaskDoc, id: ConversationId, c: Context) => Promise<{ id: number } | undefined>)(TaskDoc, conversationId, c);
-      return task?.id && active.has(task.id) ? vm(task.id).env : undefined;
+    // The owner's message for task `id`'s run under way: it steers the run's next step. False with no run here.
+    async tell(id: number, message: string) {
+      const run = [...live.values()].find((r) => r.id === id);
+      if (!run) return false;
+      await steer(run, mid(message));
+      return true;
     },
     // The gate restarted: its tools may have changed, so they're listed again for the next task.
     reload() {
@@ -560,11 +527,11 @@ Done means: the report answers everything the goal asks, with the facts it needs
     // stream ended): it stops, marked as cut off for its follow-up, rather than carrying on in a VM that's gone.
     async settle() {
       const harness = opts.harness();
-      for (const conversationId of Object.values((await harness.snapshot(Tasks, ctx))?.ids ?? {})) {
+      for (const [id, conversationId] of Object.entries((await harness.snapshot(Tasks, ctx))?.running ?? {})) {
         const cid = Number(conversationId) as unknown as ConversationId;
-        if ((await harness.snapshot(LiveDoc, cid, ctx))?.run === undefined) continue;
-        await (await harness.conversation(cid, ctx))?.abort(ctx).catch(() => {});
-        await harness.commit(async (tx) => void ((await tx.doc(TaskDoc, cid)).interrupted = true), ctx).catch(() => {});
+        const conversation = (await harness.snapshot(LiveDoc, cid, ctx))?.run !== undefined && (await harness.conversation(cid, ctx));
+        if (conversation) await interrupt(conversation);
+        await underway(Number(id)).catch(() => {});
       }
     },
   };

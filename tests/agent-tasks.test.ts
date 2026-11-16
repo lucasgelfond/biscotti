@@ -3,11 +3,13 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatReducer, PROTOCOL_VERSION, type URI } from "@microsoft/agent-host-protocol";
-import { AhpClient, type AhpTransport, type TransportFrame } from "@microsoft/agent-host-protocol/client";
+import { AhpClient } from "@microsoft/agent-host-protocol/client";
+import { WebSocketTransport } from "@microsoft/agent-host-protocol/ws";
 import { afterAll, expect, test } from "vitest";
 import WebSocket from "ws";
 import { model } from "./stand-in-model.ts";
 import { standInVms } from "./stand-in-vm.ts";
+import { until } from "./wait.ts";
 
 // A task as the main agent runs it (agent-tasks.ts): the owner asks, the main agent starts a task, the gate sets up a
 // VM and hands the run to the agent, whose task conversation runs a command in the VM through pi-env (the env pipe
@@ -22,16 +24,9 @@ const vms = stand.host;
 const set = stand.setups;
 afterAll(() => stand.close());
 
-const until = async (check: () => boolean, ms = 60_000) => {
-  const end = Date.now() + ms;
-  while (!check()) {
-    if (Date.now() > end) throw new Error("timed out");
-    await new Promise((r) => setTimeout(r, 50));
-  }
-};
 
 test("the main agent runs a task in its VM through pi-env and reports back", async () => {
-  const { say, sent } = await boot([], undefined, undefined, vms);
+  const { say, sent } = await boot([], { vms: vms });
   await say("start a task: run `echo hi-from-the-vm > made-here.txt && cat made-here.txt`");
   // The gate set the VM up with its own key, for pi-env over ssh.
   await until(() => set.length > 0);
@@ -43,38 +38,13 @@ test("the main agent runs a task in its VM through pi-env and reports back", asy
 }, 120_000);
 
 // The owner's app, over AHP: the task is a sandbox chat of the session that started it, its turns the task's own.
-class Socket implements AhpTransport {
-  readonly #frames: TransportFrame[] = [];
-  readonly #waiting: ((frame: TransportFrame | null) => void)[] = [];
-  readonly ws: WebSocket;
-  constructor(ws: WebSocket) {
-    this.ws = ws;
-    ws.on("message", (data: WebSocket.RawData) => {
-      const frame: TransportFrame = { kind: "text", text: String(data) };
-      const w = this.#waiting.shift();
-      if (w) w(frame);
-      else this.#frames.push(frame);
-    });
-    ws.on("close", () => this.#waiting.splice(0).forEach((w) => w(null)));
-  }
-  send(message: unknown) {
-    this.ws.send(typeof message === "string" ? message : JSON.stringify(message));
-  }
-  recv() {
-    const frame = this.#frames.shift();
-    return frame ? Promise.resolve(frame) : new Promise<TransportFrame | null>((r) => this.#waiting.push(r));
-  }
-  close() {
-    this.ws.close();
-  }
-}
 
 test("the app sees a task as a sandbox chat of its session, with the task's own turns", async () => {
-  const { say, sockets } = await boot([], undefined, undefined, vms);
+  const { say, sockets } = await boot([], { vms: vms });
   await say("hello");
   const ws = new WebSocket(`ws+unix://${sockets}/agent.sock:/ahp`);
   await new Promise((resolve, reject) => ws.once("open", resolve).once("error", reject));
-  const c = new AhpClient(new Socket(ws));
+  const c = new AhpClient(WebSocketTransport.fromSocket(ws as never));
   c.connect();
   await c.initialize({ clientId: "app", protocolVersions: [PROTOCOL_VERSION], initialSubscriptions: ["ahp-root://"] });
   const { result, subscription } = await c.subscribe("ahp-session:/main");
@@ -118,7 +88,7 @@ test("the app sees a task as a sandbox chat of its session, with the task's own 
 }, 120_000);
 
 test("a coding task changes the repo it's given, and its commits come back to be pushed", async () => {
-  const { vms: pool } = await boot([], undefined, undefined, vms);
+  const { vms: pool } = await boot([], { vms: vms });
   const dir = mkdtempSync(join(tmpdir(), "task-repo-"));
   const git = (...args: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { encoding: "utf8" });
   git("init", "-q", "-b", "main");

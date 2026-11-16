@@ -40,6 +40,9 @@ importers:
       '@earendil-works/pi-env':
         specifier: 1.5.2
         version: 1.5.2(@aws-sdk/credential-provider-node@3.972.97)(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
+      '@earendil-works/pi-mcp':
+        specifier: 1.5.2
+        version: 1.5.2
       '@modelcontextprotocol/sdk':
         specifier: 1.32.1
         version: 1.32.1(zod@4.6.7)
@@ -218,6 +221,9 @@ importers:
       '@biscotti/core':
         specifier: workspace:*
         version: link:../../core
+      '@biscotti/github':
+        specifier: workspace:*
+        version: link:../github
 
   plugins/vision:
     dependencies:

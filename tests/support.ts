@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runAgent } from "../core/src/agent.ts";
 import { start } from "../core/src/biscotti.ts";
 import { openDb } from "../core/src/memory.ts";
-import type { Context, Host, Plugin } from "../core/src/plugin.ts";
+import type { Context, Host, Plugin, Vms } from "../core/src/plugin.ts";
 import { asTexts, tapbacks } from "../plugins/channels/spectrum/index.ts";
 
 // biscotti as main.ts starts it, with a stand-in phone that splits texts and takes tapbacks as iMessage does: `say`
@@ -13,10 +13,17 @@ import { asTexts, tapbacks } from "../plugins/channels/spectrum/index.ts";
 
 export const newDataDir = () => mkdtempSync(join(tmpdir(), "biscotti-"));
 
+// Task VMs for a context with no pool behind it: every call says so.
+export const noVms = new Proxy({} as Vms, {
+  get: (_target, name) => () => {
+    throw new Error(`no task VMs in this test (${String(name)})`);
+  },
+});
+
 // A plugin's context with no gate behind it: every question is a yes unless `ask` says otherwise.
 export function testContext(overrides: Partial<Context> = {}): Context {
   const dir = newDataDir();
-  return { db: openDb(`${dir}/biscotti.db`, "test-key"), dir, env: (n) => n, ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {}, ...overrides };
+  return { db: openDb(`${dir}/biscotti.db`, "test-key"), dir, env: (n) => n, ask: async () => true, deliver: async () => {}, send: async () => {}, route: () => {}, vms: noVms, ...overrides };
 }
 
 // A headless Chrome showing `url`, its DevTools at the returned `url` once it's up.
@@ -30,7 +37,9 @@ export async function chrome(port: number, url: string, args: string[] = []) {
 
 // With `restart` (an earlier boot), a new gate over its data and sockets, as after the service restarts: its agent
 // keeps running. `vms`: stand-in task VMs.
-export async function boot(names: (string | Plugin)[], dir = newDataDir(), restart?: { sockets: string; gateUrl: string }, vms?: Host) {
+// `dir`: the data directory (a new one by default); `restart`: the agent of an earlier boot, kept; `vms`: a machine for
+// task VMs (stand-in-vm.ts, or a real one).
+export async function boot(names: (string | Plugin)[], { dir = newDataDir(), restart, vms }: { dir?: string; restart?: { sockets: string; gateUrl: string }; vms?: Host } = {}) {
   const sent: string[] = [];
   const images: Buffer[] = [];
   const reactions: string[] = [];

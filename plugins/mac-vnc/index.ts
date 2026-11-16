@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { createServer, request } from "node:http";
-import { connect } from "node:net";
+import { createServer } from "node:http";
 import { escapeHtml, input, localTools, optional, str, text, type Plugin } from "@biscotti/core";
+import { passTo, pipeUpgrade } from "@biscotti/core/http";
 
 // The owner's home Mac in the browser: noVNC and websockify run on the Mac (mac/install.sh), and this proxies to them
 // over the tailnet under an expiring, unguessable path. Tailnet-only (tailscale serve on :9443/mac, never Funnel).
@@ -77,28 +77,14 @@ lasts two hours.`,
         return void res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }).end(page(s.id, expires, s.note));
       }
       if (!rest.startsWith("/vnc/")) return void res.writeHead(404).end();
-      const upstream = request({ host, port, method: req.method, path: rest.slice(4) + url.search, headers: { ...req.headers, host: `${host}:${port}` } }, (r) => {
-        res.writeHead(r.statusCode ?? 502, r.headers);
-        r.pipe(res);
-      });
-      upstream.on("error", () => res.headersSent ? res.destroy() : res.writeHead(502).end("Can't reach the Mac."));
-      req.pipe(upstream);
+      return passTo({ host, port }, () => rest.slice(4) + url.search)(req, res);
     });
 
     // noVNC's WebSocket, piped to websockify on the Mac with only the path and Host rewritten.
     server.on("upgrade", (req, socket, head) => {
       const [, id, rest] = ROUTE.exec(new URL(req.url ?? "/", "http://localhost").pathname) ?? [];
       if (!id || !session(id) || rest !== "/ws") return socket.destroy();
-      const upstream = connect(port, host, () => {
-        const headers = [];
-        for (let i = 0; i < req.rawHeaders.length; i += 2)
-          if (req.rawHeaders[i].toLowerCase() !== "host") headers.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
-        upstream.write(`GET /websockify HTTP/1.1\r\nHost: ${host}:${port}\r\n${headers.join("\r\n")}\r\n\r\n`);
-        upstream.write(head);
-        upstream.pipe(socket).pipe(upstream);
-      });
-      upstream.on("error", () => socket.destroy());
-      socket.on("error", () => upstream.destroy());
+      pipeUpgrade(req, socket, head, { host, port }, { path: "/websockify", host: `${host}:${port}` });
     });
 
     server.listen(PORT, "127.0.0.1");

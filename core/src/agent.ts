@@ -17,7 +17,7 @@ import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-searc
 import { durableAhp, inputFrom } from "pi-durable-acp-ahp";
 import { agentTasks, gateMcp, type Message, type TaskRun, textOf } from "./agent-tasks.ts";
 import { sandboxes } from "./sandboxes.ts";
-import { answer, listen, readBody } from "./http.ts";
+import { answer, jsonLines, listen, readBody } from "./http.ts";
 import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
 
 // The main agent: pi-durable runs every conversation, each turn and tool call committed before it shows, so a run a
@@ -30,6 +30,8 @@ import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
 const ctx = BACKGROUND_CONTEXT;
 const MAIN_MODEL = { provider: "biscotti", modelId: "main" } as const;
 const CONTEXT_WINDOW = 200_000;
+// What's said to the main agent carries when it was said, for the model; the apps show it without.
+const stamped = (text: string) => `[${new Date().toString()}] ${text}`;
 
 export async function runAgent(sockets: string) {
   const relay = createTcpServer((client) => {
@@ -61,21 +63,9 @@ export async function runAgent(sockets: string) {
   // A stream of JSON lines from the gate, followed again whenever it ends (the gate restarted).
   const stream = (path: string, onLine: (line: Record<string, unknown>) => void) => {
     const again = () => setTimeout(() => stream(path, onLine), 2000);
-    const req = request({ host: "127.0.0.1", port, path, agent: false }, (res) => {
+    const req = request({ socketPath: `${sockets}/gate.sock`, path, headers: { host: "gate" }, agent: false }, (res) => {
       if (res.statusCode !== 200) return void (res.resume(), res.statusCode === 404 || again());
-      let buffer = "";
-      res.setEncoding("utf8").on("data", (d: string) => {
-        buffer += d;
-        for (let i = buffer.indexOf("\n"); i >= 0; i = buffer.indexOf("\n")) {
-          const line = buffer.slice(0, i);
-          buffer = buffer.slice(i + 1);
-          try {
-            if (line.trim()) onLine(JSON.parse(line));
-          } catch (err) {
-            console.error(`${path}: ${(err as Error).message}`);
-          }
-        }
-      });
+      jsonLines(res, onLine);
       res.on("end", again).on("error", () => {});
     });
     req.on("error", again);
@@ -117,10 +107,12 @@ export async function runAgent(sockets: string) {
       api: openAICompletionsApi(),
     }),
   );
-  // The models' names for the owner's apps: the provider's ids for main, task and code.
-  const names = JSON.parse(await get("/models")) as Record<string, string>;
+  // The models' names for the owner's apps (the provider's ids for main, task and code), and biscotti's tools, at once:
+  // listing the tools waits on remote services.
+  const [named, extension] = await Promise.all([get("/models"), biscotti()]);
+  const names = JSON.parse(named) as Record<string, string>;
   const registry = createRegistry();
-  registry.install(await biscotti());
+  registry.install(extension);
   const toolSearch = createToolSearchExtension();
   registry.install(toolSearch);
   // pi-env's daemon in a task's VM, through the gate (env-pipe.ts).
@@ -129,6 +121,7 @@ export async function runAgent(sockets: string) {
     ctx,
     call,
     daemon: (id) => [process.execPath, new URL("./env-pipe.ts", import.meta.url).pathname, sockets, String(id)],
+    registry,
     onConversation: (id, conversation) => board.started(id, conversation.id),
   });
 
@@ -148,7 +141,7 @@ export async function runAgent(sockets: string) {
         registry,
         // The main agent's sessions have biscotti's tools; tasks choose their own (agent-tasks.ts).
         settings: () => ({ compaction: { reserveTokens: 16_384 }, extensions: [installed!, toolSearch] }),
-        env: ({ conversationId, read }, c) => tasks.env(conversationId, read as never, c),
+        env: ({ conversationId }) => tasks.env(conversationId),
         onReport: (report) => console.error(`pi-durable: ${report.kind}${report.error ? `: ${String(report.error)}` : ""}`),
       },
       ctx,
@@ -192,17 +185,12 @@ export async function runAgent(sockets: string) {
   // `origin`: who it's from (AHP's message kinds), the owner's ("user") or biscotti's own (a task report, a wake).
   async function reply(session: string, message: string, origin = "user"): Promise<string | undefined> {
     const handle = await conversation(session);
-    if (message.trim() === "/compact") {
-      let said: string;
-      try {
-        await handle.compact(undefined, ctx);
-        said = "Compacted: the conversation so far is summarized, freeing its context.";
-      } catch (err) {
-        said = `Nothing compacted: ${(err as Error).message}`;
-      }
-      return said;
-    }
-    const text = `[${new Date().toString()}] ${message}`;
+    if (message.trim() === "/compact")
+      return handle.compact(undefined, ctx).then(
+        () => "Compacted: the conversation so far is summarized, freeing its context.",
+        (err: Error) => `Nothing compacted: ${err.message}`,
+      );
+    const text = stamped(message);
     const entry = inputFrom(origin);
     const live = await harness.snapshot(LiveDoc, handle.id, ctx);
     if (live?.run !== undefined) {
@@ -228,7 +216,7 @@ export async function runAgent(sockets: string) {
   const board = sandboxes({
     method,
     follow: stream,
-    conversation: (id) => tasks.conversation(id).then((c) => c?.id),
+    conversation: (id) => tasks.conversationId(id),
     changed: (session) => ahp.changed(session),
   });
   const ahp = durableAhp({
@@ -250,7 +238,7 @@ export async function runAgent(sockets: string) {
     dispose: (_session, key) => board.dispose(key),
     named: (id) => names[id] ?? id,
     // Inputs carry the time they were sent, for the model; the chat shows what was said.
-    input: (text) => `[${new Date().toString()}] ${text}`,
+    input: stamped,
     said: (text) => text.replace(/^\[[^\]]*\] /, ""),
     // Each also by its ACP name's (_biscotti/vms/open is x-biscotti/vms/open; the app's is x-biscotti/vms.open).
     methods: Object.fromEntries(
@@ -268,7 +256,13 @@ export async function runAgent(sockets: string) {
       // A restarted gate may bring new tools and a new prompt: reinstalled in place; running work keeps its own.
       if (req.url === "/reload") return void (tasks.reload(), res.end(void registry.install(await biscotti())));
       // A task's run, for the gate: what it does, as lines, until it's done.
-      if (req.url === "/task") return void (await tasks.run(JSON.parse(await readBody(req)) as TaskRun, res, registry));
+      if (req.url === "/task") return void (await tasks.run(JSON.parse(await readBody(req)) as TaskRun, res));
+      // The owner's message for a task's run under way here.
+      const told = req.url?.match(/^\/task\/(\d+)\/tell$/);
+      if (told) {
+        const { message } = JSON.parse(await readBody(req)) as { message: string };
+        return void res.writeHead((await tasks.tell(Number(told[1]), String(message))) ? 200 : 404).end();
+      }
       // ACP's Streamable HTTP.
       if (path(req.url) === "/acp") return void acp.http(req, res);
       const { text, session = "main", origin } = JSON.parse(await readBody(req)) as { text?: string; session?: string; origin?: string };

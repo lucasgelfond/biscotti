@@ -18,9 +18,10 @@ export default {
       new ApnsClient({ team: APNS_TEAM_ID!, keyId: APNS_KEY_ID!, signingKey: readFileSync(APNS_KEY_FILE!), defaultTopic: APNS_TOPIC!, host: sandbox ? "api.sandbox.push.apple.com" : "api.push.apple.com" });
     const clients = configured ? { true: client(true), false: client(false) } : undefined;
     // A token the phone no longer has (the app was deleted) is forgotten.
+    const forget = (err: { notification: { deviceToken: string } }) => ((devices = devices.filter((d) => d.token !== err.notification.deviceToken)), save());
     for (const c of Object.values(clients ?? {})) {
-      c.on(Errors.badDeviceToken, (err: { notification: { deviceToken: string } }) => ((devices = devices.filter((d) => d.token !== err.notification.deviceToken)), save()));
-      c.on(Errors.unregistered, (err: { notification: { deviceToken: string } }) => ((devices = devices.filter((d) => d.token !== err.notification.deviceToken)), save()));
+      c.on(Errors.badDeviceToken, forget);
+      c.on(Errors.unregistered, forget);
       c.on(Errors.error, (err: { reason?: string }) => console.error(`push: ${err.reason}`));
     }
 

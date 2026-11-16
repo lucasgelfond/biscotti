@@ -8,8 +8,12 @@ import { SLOTS } from "./firecracker.ts";
 
 export { SLOTS };
 
-// Their live desktops are on the tailnet at 10440 + slot (`tailscale serve`), the password in the link's fragment,
-// which the browser never sends to the server; their port 8000 (a preview of what a task made) at 10540 + slot.
+// Each slot's VM is 10.200.<slot>.2 on its own link, the gate 10.200.<slot>.1 there (nix/net.nix). Their sshd is on
+// the tailnet at 2200 + slot, their live desktops at 10440 + slot (`tailscale serve`), the password in the link's
+// fragment, which the browser never sends to the server; their port 8000 (a preview of what a task made) at 10540 +
+// slot.
+export const endpoint = (slot: number, port: number) => ({ host: `10.200.${slot}.2`, port });
+export const gateAt = (slot: number) => ({ host: `10.200.${slot}.1`, port: 80, peer: () => `10.200.${slot}.2` });
 export function localHost(socketPath: string, vmDir: string): Host {
   const vm = (slot: number): Vm => ({
     slot,
@@ -18,6 +22,9 @@ export function localHost(socketPath: string, vmDir: string): Host {
   });
   return {
     slots: SLOTS,
+    endpoint,
+    gate: gateAt,
+    ssh: process.env.TAILNET_HOST ? (slot) => ({ host: process.env.TAILNET_HOST!, port: 2200 + slot }) : undefined,
     restore: async (slot) => (await call(socketPath, "POST", `/vms/${slot}`), vm(slot)),
     resume: async (slot, id) => (await call(socketPath, "POST", `/vms/${slot}/resume/${id}`), vm(slot)),
     discard: async (slot, id) => void (await call(socketPath, "DELETE", `/vms/${slot}/suspended/${id}`)),
@@ -49,7 +56,7 @@ export function sessions(slot: number, tables = ["/proc/net/tcp", "/proc/net/tcp
 
 export default {
   async start(ctx) {
-    if (!process.env.VMS_SOCKET || !ctx.vms) return;
+    if (!process.env.VMS_SOCKET) return;
     await ctx.vms.addHost(localHost(process.env.VMS_SOCKET, ctx.env("VM_DIR")));
   },
 } satisfies Plugin;

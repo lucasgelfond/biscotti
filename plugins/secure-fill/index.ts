@@ -31,8 +31,9 @@ const FRAMED = ", in a frame from ";
 
 // The slot's VM's Chromium, over DevTools (also the screenshots plugin's).
 export const browser = (slot?: number) => {
+  if (process.env.TASK_BROWSER) return process.env.TASK_BROWSER;
   const { host, port } = vmEndpoint(slot ?? 1, 9223);
-  return process.env.TASK_BROWSER ?? `http://${host}:${port}`;
+  return `http://${host}:${port}`;
 };
 
 type Target = { id: string; type: string; url: string; webSocketDebuggerUrl: string };

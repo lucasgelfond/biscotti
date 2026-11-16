@@ -1,11 +1,5 @@
-import { execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { connect } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createInterface } from "node:readline";
-import { promisify } from "node:util";
-import { appMethod, emit, secret, taskEvents, vmEndpoint, type Context, type Plugin, type Vm } from "@biscotti/core";
+import { appMethod, emit, taskEvents, type Context, type Plugin, type Sleep, type Vm } from "@biscotti/core";
+import { bundleRepo, githubToken } from "@biscotti/github/git";
 
 // ssh VMs: a task VM the owner works in over ssh with their own pi (core/vm/task/box-pi), from Concourse or the app,
 // rather than one run of the task agent. Closed, it's kept (suspended) to open again. SSH_VM_WARM_REPO (owner/name),
@@ -33,31 +27,15 @@ interface SshVm {
 }
 
 const KEY = /^(ssh|ecdsa|sk)-[\w@.-]+ [A-Za-z0-9+/=]+( .*)?$/;
-const REPO = /^[\w.-]+\/[\w.-]+$/;
-// This machine's VMs' sshd is on the tailnet at 2200 + slot (`tailscale serve`, nix/setup.nix); another host's is its
-// endpoint for port 22.
-const sshOf = (slot: number, where?: string) =>
-  where !== "local" || !process.env.TAILNET_HOST ? { ...vmEndpoint(slot, 22), user: "cua" } : { host: process.env.TAILNET_HOST, port: 2200 + slot, user: "cua" };
-
 // The owner's repo as a git bundle, with GitHub's token (the github plugin's).
 async function bundle(ctx: Context, repo: string, base?: string) {
-  if (!REPO.test(repo)) throw new Error("the repo should be owner/name");
-  const token = process.env.GITHUB_TOKEN || secret(ctx.db, "GitHub")?.token;
+  const token = githubToken(ctx);
   if (!token) throw new Error("GitHub isn't connected, so biscotti can't check the repo out (github_connect)");
-  const dir = mkdtempSync(join(tmpdir(), "ssh-vm-"));
-  const git = (...args: string[]) => promisify(execFile)("git", ["-c", `http.extraHeader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`, ...args], { cwd: dir });
-  try {
-    await git("clone", "-q", "--depth", "1000", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
-    await git("-C", "repo", "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");
-    return readFileSync(join(dir, "in.bundle"));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  return (await bundleRepo(token, repo, base, 1000)).bundle;
 }
 
 export default {
   async start(ctx) {
-    if (!ctx.vms) return;
     const vms = ctx.vms;
     const open = new Map<number, SshVm>();
     const warmRepo = process.env.SSH_VM_WARM_REPO;
@@ -72,7 +50,7 @@ export default {
       repo,
       hostKey,
       where: vms.where(id),
-      ssh: sshOf(vm.slot, vms.where(id)),
+      ssh: { ...vms.ssh(id), user: "cua" },
       preview: await vms.watch(id).catch(() => undefined),
       opened: Date.now(),
     });
@@ -80,14 +58,14 @@ export default {
 
     // Put to sleep when its slot is needed (tasks.ts), the one opened or reopened longest ago first; a warm one no one
     // has opened yet goes before any, thrown away, and one still being set up stays.
-    const sleep = (id: () => number) => ({
-      used: () => (open.has(id()) ? Math.max(open.get(id())!.opened, vms.alive().find((v) => v.id === id())?.used ?? 0) : ready.some((r) => r.id === id()) ? 0 : Infinity),
-      async sleep() {
-        const i = ready.findIndex((r) => r.id === id());
-        if (i >= 0) return void (ready.splice(i, 1), await vms.drop(id()));
-        if (!(await close(id()))) throw new Error(`VM #${id()} is still being set up`);
+    const sleep: Sleep = {
+      used: (id) => (open.has(id) ? Math.max(open.get(id)!.opened, vms.alive().find((v) => v.id === id)?.used ?? 0) : ready.some((r) => r.id === id) ? 0 : Infinity),
+      async sleep(id) {
+        const i = ready.findIndex((r) => r.id === id);
+        if (i >= 0) return void (ready.splice(i, 1), await vms.drop(id));
+        if (!(await close(id))) throw new Error(`VM #${id} is still being set up`);
       },
-    });
+    };
 
     // One deleted elsewhere (delete_vms, the daily check) is no longer open.
     taskEvents.on("event", (e) => void (e.type === "done" && open.delete(e.id)));
@@ -98,9 +76,7 @@ export default {
         void (async () => {
           let held: { id: number; vm: Vm } | undefined;
           try {
-            let id = 0;
-            held = await vms.hold(`VM on ${warmRepo}`, { model: "code", sleep: sleep(() => id) });
-            id = held.id;
+            held = await vms.hold(`VM on ${warmRepo}`, { model: "code", sleep });
             await vms.prepare(held.id, { repo: await bundle(ctx, warmRepo!), setup: warmSetup });
             ready.push(held);
           } catch (err) {
@@ -123,9 +99,7 @@ export default {
       if (warm) warmUp();
       const goal = `VM${request.repo ? ` on ${request.repo}` : ""}`;
       const repo = !warm && request.repo ? await bundle(ctx, request.repo, request.base) : undefined;
-      let held = 0;
-      const { id, vm } = warm ?? (await vms.hold(goal, { model: "code", where: request.where, sleep: sleep(() => held) }));
-      held = id;
+      const { id, vm } = warm ?? (await vms.hold(goal, { model: "code", where: request.where, sleep }));
       try {
         emit({ id, type: "queued", kind: "vm", goal, repo: request.repo });
         const hostKey = await vms.prepare(id, { key: request.key, repo, setup: warm ? undefined : request.setup });
@@ -160,7 +134,7 @@ export default {
       if (typeof key !== "string" || !KEY.test(key.trim())) throw new Error("an ssh public key, please");
       const already = open.get(id);
       const repo = already?.repo ?? vms.kept().find((k) => k.id === id)?.goal.match(/ on (.+)$/)?.[1];
-      const vm = already ? undefined : await vms.reclaim(id, { model: "code", sleep: sleep(() => id) });
+      const vm = already ? undefined : await vms.reclaim(id, { model: "code", sleep });
       if (!already && !vm) throw new Error(`no VM #${id} kept`);
       const hostKey = await vms.prepare(id, { key });
       const s = already ? { ...already, hostKey: hostKey ?? already.hostKey, opened: Date.now() } : await describe(id, vm!, repo, hostKey);
@@ -171,7 +145,7 @@ export default {
     appMethod("vms.close", async ({ sessionId, discard }) => {
       const id = Number(sessionId);
       const closed = await close(id, Boolean(discard));
-      return { closed, discarded: discard ? closed || (await vms.forget(id)) : false };
+      return { closed, discarded: discard ? closed || (await vms.remove(id)) : false };
     });
   },
 } satisfies Plugin;

@@ -1,10 +1,9 @@
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { bool, emit, input, int, optional, str, text, type Context, type LocalTool, type TaskResult } from "@biscotti/core";
+import { bundleRepo, githubApi, gitAs, REPO } from "./git.ts";
 
 // Coding tasks with no token in the VM: a git bundle in, its commits out (made with jj in the VM); the gate checks them
 // and pushes them to a new biscotti/ branch, after the first run and after each follow-up (tell_task). A pull request
@@ -14,7 +13,6 @@ import { bool, emit, input, int, optional, str, text, type Context, type LocalTo
 
 const TIMEOUT_MS = 90 * 60_000;
 const MAX_BUNDLE = 50 * 1024 * 1024;
-const REPO = /^[\w.-]+\/[\w.-]+$/;
 const PREVIEW = `
 
 Preview: the owner wants to use what you made, so once it works, leave it running for them: serve the app on 0.0.0.0:8000, detached so it outlives you (setsid nohup … > /tmp/preview.log 2>&1 &), and check it answers with curl. Don't use the app in the VM's browser beyond a quick look (a screenshot that it renders): the VM has 2 CPUs and no GPU, so heavy work in a page (training, rendering, long computations) starves everything, the preview server and you included. Close the browser when you're done looking (pkill -f chromium). A production build served statically, or the project's preview or dev server, whichever is closest to how it ships. It's reached through a proxy under another host name, so let the server answer any Host header (e.g. Vite's server.allowedHosts: true, or --host 0.0.0.0). Say in your report how it's served.`;
@@ -32,19 +30,8 @@ interface Work {
 }
 
 export function codeTasks(ctx: Context, token: string): LocalTool[] {
-  // The token goes to git as a header in the environment: never in a URL, a remote or the clone's config.
-  const auth = Buffer.from(`x-access-token:${token}`).toString("base64");
-  const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${auth}` };
-  const git = async (cwd: string, ...args: string[]) => (await promisify(execFile)("git", args, { cwd, env: gitEnv, maxBuffer: 64 * 1024 * 1024 })).stdout.trim();
-  const api = async (path: string, init?: RequestInit) => {
-    const res = await fetch(`https://api.github.com${path}`, {
-      ...init,
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
-    });
-    const body = await res.json();
-    if (!res.ok) throw new Error(`GitHub ${res.status}: ${body.message ?? JSON.stringify(body)}`);
-    return body;
-  };
+  const git = gitAs(token);
+  const api = githubApi(token) as (path: string, init?: RequestInit) => Promise<any>;
 
   // TODO: into SQLite, instead of this file.
   const file = join(ctx.dir, "code-tasks.json");
@@ -72,18 +59,19 @@ export function codeTasks(ctx: Context, token: string): LocalTool[] {
     const w = works.get(id)!;
     w.report = result.report;
     save();
-    const site = w.preview ? await ctx.vms!.site(id) : undefined;
+    const site = w.preview ? await ctx.vms.site(id) : undefined;
     if (site) emit({ id, type: "started", site, text: `Preview: ${site}` });
     const served = site ? ` Its preview, running from that branch in its VM: ${site}` : "";
     if (!result.bundle) return { ...result, report: `Code task #${id} on ${w.repo} made no new commits.${served}\n${result.report}` };
     const dir = mkdtempSync(join(tmpdir(), "code-task-"));
     try {
-      await git(dir, "clone", "-q", "--depth", "50", "--branch", w.base, `https://github.com/${w.repo}.git`, "repo");
-      const work = join(dir, "repo");
-      await git(work, "fetch", "-q", "--depth", "50", "origin", w.sha);
+      // A bare repo with just the task's base commit, to check the commits against and push from.
+      const work = join(dir, "repo.git");
+      await git(dir, "init", "-q", "--bare", work);
+      await git(work, "fetch", "-q", "--depth", "1", `https://github.com/${w.repo}.git`, w.sha);
       const { stat } = await review(work, w.sha, result.bundle);
       // Forced: a follow-up's commits replace the branch (jj may have rewritten the earlier ones).
-      await git(work, "push", "-q", "-f", "origin", `biscotti-work:refs/heads/${w.branch}`);
+      await git(work, "push", "-q", "-f", `https://github.com/${w.repo}.git`, `biscotti-work:refs/heads/${w.branch}`);
       const compare = `https://github.com/${w.repo}/compare/${w.base}...${w.branch}`;
       return {
         ...result,
@@ -95,22 +83,13 @@ export function codeTasks(ctx: Context, token: string): LocalTool[] {
   }
 
   async function start(repo: string, goal: string, base: string | undefined, preview: boolean, keep: boolean, parent?: string) {
-    const dir = mkdtempSync(join(tmpdir(), "code-task-"));
-    try {
-      await git(dir, "clone", "-q", "--depth", "50", ...(base ? ["--branch", base] : []), `https://github.com/${repo}.git`, "repo");
-      const work = join(dir, "repo");
-      await git(work, "bundle", "create", "-q", join(dir, "in.bundle"), "HEAD");
-      const id = ctx.vms!.reserve();
-      const branch = `biscotti/${goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}-${randomBytes(2).toString("hex")}`;
-      works.set(id, { repo, base: base ?? (await git(work, "rev-parse", "--abbrev-ref", "HEAD")), sha: await git(work, "rev-parse", "HEAD"), branch, goal, preview });
-      save();
-      const bundle = readFileSync(join(dir, "in.bundle"));
-      rmSync(dir, { recursive: true, force: true });
-      const result = await ctx.vms!.run(preview ? goal + PREVIEW : goal, { id, repo: bundle, model: "code", timeoutMs: TIMEOUT_MS, parent, keep: keep || preview, after: (r) => push(id, r) });
-      return result.report;
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const checkout = await bundleRepo(token, repo, base);
+    const id = ctx.vms.reserve();
+    const branch = `biscotti/${goal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40)}-${randomBytes(2).toString("hex")}`;
+    works.set(id, { repo, base: checkout.branch, sha: checkout.sha, branch, goal, preview });
+    save();
+    const result = await ctx.vms.run(preview ? goal + PREVIEW : goal, { id, repo: checkout.bundle, model: "code", timeoutMs: TIMEOUT_MS, parent, keep: keep || preview, after: (r) => push(id, r) });
+    return result.report;
   }
 
   return [

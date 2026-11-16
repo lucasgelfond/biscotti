@@ -26,8 +26,8 @@ export interface Context {
   deliver(text: string, image?: Buffer, session?: string): Promise<void>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
-  // Task VMs, where this machine has them.
-  vms?: Vms;
+  // Task VMs, on the machines plugins add (none: it refuses tasks).
+  vms: Vms;
   // An HTTP route on the owner's API (API_PORT, published on the tailnet): `prefix` and everything under it, for the
   // owner only (Tailscale-User-Login, API_OWNER).
   route(prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => unknown): void;
@@ -43,7 +43,7 @@ export interface Vm {
 }
 
 // The vms service's answer when a VM couldn't be saved but carries on (409), as Vm.suspend's error says it.
-export const stillRunning = (err: Error) => Promise.reject(Object.assign(err, { running: / 409 /.test(err.message) }));
+export const stillRunning = (err: Error & { status?: number }) => Promise.reject(Object.assign(err, { running: err.status === 409 }));
 
 // Where task VMs run: this machine's vms service, or a plugin's machines (Vms.addHost): Firecracker here or on EC2,
 // a Mac's. Every one is asked the same things; only `restore` is required. Slot numbers are the host's own; this
@@ -60,10 +60,12 @@ export interface Host {
   // bundle), a setup command run; each optional. Answers with its ssh host key. By default the VM image's own setup
   // (prepareVm, core/vm/task/biscotti-task).
   prepare?(slot: number, setup: Setup): Promise<string | undefined>;
-  // Where the gate reaches port `port` of the slot's VM (10.200.<slot>.2 otherwise), and where that VM reaches the
-  // gate (a listener that takes only `peer()`).
-  endpoint?(slot: number, port: number): { host: string; port: number };
-  gate?(slot: number): { host: string; port: number; peer(): string | undefined };
+  // Where the gate reaches port `port` of the slot's VM, and where that VM reaches the gate (a listener that takes only
+  // `peer()`).
+  endpoint(slot: number, port: number): { host: string; port: number };
+  gate(slot: number): { host: string; port: number; peer(): string | undefined };
+  // Where the owner reaches the slot's VM's sshd, when it isn't the endpoint for port 22 (a port on the tailnet).
+  ssh?(slot: number): { host: string; port: number };
   // The slot's live desktop.
   watch?(slot: number): string | Promise<string>;
   // The slot's VM's web server (its port 8000), for a preview of what a task made.
@@ -153,19 +155,20 @@ export interface Vms {
   stop(id: number): boolean;
   running(): Running[];
   kept(): Kept[];
-  // A VM of the caller's own (not a task), numbered like tasks, until it gives it back: kept for later (`give`),
-  // thrown away (`drop`), or deleted for good once kept (`forget`). `reclaim` brings a kept one back.
-  // One with `sleep` may be put to sleep (`sleep.sleep()`, which gives it back) when every slot is held and another
-  // needs one: the one whose `sleep.used()` is oldest.
+  // A VM of the caller's own (not a task), numbered like tasks, until it gives it back: kept for later (`give`), or
+  // thrown away (`drop`); `remove` deletes it for good, kept or not. `reclaim` brings a kept one back.
+  // One with `sleep` may be put to sleep (`sleep.sleep(id)`, which gives it back) when every slot is held and another
+  // needs one: the one whose `sleep.used(id)` is oldest.
   // `where`: a host's label ("local", "cloud", …), any by default.
   hold(goal: string, opts?: { model?: string; where?: string; fits?: (slot: number) => boolean; sleep?: Sleep }): Promise<{ id: number; vm: Vm }>;
   give(id: number): Promise<void>;
   drop(id: number): Promise<void>;
   reclaim(id: number, opts?: { model?: string; sleep?: Sleep }): Promise<Vm | undefined>;
-  forget(id: number): Promise<boolean>;
   // A running task's or held VM's VM set up (Host.prepare), and the label of the host it's on.
   prepare(id: number, setup: Setup): Promise<string | undefined>;
   where(id: number): string | undefined;
+  // Where the owner reaches its sshd.
+  ssh(id: number): { host: string; port: number };
   // The labels of the hosts there are.
   labels(): string[];
   // pi-env's daemon in a running task's VM, for the main agent (agent-tasks.ts).
@@ -186,8 +189,8 @@ export interface Vms {
 
 // How a held VM goes to sleep for another that needs its slot, and when it was last used (ms since the epoch).
 export interface Sleep {
-  used(): number;
-  sleep(): Promise<void>;
+  used(id: number): number;
+  sleep(id: number): Promise<void>;
 }
 
 export interface TaskOptions {
@@ -249,15 +252,7 @@ export interface Observer {
 // A backend that answers 402, 429 or 503 is skipped for a while, for LLM_BASE_URL.
 export interface Llm {
   models: Record<string, string>;
-  complete(body: Record<string, unknown>, signal: AbortSignal, call: LlmCall): Promise<Response>;
-}
-
-// Whose call it is: the gate's model name (main, task, code, or another a backend serves), and for a task VM its
-// slot and task (one per run).
-export interface LlmCall {
-  name: string;
-  slot?: number;
-  task?: number;
+  complete(body: Record<string, unknown>, signal: AbortSignal): Promise<Response>;
 }
 
 export interface Plugin {
@@ -376,7 +371,11 @@ main{max-width:480px;margin:0 auto;padding:40px 16px 64px}
 
 // Where the gate reaches port `port` of the task VM in `slot`: its host's endpoint, or this machine's slot link.
 export const endpoints = new Map<number, (port: number) => { host: string; port: number }>();
-export const vmEndpoint = (slot: number, port: number) => endpoints.get(slot)?.(port) ?? { host: `10.200.${slot}.2`, port };
+export function vmEndpoint(slot: number, port: number) {
+  const at = endpoints.get(slot);
+  if (!at) throw new Error(`no machine has slot ${slot}`);
+  return at(port);
+}
 
 export interface Setup {
   key?: string;
@@ -388,8 +387,7 @@ export interface Setup {
 const PREPARE_TIMEOUT_MS = 30 * 60_000;
 // The VM's task agent (core/vm/task/biscotti-task) sets it up: the key authorized, the repo checked out, the setup
 // command run. It answers with the VM's host key.
-export function prepareVm(vm: Pick<Vm, "slot">, message: Setup) {
-  const { host, port } = vmEndpoint(vm.slot, 4000);
+export function prepareVm({ host, port }: { host: string; port: number }, message: Setup) {
   return new Promise<string | undefined>((resolve, reject) => {
     const socket = connect({ host, port }, () => socket.end(JSON.stringify({ box: { key: message.key, repo: message.repo?.toString("base64"), setup: message.setup } })));
     const timer = setTimeout(() => socket.destroy(new Error("setting up the VM took too long")), PREPARE_TIMEOUT_MS);

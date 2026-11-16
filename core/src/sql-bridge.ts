@@ -1,6 +1,7 @@
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@earendil-works/chord/sqlite";
-import Database from "better-sqlite3-multiple-ciphers";
+import type Database from "better-sqlite3-multiple-ciphers";
 import { randomUUID } from "node:crypto";
+import { openEncrypted } from "./memory.ts";
 
 // pi-durable's storage in the gate's encrypted database, for the agent, which holds no key: each statement crosses the
 // agent's socket and runs here, on a connection of its own, one transaction at a time.
@@ -24,14 +25,14 @@ const decode = (v: unknown): unknown => {
   }
   return v;
 };
-const encodeRow = (row: unknown) => (row && typeof row === "object" ? Object.fromEntries(Object.entries(row).map(([k, v]) => [k, encode(v)])) : row);
-const decodeRow = (row: unknown) => (row && typeof row === "object" ? Object.fromEntries(Object.entries(row).map(([k, v]) => [k, decode(v)])) : row);
+const mapRow = (code: (v: unknown) => unknown) => (row: unknown) => (row && typeof row === "object" ? Object.fromEntries(Object.entries(row).map(([k, v]) => [k, code(v)])) : row);
+const encodeRow = mapRow(encode);
+const decodeRow = mapRow(decode);
 export const encodeParams = (params: SqliteValue[]) => params.map(encode);
 
 // The gate's side. A transaction the agent leaves open (it died, or lost the socket) is rolled back after `idleMs`.
 export function sqlBridge(path: string, key: string, idleMs = 30_000) {
-  const db = new Database(path);
-  db.pragma(`key='${key}'`);
+  const db = openEncrypted(path, key);
   db.pragma("journal_mode = WAL");
   db.pragma("busy_timeout = 5000");
   const statements = new Map<string, Database.Statement>();
@@ -40,7 +41,7 @@ export function sqlBridge(path: string, key: string, idleMs = 30_000) {
     if (!s) statements.set(sql, (s = db.prepare(sql)));
     return s;
   };
-  let open: { id: string; timer: NodeJS.Timeout } | undefined;
+  let open: { id: string; timer?: NodeJS.Timeout } | undefined;
   let waiting: (() => void)[] = [];
   const end = (how: "COMMIT" | "ROLLBACK") => {
     clearTimeout(open!.timer);
@@ -76,7 +77,7 @@ export function sqlBridge(path: string, key: string, idleMs = 30_000) {
       if (req.op === "begin") {
         await idle();
         db.exec("BEGIN IMMEDIATE");
-        open = { id: randomUUID(), timer: setTimeout(() => {}, 0) };
+        open = { id: randomUUID() };
         arm();
         return { tx: open.id };
       }

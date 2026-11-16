@@ -3,6 +3,7 @@ import { afterAll, expect, test } from "vitest";
 import { appMethods, type Host, taskEvents } from "../core/src/plugin.ts";
 import { model } from "./stand-in-model.ts";
 import { standInVms } from "./stand-in-vm.ts";
+import { until as wait } from "./wait.ts";
 
 // Every kind of machine tasks run on is asked the same things (Host, core/src/plugin.ts), so every one passes this
 // suite, through the whole stack: the real gate and agent with a scripted model, each task's commands run in its VM
@@ -26,15 +27,9 @@ async function hostUnderTest(): Promise<{ host: Host; slots: number; close(): vo
 }
 const under = await hostUnderTest();
 afterAll(() => under.close());
-const { say, sent } = await boot(["ssh-vms"], undefined, undefined, under.host);
+const { say, sent } = await boot(["ssh-vms"], { vms: under.host });
 
-const until = async (check: () => boolean, ms = 120_000) => {
-  const end = Date.now() + ms;
-  while (!check()) {
-    if (Date.now() > end) throw new Error("timed out");
-    await new Promise((r) => setTimeout(r, 50));
-  }
-};
+const until = (check: () => boolean, ms = 120_000) => wait(check, ms);
 // What happens to each task (its number from when it's queued), and its report.
 const ids: number[] = [];
 const states = new Map<number, string>();

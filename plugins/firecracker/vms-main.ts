@@ -35,7 +35,8 @@ const server = createServer(async (req, res) => {
   try {
     if (action === "suspend" && req.method === "POST") {
       const vm = running.get(slot);
-      if (!vm) return void res.writeHead(409).end(`no VM in slot ${slot}`);
+      // (409 is only for one that couldn't be saved and carries on.)
+      if (!vm) return void res.writeHead(404).end(`no VM in slot ${slot}`);
       running.delete(slot);
       await suspend(vm, workDir, uid, id).catch((err: Error & { running?: boolean }) => {
         if (!err.running) throw err;

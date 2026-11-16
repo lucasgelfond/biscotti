@@ -11,17 +11,23 @@ export function vmCheck(alive: Alive[], now = Date.now()) {
 
 export default {
   async start(ctx) {
-    const vms = ctx.vms;
-    if (!vms) return;
-    // The day it last asked (the pool's file, from when the check was its).
+    // The day it last asked, kept across restarts (the pool's file, from when the check was its).
     const checked = `${ctx.dir}/tasks.checked`;
-    const day = () => new Date().toDateString();
-    setInterval(() => {
-      if (new Date().getHours() < Number(process.env.VM_CHECK_HOUR ?? 10)) return;
-      if (existsSync(checked) && readFileSync(checked, "utf8") === day()) return;
-      writeFileSync(checked, day());
-      const text = vmCheck(vms.alive());
-      if (text) void ctx.deliver(text);
-    }, 10 * 60_000).unref();
+    let asked = existsSync(checked) ? readFileSync(checked, "utf8") : "";
+    const hour = Number(process.env.VM_CHECK_HOUR ?? 10);
+    const check = () => {
+      const today = new Date().toDateString();
+      if (new Date().getHours() >= hour && asked !== today) {
+        writeFileSync(checked, (asked = today));
+        const text = vmCheck(ctx.vms.alive());
+        if (text) void ctx.deliver(text);
+      }
+      const next = new Date();
+      next.setHours(hour, 0, 0, 0);
+      if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
+      setTimeout(check, next.getTime() - Date.now()).unref();
+    };
+    // A minute after starting, then at the hour each day.
+    setTimeout(check, 60_000).unref();
   },
 } satisfies Plugin;

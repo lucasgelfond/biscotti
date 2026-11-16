@@ -37,20 +37,27 @@ export function sandboxes(opts: {
   const rows = new Map<number, Row>();
   const conversations = new Map<number, ConversationId>();
   const rowOf = (key: string) => rows.get(Number(key));
+  // Each session's change said once for all the board's lines that came together (a hundred at a start).
+  const pending = new Set<string>();
+  const changed = (session: string) => {
+    if (pending.has(session)) return;
+    pending.add(session);
+    setImmediate(() => (pending.delete(session), opts.changed(session)));
+  };
 
   opts.follow("/board", (line) => {
     const row = line as unknown as Row;
     const before = rows.get(row.id);
     if (row.kind === "gone") {
       rows.delete(row.id);
-      if (before && isChat(before)) opts.changed(sessionOf(before));
+      if (before && isChat(before)) changed(sessionOf(before));
       return;
     }
     rows.set(row.id, row);
     if (!isChat(row)) return;
     if (row.kind === "sandbox" && !conversations.has(row.id))
-      void opts.conversation(row.id).then((id) => id !== undefined && (conversations.set(row.id, id), opts.changed(sessionOf(row))), () => {});
-    opts.changed(sessionOf(row));
+      void opts.conversation(row.id).then((id) => id !== undefined && (conversations.set(row.id, id), changed(sessionOf(row))), () => {});
+    changed(sessionOf(row));
   });
 
   const of = (session: string) => [...rows.values()].filter((r) => isChat(r) && sessionOf(r) === session);

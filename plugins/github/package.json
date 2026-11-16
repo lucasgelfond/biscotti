@@ -4,5 +4,9 @@
   "type": "module",
   "dependencies": {
     "@biscotti/core": "workspace:*"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./git": "./git.ts"
   }
 }

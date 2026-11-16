@@ -108,7 +108,7 @@ test("asks the owner before a tool that needs a yes, and goes ahead on their yes
 test("after the gate restarts with a new plugin, the running agent uses its tools", { timeout: 120_000 }, async () => {
   const before = await boot([]);
   await before.say("Hi! Just say hello back.");
-  const after = await boot([outbox], before.dir, before);
+  const after = await boot([outbox], { dir: before.dir, restart: before });
 
   const replied = after.say("Send a postcard to Grandpa at 3 Oak Lane with send_postcard. Go ahead.");
   await expect.poll(() => after.sent.join("\n"), { timeout: 60_000 }).toContain("Send a postcard to");
@@ -139,28 +139,12 @@ test("lets a task VM propose what only the main agent may do, and hands the prop
   expect(again).toEqual([]);
 });
 
-test("holds the owner's mid-task messages for their slot's VM, each once, scrubbed, and none for the next task", async () => {
+// The message itself goes to the task's run as it comes (running.test.ts); the gate scrubs it on the way.
+test("scrubs saved secrets from the owner's mid-task message for a task", async () => {
   const gate = createGate({ llm: { url: "http://127.0.0.1:1", key: "unused" }, models: {}, send: async () => {}, secrets: () => [{ label: "Visa.number", value: "4111111111111111" }] });
-  const one = await gate.listen("127.0.0.1", 0, { slot: 1, peer: "127.0.0.1" });
-  const two = await gate.listen("127.0.0.1", 0, { slot: 2, peer: "127.0.0.1" });
-  const messages = (server: typeof one) => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/messages`).then((r) => r.json());
-
-  gate.assign(1, 7);
-  gate.tell(1, "make it 4 people at 8pm");
-  gate.tell(1, "and use the card 4111111111111111");
-  const first = await messages(one);
-  const again = await messages(one);
-  const elsewhere = await messages(two);
-  gate.tell(1, "never mind");
-  gate.assign(1);
-  const afterEnd = await messages(one);
-  one.close();
-  two.close();
-
-  expect(first).toEqual(["make it 4 people at 8pm", "and use the card [vault:Visa.number]"]);
-  expect(again).toEqual([]);
-  expect(elsewhere).toEqual([]);
-  expect(afterEnd).toEqual([]);
+  gate.assign(1, 7, "book a table");
+  expect(gate.tell(1, "make it 4 people at 8pm")).toBe("make it 4 people at 8pm");
+  expect(gate.tell(1, "and use the card 4111111111111111")).toBe("and use the card [vault:Visa.number]");
 });
 
 test("lists every plugin's tools at the gate's /mcp", async () => {

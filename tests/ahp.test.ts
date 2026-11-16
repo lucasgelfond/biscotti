@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { type ActionEnvelope, chatReducer, PROTOCOL_VERSION, type URI } from "@microsoft/agent-host-protocol";
-import { AhpClient, type AhpTransport, type TransportFrame } from "@microsoft/agent-host-protocol/client";
+import { AhpClient } from "@microsoft/agent-host-protocol/client";
+import { WebSocketTransport } from "@microsoft/agent-host-protocol/ws";
 import { afterAll, expect, test } from "vitest";
 import WebSocket from "ws";
 import { model } from "./stand-in-model.ts";
+import { until } from "./wait.ts";
 
 // biscotti's Agent Host Protocol host, driven by Microsoft's own AHP client, with the real gate and agent and a stand-in
 // model: the catalogue, a session's chat with its history, a turn an app starts (with a tool call), a text arriving in
@@ -13,40 +15,10 @@ const { boot } = await import("./support.ts");
 afterAll(() => void model.close());
 
 // Microsoft's client over a WebSocket to the agent's socket (as the gate passes it through from the tailnet).
-class Socket implements AhpTransport {
-  readonly #frames: TransportFrame[] = [];
-  readonly #waiting: ((frame: TransportFrame | null) => void)[] = [];
-  #closed = false;
-  readonly ws: WebSocket;
-  constructor(ws: WebSocket) {
-    this.ws = ws;
-    ws.on("message", (data: WebSocket.RawData) => {
-      const frame: TransportFrame = { kind: "text", text: String(data) };
-      const w = this.#waiting.shift();
-      if (w) w(frame);
-      else this.#frames.push(frame);
-    });
-    ws.on("close", () => {
-      this.#closed = true;
-      for (const w of this.#waiting.splice(0)) w(null);
-    });
-  }
-  send(message: unknown) {
-    this.ws.send(typeof message === "string" ? message : JSON.stringify(message));
-  }
-  recv() {
-    const frame = this.#frames.shift();
-    if (frame) return Promise.resolve(frame);
-    return this.#closed ? Promise.resolve(null) : new Promise<TransportFrame | null>((r) => this.#waiting.push(r));
-  }
-  close() {
-    this.ws.close();
-  }
-}
 async function client(sockets: string, id = randomUUID()) {
   const ws = new WebSocket(`ws+unix://${sockets}/agent.sock:/ahp`);
   await new Promise((resolve, reject) => ws.once("open", resolve).once("error", reject));
-  const c = new AhpClient(new Socket(ws));
+  const c = new AhpClient(WebSocketTransport.fromSocket(ws as never));
   c.connect();
   return { c, id, ws };
 }
@@ -63,13 +35,6 @@ async function follow(c: AhpClient, uri: URI) {
   })();
   return chat;
 }
-const until = async (check: () => boolean, ms = 30_000) => {
-  const end = Date.now() + ms;
-  while (!check()) {
-    if (Date.now() > end) throw new Error("timed out");
-    await new Promise((r) => setTimeout(r, 20));
-  }
-};
 const lastTurn = (state: { turns: { message: { text: string }; responseParts: { kind: string; content?: string; toolCall?: { toolName?: string } }[]; state: string }[] }) => state.turns.at(-1)!;
 
 test("an app sees and drives biscotti's sessions over AHP", async () => {

@@ -31,20 +31,17 @@ const FIELDS = ["goal", "kind", "repo", "ssh", "hostKey", "preview", "site", "sl
 
 export type Board = ReturnType<typeof board>;
 export function board(db: Db, vms: Vms) {
-  db.run(sql`CREATE TABLE IF NOT EXISTS tasks (id integer PRIMARY KEY, kind text NOT NULL DEFAULT 'sandbox', goal text NOT NULL, status text NOT NULL, slot integer, "where" text, repo text, ssh text, preview text, report text, steps text NOT NULL DEFAULT '[]', started integer NOT NULL, updated integer NOT NULL)`);
-  for (const column of ["parent text", "site text"]) {
-    try {
-      db.run(sql.raw(`ALTER TABLE tasks ADD COLUMN ${column}`));
-    } catch {}
-  }
+  db.run(sql`CREATE TABLE IF NOT EXISTS tasks (id integer PRIMARY KEY, kind text NOT NULL DEFAULT 'sandbox', goal text NOT NULL, status text NOT NULL, slot integer, "where" text, repo text, ssh text, preview text, site text, report text, parent text, started integer NOT NULL, updated integer NOT NULL)`);
+  // TODO: remove once every install has started since (the kinds' old names, on the Pi's).
+  db.run(sql`UPDATE tasks SET kind = CASE kind WHEN 'task' THEN 'sandbox' ELSE 'vm' END WHERE kind IN ('task', 'box')`);
   const rows = new Map<number, Row>();
-  for (const r of db.all<Record<string, unknown>>(sql`SELECT * FROM tasks WHERE kind IN ('sandbox', 'vm', 'task', 'box') ORDER BY updated DESC LIMIT ${ROWS}`).reverse()) {
+  for (const r of db.all<Record<string, unknown>>(sql`SELECT * FROM tasks WHERE kind IN ('sandbox', 'vm') ORDER BY updated DESC LIMIT ${ROWS}`).reverse()) {
     const row = Object.fromEntries(Object.entries(r).filter(([k, v]) => v !== null && k !== "steps")) as unknown as Row;
-    rows.set(row.id, { ...row, kind: row.kind === "box" ? "vm" : row.kind === "task" ? "sandbox" : row.kind, ssh: r.ssh ? JSON.parse(String(r.ssh)) : undefined });
+    rows.set(row.id, { ...row, ssh: r.ssh ? JSON.parse(String(r.ssh)) : undefined });
   }
   const save = (t: Row) =>
-    db.run(sql`INSERT OR REPLACE INTO tasks (id, kind, goal, status, slot, "where", repo, ssh, preview, site, report, steps, started, updated, parent)
-      VALUES (${t.id}, ${t.kind}, ${t.goal}, ${t.status}, ${t.slot ?? null}, ${t.where ?? null}, ${t.repo ?? null}, ${t.ssh ? JSON.stringify(t.ssh) : null}, ${t.preview ?? null}, ${t.site ?? null}, ${t.report ?? null}, '[]', ${t.started}, ${t.updated}, ${t.parent ?? null})`);
+    db.run(sql`INSERT OR REPLACE INTO tasks (id, kind, goal, status, slot, "where", repo, ssh, preview, site, report, started, updated, parent)
+      VALUES (${t.id}, ${t.kind}, ${t.goal}, ${t.status}, ${t.slot ?? null}, ${t.where ?? null}, ${t.repo ?? null}, ${t.ssh ? JSON.stringify(t.ssh) : null}, ${t.preview ?? null}, ${t.site ?? null}, ${t.report ?? null}, ${t.started}, ${t.updated}, ${t.parent ?? null})`);
   const listeners = new Set<(row: Row) => void>();
   const tell = (row: Row) => {
     for (const listener of listeners) listener(row);

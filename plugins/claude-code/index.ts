@@ -7,9 +7,11 @@ import { createJiti } from "jiti";
 // pi-claude-code ships TypeScript that Node won't run from node_modules; jiti loads it, as pi loads its extensions.
 const jiti = createJiti(import.meta.url);
 const from = <T>(file: string) => jiti.import<T>(`@earendil-works/pi-claude-code/src/${file}`);
-const { getClaudeStatus } = await from<{ getClaudeStatus(env: Record<string, string | undefined>): Promise<{ loggedIn: boolean; plan?: string; detail?: string }> }>("claude-cli.ts");
-const { CLAUDE_CODE_MODELS, modelForDiscoveredRoute, API_ID, PROVIDER_ID } = await from<{ CLAUDE_CODE_MODELS: Model<string>[]; modelForDiscoveredRoute(route: string): Model<string> | undefined; API_ID: string; PROVIDER_ID: string }>("model-catalog.ts");
-const { normalizeError, streamClaudeCode } = await from<{ normalizeError(error: unknown): string; streamClaudeCode(model: Model<string>, context: TranscriptContext, options?: SimpleStreamOptions & { env?: Record<string, string | undefined> }): AssistantMessageEventStream }>("stream.ts");
+const [{ getClaudeStatus }, { CLAUDE_CODE_MODELS, modelForDiscoveredRoute, API_ID, PROVIDER_ID }, { normalizeError, streamClaudeCode }] = await Promise.all([
+  from<{ getClaudeStatus(env: Record<string, string | undefined>): Promise<{ loggedIn: boolean; plan?: string; detail?: string }> }>("claude-cli.ts"),
+  from<{ CLAUDE_CODE_MODELS: Model<string>[]; modelForDiscoveredRoute(route: string): Model<string> | undefined; API_ID: string; PROVIDER_ID: string }>("model-catalog.ts"),
+  from<{ normalizeError(error: unknown): string; streamClaudeCode(model: Model<string>, context: TranscriptContext, options?: SimpleStreamOptions & { env?: Record<string, string | undefined> }): AssistantMessageEventStream }>("stream.ts"),
+]);
 export { getClaudeStatus };
 
 // The gate's model calls through the owner's Claude subscription, by earendil's pi-claude-code
@@ -43,9 +45,14 @@ export function models(env: Env) {
   );
 }
 
-// The Claude Code executable this plugin brings (its postinstall, which would link it, doesn't run under pnpm).
+// The Claude Code executable this plugin brings (its postinstall, which would link it, doesn't run under pnpm), found
+// once: looking costs a full process report.
+let found: string | undefined;
 export function claude(env: Env = process.env) {
   if (env.CLAUDE_CODE_COMMAND) return env.CLAUDE_CODE_COMMAND;
+  return (found ??= bundled());
+}
+function bundled() {
   try {
     const pkg = createRequire(import.meta.url).resolve("@anthropic-ai/claude-code/package.json");
     const musl = process.platform === "linux" && !(process.report.getReport() as { header?: { glibcVersionRuntime?: string } }).header?.glibcVersionRuntime;
@@ -197,10 +204,12 @@ export function backend(env: Env = process.env): Llm {
 
 export default {
   llm: async () => backend(),
+  // Not awaited: it runs Claude Code, and the gate needn't wait for it to start.
   async start(ctx) {
-    const s = await getClaudeStatus(environment(process.env));
-    if (s.loggedIn) return void console.log(`claude-code: logged in${s.plan ? ` (${s.plan})` : ""}; answering ${Object.keys(models(process.env)).join(", ")}`);
-    console.error(`claude-code: ${s.detail}`);
-    await ctx.send(`The claude-code plugin can't reach Claude yet, so model calls through it fail. ${s.detail}`);
+    void getClaudeStatus(environment(process.env)).then(async (s) => {
+      if (s.loggedIn) return void console.log(`claude-code: logged in${s.plan ? ` (${s.plan})` : ""}; answering ${Object.keys(models(process.env)).join(", ")}`);
+      console.error(`claude-code: ${s.detail}`);
+      await ctx.send(`The claude-code plugin can't reach Claude yet, so model calls through it fail. ${s.detail}`);
+    }).catch((err) => console.error(`claude-code: ${(err as Error).message}`));
   },
 } satisfies Plugin;

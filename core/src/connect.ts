@@ -22,9 +22,9 @@ export async function connectAgent(
     models: Record<string, string>;
     gate: (req: IncomingMessage, res: ServerResponse) => void;
     // pi-env's daemon in a task's VM, for the agent's tools there (an upgrade to /env/<id>, env-pipe.ts).
-    env?: (id: number, args: string[], socket: Duplex) => Promise<void>;
+    env: (id: number, args: string[], socket: Duplex) => Promise<void>;
     // The tasks' and VMs' board, for the owner's apps (AHP chats, agent.ts).
-    board?: Board;
+    board: Board;
   },
 ) {
   const { db } = opts;
@@ -40,8 +40,8 @@ export async function connectAgent(
         .catch((err) => res.writeHead(400).end(String((err as Error).message ?? err)));
     }
     // The board as it changes: every row, then each change, a JSON line each.
-    if (url.pathname === "/board" && opts.board) {
-      const board = opts.board;
+    if (url.pathname === "/board") {
+      const { board } = opts;
       res.writeHead(200, { "content-type": "application/x-ndjson" });
       const line = (row: Parameters<Parameters<Board["on"]>[0]>[0]) => void res.write(`${JSON.stringify(board.summary(row))}\n`);
       for (const row of board.rows.values()) line(row);
@@ -73,7 +73,7 @@ export async function connectAgent(
     // The agent may hang up while the daemon is being set up.
     socket.on("error", () => socket.destroy());
     const id = Number(new URL(req.url ?? "/", "http://gate").pathname.match(/^\/env\/(\d+)$/)?.[1]);
-    if (!id || !opts.env) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
+    if (!id) return void socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
     const args = String(req.headers["pi-env-arguments"] ?? "").split(" ").filter(Boolean);
     opts.env(id, args, socket).catch((err) => socket.end(`HTTP/1.1 502 Bad Gateway\r\n\r\n${(err as Error).message}`));
   });
@@ -94,6 +94,8 @@ export async function connectAgent(
       stopped.addEventListener("abort", () => req.destroy(stopped.reason as Error), { once: true });
       req.end(JSON.stringify(run));
     });
+  // The owner's message for a task's run under way, which steers it.
+  turn.tell = (id: number, message: string) => call(`${sockets}/agent.sock`, "POST", `/task/${id}/tell`, JSON.stringify({ message })).then(() => {});
   return turn;
   // `origin`: who it's from, for the owner's apps (AHP's message kinds): the owner ("user"), or biscotti itself.
   async function turn(message: string, session = "main", origin = "user"): Promise<string | undefined> {

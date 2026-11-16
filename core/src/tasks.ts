@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { createInterface } from "node:readline";
 import type { Duplex, Readable } from "node:stream";
+import { contentText } from "@earendil-works/pi-ai";
 import type { TaskRun } from "./agent-tasks.ts";
 import type { createGate } from "./gate.ts";
+import { jsonLines } from "./http.ts";
 import {
   emit,
   endpoints,
@@ -14,7 +15,6 @@ import {
   optional,
   str,
   text,
-  vmEndpoint,
   type Host,
   type Kept,
   type LocalTool,
@@ -51,41 +51,41 @@ const USE_CHECK_MS = Number(process.env.VM_USE_CHECK_MS ?? 5 * 60_000);
 type Options = RunOptions & { followup?: boolean };
 
 // The pool: the hosts' slots, the tasks and held VMs in them, and the kept VMs (in `file`, with the last number used,
-// across restarts). `run` runs a task in its slot's VM (the main agent, gateTasks), its lines as a stream. `busy` says
-// whether a slot's task is in a tool call, which isn't going quiet. `onStart` and `onEnd` see each task and held VM
-// take and leave its slot.
+// across restarts), each by its number. `run` runs a task in its slot's VM (the main agent, gateTasks), its lines as a
+// stream. `busy` says whether a slot's task is in a tool call, which isn't going quiet. `onStart` and `onEnd` see each
+// task and held VM take and leave its slot.
 export function taskVms(
-  hosts: Host[],
   hooks: {
-    run?(slot: number, task: TaskRun, opts: Options, stopped: AbortSignal): Promise<Readable>;
+    run(slot: number, task: TaskRun, opts: Options, stopped: AbortSignal): Promise<Readable>;
     busy?(slot: number): boolean;
     onStart?(slot: number, id: number, goal: string, model?: string): void;
     onReport?(slot: number, result: TaskResult): TaskResult;
     onEnd?(slot: number): void;
-  } = {},
+  },
   file?: string,
 ) {
   const hostOf = new Map<number, Host>();
   const free: number[] = [];
   const waiting: { fits: (slot: number) => boolean; resolve: (slot: number) => void }[] = [];
   const rank = (slot: number) => (hostOf.get(slot)!.overflow ? 1e9 : 0) + slot;
-  const where = (slot: number) => hostOf.get(slot)?.label ?? (hostOf.get(slot)?.overflow ? "cloud" : "local");
+  const whereSlot = (slot: number) => hostOf.get(slot)?.label ?? (hostOf.get(slot)?.overflow ? "cloud" : "local");
 
   const saved: { last: number; kept: Kept[] } = file && existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : { last: 0, kept: [] };
   const kept = saved.kept;
   let last = saved.last;
   // TODO: kept VMs and the last task number into SQLite with the board, instead of this file.
   const save = () => file && writeFileSync(file, JSON.stringify({ last, kept }));
+  // Numbered before any await, so a task started right after is listed after this one.
+  const reserve = () => ((last = Math.max(last, ...kept.map((k) => k.id)) + 1), save(), last);
   const running = new Map<number, Running & { stopped: AbortController }>();
-  // VMs held after or outside a task: a task's kept open (`open`), or a plugin's (hold).
-  const held = new Map<number, { vm: Vm; goal: string; sleep?: Sleep; sleeping?: boolean; open?: boolean }>();
-  // Tasks whose VM stays open once done; when each open VM was last used; what each one's work became.
+  // VMs held after or outside a task, and when each was last used: a task's kept open (`open`), or a plugin's (hold).
+  const held = new Map<number, { vm: Vm; goal: string; used: number; sleep?: Sleep; sleeping?: boolean; open?: boolean }>();
+  // Tasks whose VM stays open once done; what each one's work became.
   const keepers = new Set<number>();
-  const used = new Map<number, number>();
   const prs = new Map<number, string>(kept.flatMap((k) => (k.pr ? [[k.id, k.pr] as const] : [])));
   setInterval(async () => {
-    for (const [id, h] of held) {
-      if (hooks.busy?.(h.vm.slot) || (await Promise.resolve(hostOf.get(h.vm.slot)?.active?.(h.vm.slot)).catch(() => false))) used.set(id, Date.now());
+    for (const h of held.values()) {
+      if (hooks.busy?.(h.vm.slot) || (await Promise.resolve(hostOf.get(h.vm.slot)?.active?.(h.vm.slot)).catch(() => false))) h.used = Date.now();
     }
     // A newcomer still waiting because a VM couldn't be put to sleep for it (a full disk, say): another try.
     for (const w of waiting) makeRoom(w.fits);
@@ -102,12 +102,12 @@ export function taskVms(
   // When every slot that fits is held by a VM that may sleep (an ssh VM), the one used longest ago goes to sleep (kept,
   // to open again) to make room. A slot with a task in it frees itself, so then the newcomer waits.
   function makeRoom(fits: (slot: number) => boolean) {
-    const sleepers = [...held.values()].filter((h) => h.sleep && !h.sleeping && fits(h.vm.slot));
+    const sleepers = [...held].filter(([, h]) => h.sleep && !h.sleeping && fits(h.vm.slot));
     const slots = [...hostOf.keys()].filter((s) => fits(s) && s !== warm?.slot);
-    if (!sleepers.length || slots.some((s) => !sleepers.some((h) => h.vm.slot === s))) return;
-    const oldest = sleepers.sort((a, b) => a.sleep!.used() - b.sleep!.used())[0];
+    if (!sleepers.length || slots.some((s) => !sleepers.some(([, h]) => h.vm.slot === s))) return;
+    const [id, oldest] = sleepers.sort(([a, x], [b, y]) => x.sleep!.used(a) - y.sleep!.used(b))[0];
     oldest.sleeping = true;
-    oldest.sleep!.sleep().catch((err) => ((oldest.sleeping = false), console.error(`putting a VM to sleep: ${err.message}`)));
+    oldest.sleep!.sleep(id).catch((err) => ((oldest.sleeping = false), console.error(`putting a VM to sleep: ${err.message}`)));
   }
   function release(slot: number) {
     hooks.onEnd?.(slot);
@@ -166,49 +166,41 @@ export function taskVms(
     return k;
   };
 
-  // Keeps a VM that's done (suspended, for later), or throws it away when it can't be kept; then frees its slot.
+  // Keeps a VM that's done (suspended, for later) and frees its slot, or throws it away when it can't be kept. One that
+  // couldn't be saved (a full disk, say) but is still running stays open rather than lose what's in it.
   async function putAway(vm: Vm, id: number, goal: string, keep = true) {
-    try {
-      if (!keep || !vm.suspend || !hostOf.get(vm.slot)?.resume) throw new Error("not kept");
-      await vm.suspend(id);
-    } catch (err) {
-      if ((err as Error).message !== "not kept") console.error(`keeping #${id}: ${(err as Error).message}`);
-      // Not saved (a full disk, say) but still running: it stays open rather than lose what's in it.
-      if ((err as { running?: boolean }).running) return keepOpen(vm, id, goal, "Couldn't be put to sleep, so it's still open");
-      await vm.stop().catch(() => {});
-      prs.delete(id);
-      emit({ id, type: "done" });
-      return release(vm.slot);
+    if (keep && vm.suspend && hostOf.get(vm.slot)?.resume) {
+      try {
+        await vm.suspend(id);
+        release(vm.slot);
+        kept.push({ id, goal, slot: vm.slot, at: Date.now(), ...(prs.has(id) && { pr: prs.get(id) }) });
+        emit({ id, type: "kept", slot: vm.slot, where: whereSlot(vm.slot) });
+        for (const old of kept.splice(0, Math.max(0, kept.length - KEPT_MAX))) {
+          await hostOf.get(old.slot)?.discard?.(old.slot, old.id).catch(() => {});
+          emit({ id: old.id, type: "done", text: "Deleted (too many kept)" });
+        }
+        return void save();
+      } catch (err) {
+        console.error(`keeping #${id}: ${(err as Error).message}`);
+        if ((err as { running?: boolean }).running) return keepOpen(vm, id, goal, "Couldn't be put to sleep, so it's still open");
+      }
     }
+    await vm.stop().catch(() => {});
+    prs.delete(id);
+    emit({ id, type: "done" });
     release(vm.slot);
-    kept.push({ id, goal, slot: vm.slot, at: Date.now(), ...(prs.has(id) && { pr: prs.get(id) }) });
-    emit({ id, type: "kept", slot: vm.slot, where: where(vm.slot) });
-    for (const old of kept.splice(0, Math.max(0, kept.length - KEPT_MAX))) {
-      await hostOf.get(old.slot)?.discard?.(old.slot, old.id).catch(() => {});
-      emit({ id: old.id, type: "done", text: "Deleted (too many kept)" });
-    }
-    save();
   }
 
-  async function forget(id: number) {
-    const k = takeKept(id);
-    if (!k) return false;
-    await hostOf.get(k.slot)?.discard?.(k.slot, k.id).catch(() => {});
-    prs.delete(id);
-    emit({ id, type: "done", text: "Deleted" });
-    return true;
-  }
   // A done task's VM, open until it's deleted, or put to sleep when its slot is needed.
+  const openSleep: Sleep = { used: (id) => held.get(id)?.used ?? 0, sleep: (id) => give(id) };
   function keepOpen(vm: Vm, id: number, goal: string, text = "Kept open") {
-    held.set(id, { vm, goal, open: true, sleep: { used: () => used.get(id) ?? 0, sleep: () => give(id) } });
-    used.set(id, Date.now());
-    emit({ id, type: "started", slot: vm.slot, where: where(vm.slot), text });
+    held.set(id, { vm, goal, used: Date.now(), open: true, sleep: openSleep });
+    emit({ id, type: "started", slot: vm.slot, where: whereSlot(vm.slot), text });
   }
   async function give(id: number, keep = true) {
     const h = held.get(id);
     if (!h) return;
     held.delete(id);
-    used.delete(id);
     await putAway(h.vm, id, h.goal, keep);
   }
 
@@ -221,9 +213,8 @@ export function taskVms(
       try {
         entry.stopped.signal.throwIfAborted();
         Object.assign(entry, { slot: v.slot });
-        emit({ id, type: opts.followup ? "resumed" : "started", slot: v.slot, where: where(v.slot), ...(opts.followup && { text: said }) });
+        emit({ id, type: opts.followup ? "resumed" : "started", slot: v.slot, where: whereSlot(v.slot), ...(opts.followup && { text: said }) });
         hooks.onStart?.(v.slot, id, said, opts.model);
-        if (!hooks.run) throw new Error("nothing runs tasks here");
         const { repo, runner, model, display = DISPLAY, followup } = opts;
         const lines = hooks.run(v.slot, { id, goal: said, followup, model, display, runner, coding: Boolean(repo) }, opts, entry.stopped.signal);
         const ran = await readRun(lines, opts, () => !!hooks.busy?.(v.slot), entry.stopped.signal);
@@ -242,19 +233,26 @@ export function taskVms(
     }
   }
 
+  const slotOf = (id: number) => running.get(id)?.slot ?? held.get(id)?.vm.slot;
+  // A running task's or held VM's slot and host, for asking its host.
+  const at = (id: number) => {
+    const slot = slotOf(id);
+    if (slot === undefined) throw new Error(`no VM #${id} is running`);
+    return { slot, host: hostOf.get(slot)! };
+  };
   return {
     async addHost(host: Host) {
       for (const slot of host.slots) {
         hostOf.set(slot, host);
-        if (host.endpoint) endpoints.set(slot, (port) => host.endpoint!(slot, port));
+        endpoints.set(slot, (port) => host.endpoint(slot, port));
         release(slot);
       }
     },
+    slotOf,
     host: (slot: number) => hostOf.get(slot),
-    reserve: () => ((last = Math.max(last, ...kept.map((k) => k.id)) + 1), save(), last),
-    run(goal: string, opts: Options = {}) {
-      // Numbered before any await, so a task started right after is listed after this one.
-      const id = opts.id ?? ((last = Math.max(last, ...kept.map((k) => k.id)) + 1), save(), last);
+    reserve,
+    launch(goal: string, opts: Options = {}) {
+      const id = opts.id ?? reserve();
       if (opts.keep) keepers.add(id);
       emit({ id, type: "queued", goal, kind: "sandbox", ...(opts.parent && { parent: opts.parent }) });
       return { id, result: task(id, goal, goal, opts) };
@@ -266,7 +264,6 @@ export function taskVms(
       const h = held.get(id);
       if (h?.open) {
         held.delete(id);
-        used.delete(id);
         return task(id, `${h.goal}\n(Follow-up) ${message}`, message, { ...opts, followup: true }, async () => h.vm);
       }
       const k = takeKept(id);
@@ -280,33 +277,54 @@ export function taskVms(
     },
     running: (): Running[] => [...running.values()].map(({ stopped, ...t }) => t),
     kept: (): Kept[] => [...kept],
-    slotOf: (id: number) => running.get(id)?.slot ?? held.get(id)?.vm.slot,
-    where,
-    labels: () => [...new Set([...hostOf.keys()].map(where))],
-    // The slot's VM set up, by its host (Host.prepare) or else by the VM image's own setup.
-    prepare: (slot: number, setup: Setup) => (hostOf.get(slot)?.prepare ? hostOf.get(slot)!.prepare!(slot, setup) : prepareVm({ slot }, setup)),
+    where: (id: number) => {
+      const slot = slotOf(id);
+      return slot === undefined ? undefined : whereSlot(slot);
+    },
+    labels: () => [...new Set([...hostOf.keys()].map(whereSlot))],
+    // The VM set up, by its host (Host.prepare) or else by the VM image's own setup.
+    prepare(id: number, setup: Setup) {
+      const { slot, host } = at(id);
+      return host.prepare ? host.prepare(slot, setup) : prepareVm(host.endpoint(slot, 4000), setup);
+    },
+    async watch(id: number) {
+      const slot = slotOf(id);
+      return slot === undefined ? undefined : await hostOf.get(slot)?.watch?.(slot);
+    },
+    async site(id: number) {
+      const slot = slotOf(id);
+      return slot === undefined ? undefined : await hostOf.get(slot)?.site?.(slot);
+    },
+    // Where the owner reaches the VM's sshd: its host's address for that, or its endpoint for port 22.
+    ssh(id: number) {
+      const { slot, host } = at(id);
+      return host.ssh?.(slot) ?? host.endpoint(slot, 22);
+    },
+    // pi-env's daemon in the VM: by its host, or over ssh to its port 22 (`pipe`, vm-env.ts).
+    env(id: number, args: string[], socket: Duplex, pipe: (at: { host: string; port: number }) => Promise<void>) {
+      const { slot, host } = at(id);
+      return host.env ? host.env(slot, args, socket) : pipe(host.endpoint(slot, 22));
+    },
     async hold(goal: string, opts: { model?: string; where?: string; fits?: (slot: number) => boolean; sleep?: Sleep } = {}) {
-      const id = ((last = Math.max(last, ...kept.map((k) => k.id)) + 1), save(), last);
-      const vm = await fresh(opts.where ? (slot) => where(slot) === opts.where && (opts.fits?.(slot) ?? true) : opts.fits);
-      held.set(id, { vm, goal, sleep: opts.sleep });
-      used.set(id, Date.now());
+      const id = reserve();
+      const vm = await fresh(opts.where ? (slot) => whereSlot(slot) === opts.where && (opts.fits?.(slot) ?? true) : opts.fits);
+      held.set(id, { vm, goal, used: Date.now(), sleep: opts.sleep });
       hooks.onStart?.(vm.slot, id, goal, opts.model);
       return { id, vm };
     },
-    give,
-    async reclaim(id: number, model?: string, sleep?: Sleep) {
+    give: (id: number) => give(id),
+    drop: (id: number) => give(id, false),
+    async reclaim(id: number, opts: { model?: string; sleep?: Sleep } = {}) {
       // One kept open (e.g. woken for its live desktop) is handed over as it is.
       const h = held.get(id);
-      if (h?.open) return Object.assign(h, { open: false, sleep }), used.set(id, Date.now()), h.vm;
+      if (h?.open) return Object.assign(h, { open: false, sleep: opts.sleep, used: Date.now() }).vm;
       const k = takeKept(id);
       if (!k) return undefined;
       const vm = await bringBack(k);
-      held.set(id, { vm, goal: k.goal, sleep });
-      used.set(id, Date.now());
-      hooks.onStart?.(vm.slot, id, k.goal, model);
+      held.set(id, { vm, goal: k.goal, used: Date.now(), sleep: opts.sleep });
+      hooks.onStart?.(vm.slot, id, k.goal, opts.model);
       return vm;
     },
-    forget,
     async keep(id: number) {
       if (running.has(id)) return (keepers.add(id), true);
       if (held.has(id)) return true;
@@ -317,16 +335,21 @@ export function taskVms(
       return true;
     },
     alive: (): Alive[] => [
-      ...[...held].map(([id, h]) => ({ id, goal: h.goal, asleep: false, used: used.get(id) ?? 0, ...(prs.has(id) && { pr: prs.get(id) }) })),
+      ...[...held].map(([id, h]) => ({ id, goal: h.goal, asleep: false, used: h.used, ...(prs.has(id) && { pr: prs.get(id) }) })),
       ...kept.map((k) => ({ id: k.id, goal: k.goal, asleep: true, used: k.at, ...(k.pr && { pr: k.pr }) })),
     ],
-    // Deleted for good: a running task's once it's done, an open one now (its plugin hears "done"), an asleep one's
-    // files.
+    // Deleted for good, whatever it's doing: a running task's once it's done, a held one now (its plugin hears
+    // "done"), an asleep one's files.
     async remove(id: number) {
       keepers.delete(id);
       if (running.has(id)) return true;
       if (held.has(id)) return (await give(id, false), true);
-      return forget(id);
+      const k = takeKept(id);
+      if (!k) return false;
+      await hostOf.get(k.slot)?.discard?.(k.slot, k.id).catch(() => {});
+      prs.delete(id);
+      emit({ id, type: "done", text: "Deleted" });
+      return true;
     },
     note(id: number, note: { pr?: string }) {
       if (!note.pr) return;
@@ -366,19 +389,14 @@ async function readRun(
     let screenshot: Buffer | undefined;
     let bundle: Buffer | undefined;
     // The stream's errors end the task (below); unhandled here, they'd take the gate down.
-    createInterface({ input: stream }).on("error", () => {}).on("line", (line) => {
-      let event: { type: string; png?: string; data?: string; message?: { role: string; content: { type: string; text?: string }[] } };
-      try {
-        event = JSON.parse(line);
-      } catch {
-        return;
-      }
+    jsonLines(stream, (line) => {
+      const event = line as { type: string; png?: string; data?: string; message?: { role: string; content: string | { type: string; text?: string }[] } };
       if (event.type === "screenshot") screenshot = Buffer.from(event.png!, "base64");
       if (event.type === "bundle") bundle = Buffer.from(event.data!, "base64");
       if (event.type !== "message_end" || event.message?.role !== "assistant") return;
-      const said = event.message.content.flatMap((c) => (c.type === "text" && c.text ? [c.text] : [])).join("\n");
+      const said = contentText(event.message.content as never);
       if (said) report = said;
-    });
+    }).on("error", () => {});
     stream.on("error", reject).on("close", () => {
       clearTimeout(limit);
       clearInterval(idle);
@@ -389,8 +407,6 @@ async function readRun(
     });
   });
 }
-
-// The daily question about the VMs still around, for the main agent to put to the owner; undefined when there are none.
 
 // The task tools for the main agent: start, list, tell and stop. `doing` says what a slot's task is in the middle
 // of, so a retry stops or waits on the run before it instead of racing it.
@@ -476,41 +492,34 @@ export function taskTools(vms: Vms, doing?: (slot: number) => string | undefined
 }
 
 // Task VMs through the gate: each slot's VM reaches the gate on its own listener; the gate knows which task each slot
-// runs (stamping its tool calls, routing its model), passes the owner's later messages to it, and appends what it
-// proposed to its report. Reports of tasks started for the main agent go to `report`, with the main session that
-// started them (its follow-ups' too).
-// `ask` gets the daily question for the owner about the VMs still around.
+// runs (stamping its tool calls, routing its model) and appends what it proposed to its report. Reports of tasks
+// started for the main agent go to `report`, with the main session that started them (its follow-ups' too).
 // `agent` runs each task (agent-tasks.ts), once its VM is set up for pi-env: the gate's key authorized (and a coding
-// task's repo checked out), the VM's host key trusted.
+// task's repo checked out), the VM's host key trusted; the owner's later messages go to it as they come.
 export interface TaskAgent {
   key(): string;
-  trust(id: number, hostKey: string): void;
+  trust(id: number, hostKey: string): Promise<void>;
   pipe(id: number, at: { host: string; port: number }, args: string[], socket: Duplex): Promise<void>;
   run(task: TaskRun, stopped: AbortSignal): Promise<Readable>;
+  tell(id: number, message: string): Promise<void>;
 }
-export async function gateTasks(
-  gate: ReturnType<typeof createGate>,
-  local: Host | undefined,
-  report: (goal: string, result: TaskResult, parent?: string) => void,
-  file?: string,
-  agent?: TaskAgent,
-) {
+export async function gateTasks(gate: ReturnType<typeof createGate>, local: Host | undefined, report: (goal: string, result: TaskResult, parent?: string) => void, file: string | undefined, agent: TaskAgent) {
   const parents = new Map<number, string>();
   // What each task's results go through before they're reported (RunOptions.after), its follow-ups' too.
   const afters = new Map<number, (result: TaskResult) => Promise<TaskResult>>();
   taskEvents.on("event", (e) => void (e.type === "done" && afters.delete(e.id)));
   const after = (id: number) => (r: Promise<TaskResult>) => r.then((result) => afters.get(id)?.(result) ?? result);
-  // Messages for tasks still waiting for a VM, given to the VM when it starts.
+  // Messages for tasks still waiting for a VM, which their run starts with.
   const waiting = new Map<number, string[]>();
   const pool = taskVms(
-    [],
     {
-      async run(slot, task, opts, stopped) {
-        if (!agent) throw new Error("no agent runs tasks here");
-        const hostKey = await pool.prepare(slot, { key: agent.key(), repo: task.followup ? undefined : opts.repo });
-        if (hostKey) agent.trust(task.id, hostKey);
+      async run(_slot, task, opts, stopped) {
+        const hostKey = await pool.prepare(task.id, { key: agent.key(), repo: task.followup ? undefined : opts.repo });
+        if (hostKey) await agent.trust(task.id, hostKey);
         stopped.throwIfAborted();
-        return agent.run(task, stopped);
+        const told = waiting.get(task.id);
+        waiting.delete(task.id);
+        return agent.run({ ...task, ...(told && { told }) }, stopped);
       },
       // In a tool call (e.g. waiting on the owner's yes) or waiting on the model: not going quiet.
       busy: (slot) => !!gate.busy(slot) || gate.thinking(slot),
@@ -518,8 +527,6 @@ export async function gateTasks(
         gate.assign(slot, id, goal);
         gate.route(slot, model);
         gate.proposed(slot);
-        for (const message of waiting.get(id) ?? []) gate.tell(slot, message);
-        waiting.delete(id);
       },
       onReport(slot, result) {
         const proposed = gate.proposed(slot);
@@ -532,14 +539,16 @@ export async function gateTasks(
   const reportTo = (goal: string, parent?: string) => (r: Promise<TaskResult>) =>
     r.then((result) => report(goal, result, parent), (err) => report(goal, { report: `The task failed: ${err.message}` }, parent));
 
+  const { launch, slotOf, host, ...rest } = pool;
   const vms: Vms = {
+    ...rest,
     run(goal, opts) {
-      const { id, result } = pool.run(goal, opts);
+      const { id, result } = launch(goal, opts);
       if (opts?.after) afters.set(id, opts.after);
       return after(id)(result);
     },
     start(goal, opts) {
-      const { id, result } = pool.run(goal, opts);
+      const { id, result } = launch(goal, opts);
       if (opts?.parent) parents.set(id, opts.parent);
       if (opts?.after) afters.set(id, opts.after);
       void reportTo(goal, opts?.parent)(after(id)(result));
@@ -547,7 +556,7 @@ export async function gateTasks(
     },
     tell(id, message) {
       const task = pool.running().find((t) => t.id === id);
-      if (task?.slot !== undefined) return (gate.tell(task.slot, message), "told");
+      if (task?.slot !== undefined) return (void agent.tell(id, gate.tell(task.slot, message)).catch((err) => console.error(`telling #${id}: ${err.message}`)), "told");
       if (task) return (waiting.set(id, [...(waiting.get(id) ?? []), message]), "queued");
       const goal = pool.alive().find((v) => v.id === id)?.goal;
       const resumed = goal !== undefined && pool.resume(id, message);
@@ -555,58 +564,23 @@ export async function gateTasks(
       void reportTo(goal, parents.get(id))(after(id)(resumed));
       return "resumed";
     },
-    reserve: pool.reserve,
-    stop: pool.stop,
-    running: pool.running,
-    kept: pool.kept,
-    hold: pool.hold,
-    give: (id) => pool.give(id),
-    drop: (id) => pool.give(id, false),
-    reclaim: (id, opts) => pool.reclaim(id, opts?.model, opts?.sleep),
-    forget: pool.forget,
-    keep: pool.keep,
-    alive: pool.alive,
-    remove: pool.remove,
-    note: pool.note,
-    async watch(id) {
-      const slot = pool.slotOf(id);
-      return slot === undefined ? undefined : await pool.host(slot)?.watch?.(slot);
-    },
-    async prepare(id, setup) {
-      const slot = pool.slotOf(id);
-      if (slot === undefined) throw new Error(`no VM #${id} is running`);
-      return pool.prepare(slot, setup);
-    },
-    where: (id) => {
-      const slot = pool.slotOf(id);
-      return slot === undefined ? undefined : pool.where(slot);
-    },
-    labels: pool.labels,
-    async env(id, args, socket) {
-      const slot = pool.slotOf(id);
-      if (slot === undefined || !agent) throw new Error(`no VM #${id} is running`);
-      const host = pool.host(slot)!;
-      return host.env ? host.env(slot, args, socket) : agent.pipe(id, vmEndpoint(slot, 22), args, socket);
-    },
-    async site(id) {
-      const slot = pool.slotOf(id);
-      return slot === undefined ? undefined : await pool.host(slot)?.site?.(slot);
-    },
-    async addHost(host) {
-      for (const slot of host.slots) {
-        const at = host.gate?.(slot);
-        await gate.listen(at?.host ?? `10.200.${slot}.1`, at?.port ?? 80, { slot, peer: at ? at.peer : `10.200.${slot}.2` });
+    env: (id, args, socket) => pool.env(id, args, socket, (at) => agent.pipe(id, at, args, socket)),
+    async addHost(added) {
+      for (const slot of added.slots) {
+        const at = added.gate(slot);
+        await gate.listen(at.host, at.port, { slot, peer: at.peer });
       }
-      await pool.addHost(host);
+      await pool.addHost(added);
     },
   };
   if (local) await vms.addHost(local);
   // The main agent's calls for a task are its VM's (gate.ts).
-  gate.locate((task) => pool.slotOf(task));
+  gate.locate((task) => slotOf(task));
 
   const doing = (slot: number) => {
     const call = gate.busy(slot);
     return call && `in ${call.tool} for ${Math.round((Date.now() - call.since) / 60_000)} min${call.tool === "vault_fill" ? ", likely waiting on the owner's yes" : ""}`;
   };
+  void host;
   return { vms, tools: taskTools(vms, doing) };
 }

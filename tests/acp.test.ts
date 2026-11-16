@@ -7,6 +7,7 @@ import { afterAll, expect, test } from "vitest";
 import WebSocket from "ws";
 import { model } from "./stand-in-model.ts";
 import { standInVms } from "./stand-in-vm.ts";
+import { until } from "./wait.ts";
 
 // biscotti over the Agent Client Protocol, as the Zellij plugin reaches it: through the gate's port on the tailnet (the
 // owner's login on each request, as `tailscale serve` sets it), over a WebSocket or Streamable HTTP, with the ACP SDK's
@@ -22,7 +23,7 @@ const { boot } = await import("./support.ts");
 afterAll(() => void model.close());
 const stand = await standInVms([1]);
 afterAll(() => stand.close());
-const { say, sent, db } = await boot(["ssh-vms"], undefined, undefined, stand.host);
+const { say, sent, db } = await boot(["ssh-vms"], { vms: stand.host });
 
 const owner = { "tailscale-user-login": "owner@github" };
 type Updates = acp.SessionNotification[];
@@ -43,13 +44,6 @@ function connect<T>(transport: "http" | "ws", op: (c: acp.ClientContext, updates
 }
 const texts = (updates: Updates, sessionId: string, kind = "agent_message_chunk") =>
   updates.filter((u) => u.sessionId === sessionId && u.update.sessionUpdate === kind).map((u) => ((u.update as { content?: { text?: string } }).content?.text ?? "").replace(/^\[[^\]]*\] /, ""));
-const until = async (check: () => boolean, ms = 60_000) => {
-  const end = Date.now() + ms;
-  while (!check()) {
-    if (Date.now() > end) throw new Error("timed out");
-    await new Promise((r) => setTimeout(r, 20));
-  }
-};
 
 for (const transport of ["ws", "http"] as const) {
   test(`over ${transport === "ws" ? "a WebSocket" : "Streamable HTTP"}: the owner's texts as a session, a new session's turn with a tool call, and a text arriving while it's open`, async () => {

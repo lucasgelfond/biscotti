@@ -14,7 +14,7 @@ test("replies to a greeting", async () => {
 
 test("remembers a fact and recalls it once the conversation is gone", async () => {
   const dir = newDataDir();
-  const first = await boot(PLUGINS, dir);
+  const first = await boot(PLUGINS, { dir });
 
   await first.say("My gym locker is number 4127, remember that.");
   const saved = first.db.select().from(memories).all();
@@ -22,7 +22,7 @@ test("remembers a fact and recalls it once the conversation is gone", async () =
 
   // As if compaction had summarized it all away: the answer can only come from recall.
   first.db.delete(transcripts).run();
-  const second = await boot(PLUGINS, dir);
+  const second = await boot(PLUGINS, { dir });
   await second.say("What's my gym locker number?");
 
   expect(second.sent.join("\n")).toContain("4127");
@@ -30,11 +30,11 @@ test("remembers a fact and recalls it once the conversation is gone", async () =
 
 test("recalls by meaning, not just by keyword", async () => {
   const dir = newDataDir();
-  const first = await boot(PLUGINS, dir);
+  const first = await boot(PLUGINS, { dir });
   await first.say("Remember: I'm allergic to peanuts.");
   first.db.delete(transcripts).run();
 
-  const second = await boot(PLUGINS, dir);
+  const second = await boot(PLUGINS, { dir });
   await second.say("Is satay sauce safe for me to eat?");
 
   expect(second.sent.join("\n").toLowerCase()).toMatch(/peanut|allerg/);
@@ -42,10 +42,10 @@ test("recalls by meaning, not just by keyword", async () => {
 
 test("resumes the same conversation after a restart", async () => {
   const dir = newDataDir();
-  const first = await boot([], dir);
+  const first = await boot([], { dir });
   await first.say("Please call me Captain from now on.");
 
-  const second = await boot([], dir);
+  const second = await boot([], { dir });
   await second.say("What did I ask you to call me?");
 
   expect(second.sent.join("\n")).toContain("Captain");

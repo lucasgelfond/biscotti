@@ -2,6 +2,7 @@ import { lookup } from "node:dns/promises";
 import { networkInterfaces } from "node:os";
 import { DescribeInstancesCommand, EC2Client, RunInstancesCommand, StartInstancesCommand, StopInstancesCommand } from "@aws-sdk/client-ec2";
 import { type Host, type Plugin, stillRunning, type Vm } from "@biscotti/core";
+import { HttpError } from "@biscotti/core/http";
 
 // External VM nodes: EC2 machines (nested virtualization) that each run one task VM, used only once this machine's
 // slots are taken. They're launched from the `biscotti-node` launch template (setup.sh), at most NODE_MAX, started when
@@ -28,10 +29,11 @@ export function nodes(): Host | undefined {
   const name = (slot: number) => `biscotti-node-${k(slot)}.${tailnet}`;
   const vms = async (slot: number, method: string, path: string) => {
     const res = await fetch(`http://${name(slot)}:${VMS_PORT}${path}`, { method, signal: AbortSignal.timeout(10 * 60_000) });
-    if (!res.ok) throw new Error(`${name(slot)}${path}: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new HttpError(res.status, `${name(slot)}${path}: ${res.status} ${await res.text()}`);
     return res.text();
   };
-  const alive = (slot: number) => vms(slot, "GET", "/vms/0").then(() => true, (err: Error) => / 404 /.test(err.message));
+  // The node's vms service answers (there's no slot 0, so it says 404).
+  const alive = (slot: number) => vms(slot, "GET", "/vms/0").then(() => true, (err: { status?: number }) => err.status === 404);
 
   // Node k's instance, found by its tag.
   const instance = async (slot: number) => {
@@ -101,8 +103,6 @@ export function nodes(): Host | undefined {
 export default {
   async start(ctx) {
     const host = nodes();
-    if (!ctx.vms || !host) return;
-    const vms = ctx.vms;
-    await vms.addHost(host);
+    if (host) await ctx.vms.addHost(host);
   },
 } satisfies Plugin;

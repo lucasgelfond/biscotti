@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import type { Duplex } from "node:stream";
-import { deployDaemon, detectPlatform, packagedDaemon, type SshTarget, sshArguments } from "@earendil-works/pi-env";
+import { acceptHostKey, deployDaemon, detectPlatform, forgetHostKey, packagedDaemon, type SshTarget, sshArguments } from "@earendil-works/pi-env";
+import { taskEvents } from "./plugin.ts";
 
 // pi-env into task VMs, for the agent, which holds no key and has no network: the gate's own SSH key (made once), each
 // VM's host key as its setup reported it, and pi-env's daemon deployed to the VM and run over SSH, its framed protocol
@@ -14,7 +15,7 @@ export function vmEnv(dir: string) {
   const knownHosts = `${ssh}/known_hosts`;
   mkdirSync(ssh, { recursive: true, mode: 0o700 });
   if (!existsSync(key)) execFileSync("ssh-keygen", ["-t", "ed25519", "-N", "", "-q", "-C", "biscotti-gate", "-f", key]);
-  const target = (id: number, at: { host: string; port: number }): SshTarget => ({
+  const target = (id: number, at = { host: `biscotti-vm-${id}`, port: 22 }): SshTarget => ({
     host: at.host,
     port: at.port,
     user: "cua",
@@ -22,17 +23,20 @@ export function vmEnv(dir: string) {
     knownHostsFile: knownHosts,
     hostKeyAlias: `biscotti-vm-${id}`,
   });
+  // A VM deleted for good is trusted no more (known_hosts keeps only the VMs still around).
+  taskEvents.on("event", (e) => void (e.type === "done" && forgetHostKey(target(e.id)).catch(() => {})));
   // TODO: bake pi-env's daemon into the VM image, rather than sending it to each VM.
   // The daemon's path in each VM, once deployed (and verified by its hash).
   const deployed = new Map<number, string>();
 
   return {
     publicKey: () => readFileSync(`${key}.pub`, "utf8").trim(),
-    // The VM's host key, as its setup reported it ("ssh-ed25519 AAAA…"), trusted for its alias from now on.
-    trust(id: number, hostKey: string) {
-      const alias = `biscotti-vm-${id}`;
-      const lines = existsSync(knownHosts) ? readFileSync(knownHosts, "utf8").split("\n").filter((l) => l && !l.startsWith(`${alias} `)) : [];
-      writeFileSync(knownHosts, `${[...lines, `${alias} ${hostKey}`].join("\n")}\n`, { mode: 0o600 });
+    // The VM's host key, as its setup reported it ("ssh-ed25519 AAAA…"), trusted for its alias from now on, in place
+    // of the one it had (a VM set up again has a new one).
+    async trust(id: number, hostKey: string) {
+      const t = target(id);
+      await forgetHostKey(t);
+      await acceptHostKey(t, [`${t.hostKeyAlias} ${hostKey}`]);
       deployed.delete(id);
     },
     // pi-env's daemon in VM `id` (reached at `at`) with `args` (its `serve --token <hex>`), piped to `socket` until

@@ -62,7 +62,7 @@ a saved login and check something) fast and cheaply. Use \`task\` for anything t
 comparing options across pages, several sites, or when browse comes back unsure. Browse can pick seats on a seat map.`,
 
   async tools(ctx) {
-    if (!ctx.vms || !process.env.TYPESAFE_API_KEY) return localTools([]);
+    if (!process.env.TYPESAFE_API_KEY) return localTools([]);
     const decide = jev(process.env.TYPESAFE_API_KEY);
     return {
       ...localTools([

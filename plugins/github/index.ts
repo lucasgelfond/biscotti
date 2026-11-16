@@ -1,5 +1,6 @@
-import { appMethod, declined, input, localTools, mcpTools, merge, secret, text, type Context, type Plugin } from "@biscotti/core";
+import { appMethod, declined, input, localTools, mcpTools, merge, text, type Context, type Plugin } from "@biscotti/core";
 import { codeTasks } from "./code.ts";
+import { githubApi, githubToken as token } from "./git.ts";
 
 // GitHub's remote MCP server with the owner's fine-grained token, from .env or the vault ("GitHub", field "token").
 // Biscotti works on GitHub freely (branches, commits, pull requests, comments, edits); it asks the owner first only
@@ -11,8 +12,6 @@ const TOOLSETS = "context,repos,issues,pull_requests,users";
 const MERGE = /merge/i;
 const DESTRUCTIVE = /delete|remove/i;
 
-const token = (ctx: Context) =>
-  process.env.GITHUB_TOKEN || secret(ctx.db, "GitHub")?.token;
 
 export default {
   prompt: `GitHub: repos, issues and pull requests through the GitHub tools (load them with \`tool_search\`, e.g. "github pull request"). Go ahead with branches, commits, pull requests, comments and edits without checking with the user; deleting or closing anything asks them itself. If
@@ -58,8 +57,10 @@ once they ask (\`code_pull_request\`); never merge one, that's their call.`,
       // their own: the apps' github method {path} -> GitHub's JSON for a GET of one of the repos' read endpoints.
       appMethod("github", async ({ path }) => {
         if (typeof path !== "string" || !/^\/repos\/[\w.-]+\/[\w.-]+\/(pulls|commits|compare|check-runs|actions|branches|contents)(\/|\?|$)/.test(path)) throw new Error("only reads of a repo's pulls, commits, compare, checks, branches or contents");
-        const res = await fetch(`https://api.github.com${path}`, { headers: { Authorization: `Bearer ${token(ctx)}`, Accept: "application/vnd.github+json" } });
-        return { status: res.status, body: await res.json().catch(() => null) };
+        return githubApi(token(ctx)!)(path).then(
+          (body) => ({ status: 200, body }),
+          (err: { status?: number; body?: unknown }) => ({ status: err.status ?? 502, body: err.body ?? null }),
+        );
       });
       return;
     }
@@ -73,13 +74,13 @@ once they ask (\`code_pull_request\`); never merge one, that's their call.`,
 
 const PULL = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/;
 export async function cleanUp(ctx: Context, api = "https://api.github.com") {
-  for (const v of ctx.vms?.alive() ?? []) {
+  const get = githubApi(token(ctx)!, api);
+  for (const v of ctx.vms.alive()) {
     const [, repo, n] = v.pr?.match(PULL) ?? [];
     if (!repo) continue;
-    const res = await fetch(`${api}/repos/${repo}/pulls/${n}`, { headers: { Authorization: `Bearer ${token(ctx)}`, Accept: "application/vnd.github+json" } }).catch(() => undefined);
-    const pull = res?.ok ? ((await res.json()) as { state: string; merged_at: string | null }) : undefined;
+    const pull = (await get(`/repos/${repo}/pulls/${n}`).catch(() => undefined)) as { state: string; merged_at: string | null } | undefined;
     if (pull?.state !== "closed") continue;
     console.log(`VM #${v.id}: ${v.pr} was ${pull.merged_at ? "merged" : "closed"}, so it's deleted`);
-    await ctx.vms!.remove(v.id);
+    await ctx.vms.remove(v.id);
   }
 }
