@@ -1,0 +1,8 @@
+{
+  "name": "@biscotti/firecracker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*"
+  }
+}

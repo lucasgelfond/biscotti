@@ -6,7 +6,7 @@ import { memoryTools, openDb } from "./memory.ts";
 import { appMethod, localTools, type Channel, type Context, type Host, type Plugin } from "./plugin.ts";
 import { ownerApi, passTo } from "./http.ts";
 import { sqlBridge } from "./sql-bridge.ts";
-import { gateTasks, localHost } from "./tasks.ts";
+import { gateTasks } from "./tasks.ts";
 import { vmEnv } from "./vm-env.ts";
 import { board } from "./board.ts";
 import vault, { secrets } from "./vault.ts";
@@ -19,7 +19,7 @@ function env(name: string) {
 
 // The gate: every key, the database, the channel and the plugins. `sockets` is the directory it shares with the main
 // agent (agent-main.ts).
-// `vms`: this machine's task VMs, when they aren't the vms service's (VMS_SOCKET), e.g. a test's.
+// `vms`: a machine for task VMs of the caller's (a test's); plugins add the others (firecracker, external-vm-node).
 export async function start(opts: { plugins: Plugin[]; dir: string; sockets: string; vms?: Host }) {
   const { dir, sockets } = opts;
   const plugins: Plugin[] = [crons, vault, ...opts.plugins];
@@ -33,20 +33,16 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     send: (s) => channel.send(outbound(s)),
     secrets: () => secrets(db),
   });
-  // Task VMs, where the vms service runs (vms-main.ts); finished ones are kept, listed in the data directory.
-  // The main agent runs each one (agent-tasks.ts), its tools in the VM through pi-env, which the gate runs there over
-  // ssh with a key of its own (vm-env.ts).
-  const host = opts.vms ?? (process.env.VMS_SOCKET ? localHost(process.env.VMS_SOCKET, env("VM_DIR")) : undefined);
-  const pipes = host && vmEnv(dir);
-  const vms =
-    host && pipes
-      ? await gateTasks(gate, host, (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`, (text) => deliver(text), {
-          key: pipes.publicKey,
-          trust: pipes.trust,
-          pipe: pipes.pipe,
-          run: (task, stopped) => turn.task(task, stopped),
-        })
-      : undefined;
+  // Task VMs, on the machines plugins add; finished ones are kept, listed in the data directory. The main agent runs
+  // each one (agent-tasks.ts), its tools in the VM through pi-env, which the gate runs there over ssh with a key of its
+  // own (vm-env.ts).
+  const pipes = vmEnv(dir);
+  const vms = await gateTasks(gate, opts.vms, (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`, (text) => deliver(text), {
+    key: pipes.publicKey,
+    trust: pipes.trust,
+    pipe: pipes.pipe,
+    run: (task, stopped) => turn.task(task, stopped),
+  });
   const api = ownerApi();
   // The owner's apps reach the agent itself over the Agent Host Protocol, or the Agent Client Protocol (a WebSocket, or
   // Streamable HTTP).
@@ -58,10 +54,10 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     // Plugins' texts (a task's screenshot caption) can't pose as the gate's questions either.
     if (text) await channel.send(outbound(text.replace(LOCKS, "")));
   };
-  const tasks = vms && board(db, vms.vms);
+  const tasks = board(db, vms.vms);
   // The apps' own methods for tasks and VMs (the board's sandboxes and VMs): its live desktop (which keeps it open), a
   // message for it, stopping it, deleting it.
-  if (vms && tasks) {
+  {
     const pool = vms.vms;
     const id = (p: Record<string, unknown>) => {
       const n = Number(p.id);
@@ -77,7 +73,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
       return { removed };
     });
   }
-  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, vms: vms?.vms, board: tasks, route: api.route };
+  const ctx: Context = { db, dir, env, ask: gate.ask, deliver, send, vms: vms.vms, route: api.route };
   const observers = await Promise.all(plugins.flatMap((p) => (p.observe ? [p.observe(ctx)] : [])));
   for (const observer of observers) gate.observe(observer);
   for (const plugin of plugins) if (plugin.llm) gate.serve(await plugin.llm(ctx));
@@ -89,7 +85,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   const recalls = await Promise.all(plugins.flatMap((p) => (p.recall ? [p.recall(ctx)] : [])));
 
   gate.add(memoryTools(db, recalls));
-  if (vms) gate.add(localTools(vms.tools));
+  gate.add(localTools(vms.tools));
   const prompt = [readFileSync(new URL("../SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
 
   // The main agent's sessions, as events for the owner's apps (numbered like tasks; "main", the owner's texts, is 0):
@@ -100,7 +96,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
     prompt,
     models,
     gate: gate.handle,
-    env: (id, args, socket) => (vms ? vms.vms.env(id, args, socket) : Promise.reject(new Error("no task VMs here"))),
+    env: (id, args, socket) => vms.vms.env(id, args, socket),
     board: tasks,
   });
 
@@ -127,5 +123,5 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
 
   for (const plugin of plugins) await plugin.start?.(ctx);
   await api.listen();
-  return { db, channel, handle, vms: vms?.vms };
+  return { db, channel, handle, vms: vms.vms };
 }

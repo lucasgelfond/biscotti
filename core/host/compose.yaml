@@ -32,7 +32,7 @@ services:
   # broke out would find nothing worth having, and couldn't reach another slot's VM.
   vms:
     image: biscotti/agent
-    command: ["node", "core/src/vms-main.ts"]
+    command: ["node", "plugins/firecracker/vms-main.ts"]
     network_mode: none
     # An init process reaps exited Firecracker processes.
     init: true

@@ -35,9 +35,6 @@ export function vmEnv(dir: string) {
       writeFileSync(knownHosts, `${[...lines, `${alias} ${hostKey}`].join("\n")}\n`, { mode: 0o600 });
       deployed.delete(id);
     },
-    forget(id: number) {
-      deployed.delete(id);
-    },
     // pi-env's daemon in VM `id` (reached at `at`) with `args` (its `serve --token <hex>`), piped to `socket` until
     // either side ends. It starts in the VM's login shell, for the PATH a shell there has.
     async pipe(id: number, at: { host: string; port: number }, args: string[], socket: Duplex) {

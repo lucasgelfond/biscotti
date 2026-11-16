@@ -44,7 +44,7 @@ const BeforeSessions = defineDoc<{ ids: Record<string, string>; titles?: Record<
   checkpointWhen: () => true,
 });
 
-export async function runAgent(sockets: string, _dir?: string) {
+export async function runAgent(sockets: string) {
   const relay = createTcpServer((client) => {
     const gate = connect(`${sockets}/gate.sock`);
     client.pipe(gate).pipe(client);

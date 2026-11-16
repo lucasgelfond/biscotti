@@ -3,7 +3,6 @@ import { createInterface } from "node:readline";
 import type { Duplex, Readable } from "node:stream";
 import type { TaskRun } from "./agent-tasks.ts";
 import type { createGate } from "./gate.ts";
-import { call } from "./http.ts";
 import {
   emit,
   endpoints,
@@ -29,7 +28,6 @@ import {
   type Vms,
   type Setup,
   prepareVm,
-  stillRunning,
 } from "./plugin.ts";
 
 // Each task runs in a fresh VM restored from the snapshot, in a slot of a host (this machine's, or a plugin's machines),
@@ -49,48 +47,6 @@ const KEPT_MAX = Number(process.env.SUSPENDED_MAX ?? 6);
 const DISPLAY = process.env.TASK_DISPLAY === "mobile" ? "mobile" : "desktop";
 // How often open VMs are checked for someone on them.
 const USE_CHECK_MS = Number(process.env.VM_USE_CHECK_MS ?? 5 * 60_000);
-export const SLOTS = Array.from({ length: Number(process.env.VM_SLOTS ?? 2) }, (_, i) => i + 1);
-
-// This machine's VMs, from the vms service over its socket (vms-main.ts). Their live desktops are on the tailnet at
-// 10440 + slot (`tailscale serve`), the password in the link's fragment, which the browser never sends to the server;
-// their port 8000 (a preview of what a task made) at 10540 + slot.
-export function localHost(socketPath: string, vmDir: string): Host {
-  const vm = (slot: number): Vm => ({
-    slot,
-    stop: async () => void (await call(socketPath, "DELETE", `/vms/${slot}`)),
-    suspend: (id) => call(socketPath, "POST", `/vms/${slot}/suspend/${id}`).then(() => {}, stillRunning),
-  });
-  return {
-    slots: SLOTS,
-    restore: async (slot) => (await call(socketPath, "POST", `/vms/${slot}`), vm(slot)),
-    resume: async (slot, id) => (await call(socketPath, "POST", `/vms/${slot}/resume/${id}`), vm(slot)),
-    discard: async (slot, id) => void (await call(socketPath, "DELETE", `/vms/${slot}/suspended/${id}`)),
-    watch: process.env.TAILNET_HOST
-      ? (slot) => `https://${process.env.TAILNET_HOST}:${10440 + slot}/biscotti.html#password=${existsSync(`${vmDir}/vnc-password`) ? readFileSync(`${vmDir}/vnc-password`, "utf8").trim() : ""}`
-      : undefined,
-    site: process.env.TAILNET_HOST ? (slot) => `https://${process.env.TAILNET_HOST}:${10540 + slot}/` : undefined,
-    active: (slot) => sessions(slot) > 0,
-  };
-}
-
-// Connections to the slot's VM's sshd or live desktop (10.200.<slot>.2, ports 22 and 6901), from this machine's
-// network: the gate's (it shares the host's), where Tailscale passes them on.
-export function sessions(slot: number, tables = ["/proc/net/tcp", "/proc/net/tcp6"]) {
-  const vm = [2, slot, 200, 10].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
-  const ports = new Set(["0016", "1AF5"]);
-  let n = 0;
-  for (const table of tables) {
-    if (!existsSync(table)) continue;
-    for (const line of readFileSync(table, "utf8").split("\n").slice(1)) {
-      const [, , remote, state] = line.trim().split(/\s+/);
-      if (state !== "01" || !remote) continue;
-      const [ip, port] = remote.split(":");
-      if (ip.endsWith(vm) && ports.has(port)) n++;
-    }
-  }
-  return n;
-}
-
 type Options = RunOptions & { followup?: boolean };
 
 // The pool: the hosts' slots, the tasks and held VMs in them, and the kept VMs (in `file`, with the last number used,
@@ -176,6 +132,7 @@ export function taskVms(
   }
   // A fresh VM in a slot that fits: the warm one if it does. Claimed before any await, so callers never share it.
   async function fresh(fits: (slot: number) => boolean = () => true) {
+    if (!hostOf.size) throw new Error("no machine for task VMs here (the firecracker plugin adds this one's, external-vm-node EC2's)");
     const claimed = warm && fits(warm.slot) ? warm : undefined;
     if (claimed) warm = undefined;
     const ready = claimed && (await claimed.vm.catch(() => undefined));
@@ -540,7 +497,7 @@ export interface TaskAgent {
 }
 export async function gateTasks(
   gate: ReturnType<typeof createGate>,
-  local: Host,
+  local: Host | undefined,
   report: (goal: string, result: TaskResult, parent?: string) => void,
   file?: string,
   ask?: (text: string) => void,
@@ -633,10 +590,6 @@ export async function gateTasks(
       return slot === undefined ? undefined : pool.where(slot);
     },
     labels: pool.labels,
-    endpoint(id, port) {
-      const slot = pool.slotOf(id);
-      return slot === undefined ? undefined : vmEndpoint(slot, port);
-    },
     async env(id, args, socket) {
       const slot = pool.slotOf(id);
       if (slot === undefined || !agent) throw new Error(`no VM #${id} is running`);
@@ -655,7 +608,7 @@ export async function gateTasks(
       await pool.addHost(host);
     },
   };
-  await vms.addHost(local);
+  if (local) await vms.addHost(local);
   // The main agent's calls for a task are its VM's (gate.ts).
   gate.locate((task) => pool.slotOf(task));
 

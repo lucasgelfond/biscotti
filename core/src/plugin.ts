@@ -26,9 +26,8 @@ export interface Context {
   deliver(text: string, image?: Buffer, session?: string): Promise<void>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
-  // Task VMs, where this machine has them, and the board of them for the owner's apps (board.ts).
+  // Task VMs, where this machine has them.
   vms?: Vms;
-  board?: Board;
   // An HTTP route on the owner's API (API_PORT, published on the tailnet): `prefix` and everything under it, for the
   // owner only (Tailscale-User-Login, API_OWNER).
   route(prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => unknown): void;
@@ -160,8 +159,6 @@ export interface Vms {
   drop(id: number): Promise<void>;
   reclaim(id: number, opts?: { model?: string; sleep?: Sleep }): Promise<Vm | undefined>;
   forget(id: number): Promise<boolean>;
-  // Where port `port` of a running task's or held VM's VM is reached.
-  endpoint(id: number, port: number): { host: string; port: number } | undefined;
   // A running task's or held VM's VM set up (Host.prepare), and the label of the host it's on.
   prepare(id: number, setup: Setup): Promise<string | undefined>;
   where(id: number): string | undefined;
@@ -336,8 +333,6 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
 
 // A vault entry's values, and saving one, for plugins that keep keys there or type them in.
 export { secrets } from "./vault.ts";
-export type { Board, Row } from "./board.ts";
-import type { Board } from "./board.ts";
 export const secret = (db: Db, name: string) => db.select().from(vault).where(eq(vault.name, name)).get()?.value;
 export function saveSecret(db: Db, name: string, value: Record<string, string>) {
   const row = { name, fields: Object.keys(value), value };

@@ -48,8 +48,6 @@ const BROWSER = new Set(
 );
 const PLAYWRIGHT = ["playwright-mcp", "--cdp-endpoint", "http://127.0.0.1:9222", "--caps", "vision", "--snapshot-mode", "none"];
 
-
-
 // A task's instructions, and a coding task's besides.
 const PROMPT = readFileSync(new URL("../TASK.md", import.meta.url), "utf8");
 const CODING = readFileSync(new URL("../CODING.md", import.meta.url), "utf8");

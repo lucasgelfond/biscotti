@@ -17,7 +17,7 @@ afterAll(() => void model.close());
 
 async function hostUnderTest(): Promise<{ host: Host; slots: number; close(): void; full?: (is?: boolean) => void }> {
   if (process.env.HOST === "firecracker") {
-    const { localHost, SLOTS } = await import("../core/src/tasks.ts");
+    const { localHost, SLOTS } = await import("../plugins/firecracker/index.ts");
     if (!process.env.VMS_SOCKET || !existsSync(process.env.VMS_SOCKET)) throw new Error("HOST=firecracker needs VMS_SOCKET, the vms service's socket");
     return { host: localHost(process.env.VMS_SOCKET, process.env.VM_DIR ?? "/var/lib/biscotti/vm"), slots: SLOTS.length, close: () => {} };
   }

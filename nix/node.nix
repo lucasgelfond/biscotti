@@ -113,7 +113,7 @@ in
             -v ${firecracker}/bin/firecracker:/usr/local/bin/firecracker:ro -v /run/biscotti-vms:/run/biscotti-vms \
             -e VM_DIR=/var/lib/biscotti/vm -e WORK_DIR=/var/lib/biscotti/work -e FIRECRACKER=/usr/local/bin/firecracker \
             -e TASK_UID_BASE=1100 -e VM_SLOTS=1 \
-            biscotti/agent node core/src/vms-main.ts
+            biscotti/agent node plugins/firecracker/vms-main.ts
         '';
       };
     } ]

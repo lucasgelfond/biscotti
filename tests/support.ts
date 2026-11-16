@@ -48,7 +48,7 @@ export async function boot(names: (string | Plugin)[], dir = newDataDir(), resta
   // The agent as in production, reaching the gate only through the sockets; its relay is the tests' way in too.
   const sockets = restart?.sockets ?? mkdtempSync(join(tmpdir(), "sockets-"));
   const biscotti = await start({ plugins: [phone, ...plugins], dir, sockets, vms });
-  const gateUrl = restart?.gateUrl ?? (await runAgent(sockets, join(dir, "agent"))).gateUrl;
+  const gateUrl = restart?.gateUrl ?? (await runAgent(sockets)).gateUrl;
   const say = (text: string) => {
     tapback.seen({ react: async (emoji) => void reactions.push(emoji) });
     return biscotti.handle({ text });

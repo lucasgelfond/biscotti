@@ -1,9 +1,7 @@
 import { createReadStream, readFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { listen } from "./http.ts";
-import { discard, restore, resume, suspend, type FirecrackerVm } from "./firecracker.ts";
-
-const SLOTS = Array.from({ length: Number(process.env.VM_SLOTS ?? 2) }, (_, i) => i + 1);
+import { listen } from "@biscotti/core/http";
+import { discard, restore, resume, SLOTS, suspend, type FirecrackerVm } from "./firecracker.ts";
 
 // The task VMs' service, in a container of its own: KVM, the slots' networks and the snapshot, and no keys, no data
 // and no network. The gate asks it, over a socket only the two share, to restore a VM in a slot or to stop one.

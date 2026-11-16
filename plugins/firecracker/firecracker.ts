@@ -2,7 +2,10 @@ import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, renameSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { promisify } from "node:util";
-import { call } from "./http.ts";
+import { call } from "@biscotti/core/http";
+
+// This machine's slots, 1 to VM_SLOTS.
+export const SLOTS = Array.from({ length: Number(process.env.VM_SLOTS ?? 2) }, (_, i) => i + 1);
 
 // Firecracker VMs for the vms service (vms-main.ts): each slot's VM restored from the snapshot, saved for a follow-up
 // and brought back.

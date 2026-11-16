@@ -3,9 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { restore } from "../core/src/firecracker.ts";
+import { restore } from "../plugins/firecracker/firecracker.ts";
 import { taskEvents, type Host } from "../core/src/plugin.ts";
-import { SLOTS } from "../core/src/tasks.ts";
+import { SLOTS } from "../plugins/firecracker/firecracker.ts";
 
 // Runs on the Pi, with the live service stopped (it holds the slots and the gate's ports): the real gate and agent
 // (its settings from the environment, as the service's), tasks in Firecracker VMs, their tools through pi-env.

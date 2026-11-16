@@ -15,7 +15,8 @@ import { localTools, taskEvents, text, type Caller, type Host, type Vm } from ".
 // and leases. Read before tasks.ts loads.
 process.env.TASK_IDLE_MS = "400";
 process.env.VM_USE_CHECK_MS = "30";
-const { taskVms, gateTasks, vmCheck, sessions } = await import("../core/src/tasks.ts");
+const { taskVms, gateTasks, vmCheck } = await import("../core/src/tasks.ts");
+const { sessions } = await import("../plugins/firecracker/index.ts");
 
 // The task agent (the main agent's, agent-tasks.ts), its run's lines: "silent" says nothing, "wait <ms>" says nothing
 // for that long and then reports, anything else is reported at once. A follow-up is reported as "followup <message>".
