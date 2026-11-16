@@ -1,0 +1,8 @@
+{
+  "name": "@biscotti/vm-check",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*"
+  }
+}

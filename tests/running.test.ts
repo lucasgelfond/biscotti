@@ -15,7 +15,8 @@ import { localTools, taskEvents, text, type Caller, type Host, type Vm } from ".
 // and leases. Read before tasks.ts loads.
 process.env.TASK_IDLE_MS = "400";
 process.env.VM_USE_CHECK_MS = "30";
-const { taskVms, gateTasks, vmCheck } = await import("../core/src/tasks.ts");
+const { taskVms, gateTasks } = await import("../core/src/tasks.ts");
+const { vmCheck } = await import("../plugins/vm-check/index.ts");
 const { sessions } = await import("../plugins/firecracker/index.ts");
 
 // The task agent (the main agent's, agent-tasks.ts), its run's lines: "silent" says nothing, "wait <ms>" says nothing
@@ -262,7 +263,7 @@ async function gated() {
   const reports: string[] = [];
   const parents: (string | undefined)[] = [];
   const local = await host([1, 2], [], { gate: () => ({ host: "127.0.0.1", port: 0, peer: () => "127.0.0.1" }) });
-  const { vms, tools } = await gateTasks(gate, local, (_goal, { report }, parent) => (reports.push(report), parents.push(parent)), file(), undefined, agent);
+  const { vms, tools } = await gateTasks(gate, local, (_goal, { report }, parent) => (reports.push(report), parents.push(parent)), file(), agent);
   const messages = (slot: number) => fetch(`http://127.0.0.1:${(servers.get(slot)!.address() as AddressInfo).port}/messages`, { headers: { host: "gate" } }).then((r) => r.json());
   const said = async (name: string, args: Record<string, unknown> = {}, caller?: Caller) => ((await localTools(tools).call(name, args, caller)).content[0] as { text: string }).text;
   return { gate, vms, said, messages, reports, parents, close: () => servers.forEach((s) => s.close()) };

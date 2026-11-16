@@ -5,13 +5,9 @@ import { createModels, createProvider } from "@earendil-works/pi-ai/models";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import {
   type Conversation,
-  type ConversationId,
   type Extension,
-  type ToolExecutionResult,
   createRegistry,
-  defineDoc,
   defineExtension,
-  defineTool,
   Harness,
   LiveDoc,
   section,
@@ -19,9 +15,9 @@ import {
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
 import { durableAhp, inputFrom } from "pi-durable-acp-ahp";
-import { agentTasks, type TaskRun } from "./agent-tasks.ts";
+import { agentTasks, gateMcp, type Message, type TaskRun, textOf } from "./agent-tasks.ts";
 import { sandboxes } from "./sandboxes.ts";
-import { listen, readBody } from "./http.ts";
+import { answer, listen, readBody } from "./http.ts";
 import { RemoteSqliteDatabase, type SqlRequest } from "./sql-bridge.ts";
 
 // The main agent: pi-durable runs every conversation, each turn and tool call committed before it shows, so a run a
@@ -35,15 +31,6 @@ const ctx = BACKGROUND_CONTEXT;
 const MAIN_MODEL = { provider: "biscotti", modelId: "main" } as const;
 const CONTEXT_WINDOW = 200_000;
 
-// The sessions' catalogue as biscotti kept it before pi-durable-acp-ahp did (until 2026-11-15), for adopting them.
-const BeforeSessions = defineDoc<{ ids: Record<string, string>; titles?: Record<string, string>; created?: Record<string, string>; sources?: Record<string, string>; displays?: Record<string, string> }>({
-  kind: "biscotti.sessions",
-  version: 1,
-  scope: "session",
-  initial: () => ({ ids: {}, titles: {} }),
-  checkpointWhen: () => true,
-});
-
 export async function runAgent(sockets: string) {
   const relay = createTcpServer((client) => {
     const gate = connect(`${sockets}/gate.sock`);
@@ -54,18 +41,9 @@ export async function runAgent(sockets: string) {
   const port = await new Promise<number>((resolve) => relay.listen(0, "127.0.0.1", () => resolve((relay.address() as { port: number }).port)));
   const gateUrl = `http://127.0.0.1:${port}`;
 
-  // The gate, with no time limit (a tool call may wait minutes on the owner's yes). Each request on a connection of its
-  // own: one kept alive between requests can be closed by the gate just as the next is sent (Node's server lets an
-  // idle connection go after 5 s), and that request is lost, e.g. a commit of the agent's storage.
-  const call = (method: string, path: string, body?: string, headers: Record<string, string> = {}) =>
-    new Promise<{ status: number; text: string }>((resolve, reject) => {
-      const req = request({ host: "127.0.0.1", port, method, path, headers, agent: false }, (res) => {
-        let text = "";
-        res.setEncoding("utf8").on("data", (d: string) => (text += d)).on("end", () => resolve({ status: res.statusCode ?? 0, text }));
-      });
-      req.on("error", reject);
-      req.end(body);
-    });
+  // The gate's answer (http.ts), named as the gate (it takes a task's calls only from the hosts it knows); the relay
+  // above is only for pi-ai's fetch, which can't reach a socket.
+  const call = (method: string, path: string, body?: string, headers: Record<string, string> = {}) => answer(`${sockets}/gate.sock`, method, path, body, { host: "gate", ...headers });
   // Retried while the gate is starting.
   const get = async (path: string) => {
     for (;;) {
@@ -106,43 +84,13 @@ export async function runAgent(sockets: string) {
 
   // biscotti's tools, as the gate lists them, each call stamped with its conversation's session. A remote service's
   // (GitHub's, Notion's) the gate marks deferred: tool_search loads them when they're wanted.
-  const mcp = async (session: string, method: string, params: object) => {
-    const res = await call("POST", `/mcp?session=${encodeURIComponent(session)}`, JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    });
-    const data = res.text.match(/^data: (.*)$/m)?.[1] ?? res.text;
-    const reply = JSON.parse(data) as { result?: unknown; error?: { message: string } };
-    if (reply.error) throw new Error(reply.error.message);
-    return reply.result;
-  };
+  const gateTools = gateMcp(call);
   const sessionOf = new Map<string, string>();
   let installed: Extension | undefined;
   async function biscotti() {
     const prompt = await get("/prompt");
-    const { tools } = (await mcp("main", "tools/list", {})) as { tools: { name: string; description?: string; inputSchema: object; _meta?: Record<string, unknown> }[] };
-    return (installed = defineExtension({
-      name: "biscotti",
-      sections: [section("biscotti", () => prompt, { tag: false })],
-      tools: tools.map((t) =>
-        defineTool({
-          name: t.name,
-          description: t.description ?? "",
-          parameters: t.inputSchema,
-          ...(t._meta?.["biscotti/deferred"] ? { deferred: true as const } : {}),
-          execute: async (args, api): Promise<ToolExecutionResult> => {
-            const result = (await mcp(sessionOf.get(String(api.conversationId)) ?? "main", "tools/call", { name: t.name, arguments: args })) as {
-              content: { type: string; text?: string; data?: string; mimeType?: string }[];
-              isError?: boolean;
-            };
-            const output: unknown[] = result.content.flatMap((c): unknown[] =>
-              c.type === "text" ? [{ type: "text", text: c.text ?? "" }] : c.type === "image" ? [{ type: "image", data: c.data, mimeType: c.mimeType }] : [],
-            );
-            return { output: output as unknown as ToolExecutionResult["output"], isError: result.isError };
-          },
-        }),
-      ),
-    }));
+    const tools = await gateTools.tools("session=main", async (c) => `session=${encodeURIComponent(sessionOf.get(String(c)) ?? "main")}`, { deferred: true });
+    return (installed = defineExtension({ name: "biscotti", sections: [section("biscotti", () => prompt, { tag: false })], tools }));
   }
 
   const models = createModels();
@@ -229,8 +177,7 @@ export async function runAgent(sockets: string) {
         seen.add(String(entry.id));
         const message = entry.model?.[0];
         if (!message) continue;
-        const parts = typeof message.content === "string" ? [{ type: "text", text: message.content }] : (message.content as { type: string; text?: string }[]);
-        const said = parts.flatMap((p) => (p.type === "text" && p.text ? [p.text] : [])).join("\n").trim();
+        const said = textOf(message as Message);
         rows.push({ id: entry.id, entry, text: said && (message.role === "user" || message.role === "assistant") ? `${message.role}: ${said}` : null });
       }
       if (rows.length) await call("POST", `/transcript?session=${encodeURIComponent(session)}`, JSON.stringify(rows)).catch(() => {});
@@ -269,8 +216,8 @@ export async function runAgent(sockets: string) {
     for (const m of [...context.messages].reverse()) {
       if (m.role === "user") break;
       if (m.role !== "assistant") continue;
-      const parts = typeof m.content === "string" ? [m.content] : (m.content as { type: string; text?: string }[]).flatMap((p) => (p.type === "text" && p.text ? [p.text] : []));
-      if (parts.length) turn.unshift(parts.join("\n"));
+      const said = textOf(m as Message);
+      if (said) turn.unshift(said);
     }
     return turn.join("\n\n");
   }
@@ -311,15 +258,6 @@ export async function runAgent(sockets: string) {
     ),
   });
   const conversation = (session: string) => ahp.conversation(session);
-  // Sessions from before pi-durable-acp-ahp kept the catalogue, adopted into it (once: a known one is left as it is).
-  // TODO: remove once every install has started since.
-  const before = await harness.snapshot(BeforeSessions, ctx);
-  for (const [session, id] of Object.entries(before?.ids ?? {})) {
-    const source = before?.sources?.[session] ? (JSON.parse(before.sources[session]) as unknown) : undefined;
-    const display = before?.displays?.[session];
-    const biscotti = { ...(source !== undefined && { source }), ...(display && { display }) };
-    await ahp.adopt(session, Number(id) as unknown as ConversationId, { title: before?.titles?.[session], created: before?.created?.[session], ...(Object.keys(biscotti).length && { meta: { biscotti } }) });
-  }
   // The owner's texts are a session from the start, not only once something's said in them.
   await conversation("main");
   const acp = ahp.acp({ contextWindow: CONTEXT_WINDOW });

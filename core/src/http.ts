@@ -28,15 +28,21 @@ export async function listen(server: Server, path: string, uid?: number) {
   chmodSync(path, 0o600);
 }
 
-// The response body, or an error for a status of 300 or more.
-export function call(socketPath: string, method: string, path: string, body?: string) {
-  return new Promise<string>((resolve, reject) => {
-    // A connection each (see agent.ts's `call`).
-    const req = request({ socketPath, method, path, headers: { "Content-Type": "application/json" }, agent: false }, (res) => {
-      readBody(res).then((text) => (res.statusCode! < 300 ? resolve(text) : reject(new Error(`${path}: ${res.statusCode} ${text}`))), reject);
-    });
+// A request's answer, its status and body. With no time limit (a tool call may wait minutes on the owner's yes), and on
+// a connection each: one kept alive between requests can be closed by the server just as the next is sent (Node's
+// lets an idle connection go after 5 s), and that request is lost, e.g. a commit of the agent's storage.
+export function answer(socketPath: string, method: string, path: string, body?: string, headers: Record<string, string> = { "Content-Type": "application/json" }) {
+  return new Promise<{ status: number; text: string }>((resolve, reject) => {
+    const req = request({ socketPath, method, path, headers, agent: false }, (res) => void readBody(res).then((text) => resolve({ status: res.statusCode ?? 0, text }), reject));
     req.on("error", reject).end(body);
   });
+}
+
+// The response body, or an error for a status of 300 or more.
+export async function call(socketPath: string, method: string, path: string, body?: string) {
+  const { status, text } = await answer(socketPath, method, path, body);
+  if (status >= 300) throw new Error(`${path}: ${status} ${text}`);
+  return text;
 }
 
 // A handler that passes requests through to the server on `socketPath`, streamed both ways (ACP's Streamable HTTP holds

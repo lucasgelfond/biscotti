@@ -37,7 +37,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
   // each one (agent-tasks.ts), its tools in the VM through pi-env, which the gate runs there over ssh with a key of its
   // own (vm-env.ts).
   const pipes = vmEnv(dir);
-  const vms = await gateTasks(gate, opts.vms, (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`, (text) => deliver(text), {
+  const vms = await gateTasks(gate, opts.vms, (goal, { report, screenshot }, parent) => deliver(`Task report (${goal}):\n${report}`, screenshot, parent), `${dir}/tasks.json`, {
     key: pipes.publicKey,
     trust: pipes.trust,
     pipe: pipes.pipe,
@@ -86,7 +86,7 @@ export async function start(opts: { plugins: Plugin[]; dir: string; sockets: str
 
   gate.add(memoryTools(db, recalls));
   gate.add(localTools(vms.tools));
-  const prompt = [readFileSync(new URL("../SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
+  const prompt = [readFileSync(new URL("../../prompts/SYSTEM.md", import.meta.url), "utf8"), ...plugins.flatMap((p) => (p.prompt ? [p.prompt] : []))].join("\n\n");
 
   // The main agent's sessions, as events for the owner's apps (numbered like tasks; "main", the owner's texts, is 0):
   // what the owner said, each tool call and message as it goes, and "replied" once a turn is done.

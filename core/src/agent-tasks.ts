@@ -49,8 +49,8 @@ const BROWSER = new Set(
 const PLAYWRIGHT = ["playwright-mcp", "--cdp-endpoint", "http://127.0.0.1:9222", "--caps", "vision", "--snapshot-mode", "none"];
 
 // A task's instructions, and a coding task's besides.
-const PROMPT = readFileSync(new URL("../TASK.md", import.meta.url), "utf8");
-const CODING = readFileSync(new URL("../CODING.md", import.meta.url), "utf8");
+const PROMPT = readFileSync(new URL("../../prompts/TASK.md", import.meta.url), "utf8");
+const CODING = readFileSync(new URL("../../prompts/CODING.md", import.meta.url), "utf8");
 
 // The desktop's shape for a task the owner watches from their phone: portrait and phone-sized, so sites lay out as
 // they do on a phone. Chromium is maximized to fill it.
@@ -98,9 +98,10 @@ export interface TaskRun {
 
 type Line = Record<string, unknown> & { type: string };
 type Part = { type: string; text?: string; id?: string; name?: string; arguments?: unknown; data?: string; mimeType?: string };
-type Message = { role: string; content: string | Part[]; toolName?: string; toolCallId?: string; isError?: boolean };
+export type Message = { role: string; content: string | Part[]; toolName?: string; toolCallId?: string; isError?: boolean };
 const partsOf = (m: Message): Part[] => (typeof m.content === "string" ? [{ type: "text", text: m.content }] : m.content);
-const textOf = (m: Message) => partsOf(m).flatMap((p) => (p.type === "text" && p.text ? [p.text] : [])).join("\n").trim();
+// What a message says, its text parts joined.
+export const textOf = (m: Message) => partsOf(m).flatMap((p) => (p.type === "text" && p.text ? [p.text] : [])).join("\n").trim();
 const said = (text: string) => ({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }] } });
 
 // MCP over a program's stdin and stdout in the VM (pi-env's plain pipes), a line per message.
@@ -143,29 +144,56 @@ class RemoteStdio implements Transport {
 const outputOf = (content: Part[]) =>
   content.flatMap((c): unknown[] => (c.type === "text" ? [{ type: "text", text: c.text ?? "" }] : c.type === "image" ? [{ type: "image", data: c.data, mimeType: c.mimeType }] : [])) as unknown as ToolExecutionResult["output"];
 
-export function agentTasks(opts: {
-  harness: () => Harness;
-  ctx: Context;
-  // The gate: a path's answer (its status and text), and one of its tools called as task `id`'s VM.
-  call: (method: string, path: string, body?: string, headers?: Record<string, string>) => Promise<{ status: number; text: string }>;
-  // The command that starts pi-env's daemon in VM `id`, before its `serve` arguments (env-pipe.ts, through the gate).
-  daemon: (id: number) => string[];
-  // Task `id`'s conversation was just made, for its first run.
-  onConversation?: (id: number, conversation: Conversation) => void;
-}) {
-  const { ctx, call } = opts;
-  const gateMcp = async (id: number, method: string, params: object) => {
-    const res = await call("POST", `/mcp?task=${id}`, JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), {
+// The gate: a path's answer, its status and text.
+export type GateCall = (method: string, path: string, body?: string, headers?: Record<string, string>) => Promise<{ status: number; text: string }>;
+type GateTool = { name: string; description?: string; inputSchema: object; _meta?: Record<string, unknown> };
+
+// The gate's tools (its MCP endpoint), as whoever `query` names: `session=<name>`, a main session's; `task=<id>`, a
+// task's VM's. `tools` makes them pi-durable tools, each called as the query `as` gives for its conversation (none:
+// it isn't one of theirs); with `deferred`, those the gate marks deferred (a remote service's) load through tool_search.
+export function gateMcp(call: GateCall) {
+  const rpc = async (query: string, method: string, params: object) => {
+    const res = await call("POST", `/mcp?${query}`, JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
     });
     if (res.status >= 300) throw new Error(`the gate: ${res.text}`);
     const reply = JSON.parse(res.text.match(/^data: (.*)$/m)?.[1] ?? res.text) as { result?: unknown; error?: { message: string } };
     if (reply.error) throw new Error(reply.error.message);
-    return reply.result as { tools?: { name: string; description?: string; inputSchema: object }[]; content?: Part[]; isError?: boolean };
+    return reply.result as { tools?: GateTool[]; content?: Part[]; isError?: boolean };
   };
+  const tools = async (query: string, as: (conversation: ConversationId) => Promise<string | undefined>, opts: { deferred?: boolean } = {}) =>
+    ((await rpc(query, "tools/list", {})).tools ?? []).map((t) =>
+      defineTool({
+        name: t.name,
+        description: t.description ?? "",
+        parameters: t.inputSchema,
+        ...(opts.deferred && t._meta?.["biscotti/deferred"] ? { deferred: true as const } : {}),
+        execute: async (args, api): Promise<ToolExecutionResult> => {
+          const who = await as(api.conversationId);
+          if (!who) return { output: [{ type: "text", text: "not here" }] as never, isError: true };
+          const result = await rpc(who, "tools/call", { name: t.name, arguments: args });
+          return { output: outputOf(result.content ?? []), isError: result.isError };
+        },
+      }),
+    );
+  return { rpc, tools };
+}
+
+export function agentTasks(opts: {
+  harness: () => Harness;
+  ctx: Context;
+  call: GateCall;
+  // The command that starts pi-env's daemon in VM `id`, before its `serve` arguments (env-pipe.ts, through the gate).
+  daemon: (id: number) => string[];
+  // Task `id`'s conversation was just made, for its first run.
+  onConversation?: (id: number, conversation: Conversation) => void;
+}) {
+  const { ctx, call } = opts;
+  const gate = gateMcp(call);
+  // One of the gate's tools called as task `id`'s VM.
   const gateTool = async (id: number, name: string, args: object) => {
-    const result = await gateMcp(id, "tools/call", { name, arguments: args });
+    const result = await gate.rpc(`task=${id}`, "tools/call", { name, arguments: args });
     if (result.isError) throw new Error(`${name}: ${(result.content ?? []).map((c) => c.text ?? "").join("\n")}`);
     return (result.content ?? []).map((c) => c.text ?? "").join("\n");
   };
@@ -279,22 +307,13 @@ Done means: the report answers everything the goal asks, with the facts it needs
   let extensions: Extension[] | undefined;
   async function install(id: number, registry: { install(e: Extension): void }) {
     if (extensions) return extensions;
-    const fromGate = (await gateMcp(id, "tools/list", {})).tools ?? [];
-    const gate = defineExtension({
+    const tools = await gate.tools(`task=${id}`, async (c) => {
+      const task = await taskOf(c, ctx);
+      return task === undefined ? undefined : `task=${task}`;
+    });
+    const fromGate = defineExtension({
       name: "biscotti-task",
-      tools: fromGate.map((t) =>
-        defineTool({
-          name: t.name,
-          description: t.description ?? "",
-          parameters: t.inputSchema,
-          execute: async (args, api): Promise<ToolExecutionResult> => {
-            const task = await taskOf(api.conversationId, ctx);
-            if (!task) return { output: [{ type: "text", text: "not a task" }] as never, isError: true };
-            const result = await gateMcp(task, "tools/call", { name: t.name, arguments: args });
-            return { output: outputOf(result.content ?? []), isError: result.isError };
-          },
-        }),
-      ),
+      tools,
       hooks: [
         hook(GenerationTask, {
           // All but the latest views of the page become a note (see LATEST).
@@ -342,9 +361,9 @@ Done means: the report answers everything the goal asks, with the facts it needs
       ),
     });
     registry.install(coding);
-    registry.install(gate);
+    registry.install(fromGate);
     registry.install(web);
-    const selected = [coding, gate, web];
+    const selected = [coding, fromGate, web];
     if (listed.length) extensions = selected;
     return selected;
   }

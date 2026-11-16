@@ -125,6 +125,10 @@ export interface Alive {
   used: number;
   pr?: string;
 }
+// One of them in a line, for the main agent.
+const ago = (ms: number) => (ms < 3600_000 ? `${Math.max(1, Math.round(ms / 60_000))} min` : ms < 86400_000 ? `${Math.round(ms / 3600_000)} h` : `${Math.round(ms / 86400_000)} days`);
+export const aliveLine = (v: Alive, now = Date.now()) =>
+  `#${v.id} (${v.asleep ? "asleep" : "open"}, last used ${ago(now - v.used)} ago${now - v.used > 86400_000 ? ", idle over a day" : ""}${v.pr ? `, pull request ${v.pr}` : ""}): ${v.goal.replace(/\s+/g, " ").slice(0, 160)}`;
 
 // `parent`: the main session that started it, where its report goes. A task's VM is deleted once it's done, unless
 // `keep` (or vms.keep) keeps it open. `after` makes something of each run's result before it's reported, the first

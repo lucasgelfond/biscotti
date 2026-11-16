@@ -225,6 +225,12 @@ importers:
         specifier: workspace:*
         version: link:../../core
 
+  plugins/vm-check:
+    dependencies:
+      '@biscotti/core':
+        specifier: workspace:*
+        version: link:../../core
+
   site:
     devDependencies:
       '@sveltejs/vite-plugin-svelte':

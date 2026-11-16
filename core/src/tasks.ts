@@ -23,6 +23,7 @@ import {
   type TaskOptions,
   type TaskResult,
   type Alive,
+  aliveLine,
   type Sleep,
   type Vm,
   type Vms,
@@ -390,14 +391,6 @@ async function readRun(
 }
 
 // The daily question about the VMs still around, for the main agent to put to the owner; undefined when there are none.
-export function vmCheck(alive: Alive[], now = Date.now()) {
-  if (!alive.length) return undefined;
-  const lines = alive.map((v) => `- ${aliveLine(v, now)}`);
-  return `[Daily VM check, from biscotti itself, not the owner] These VMs are still around:\n${lines.join("\n")}\n\nText the owner this list, a short line for each saying what it is (in plain words, from its goal) and how long since it was used, pointing out the ones unused for over a day, and ask which you can delete. Delete the ones they name with delete_vms and keep the rest; if they don't answer, keep them all.`;
-}
-const ago = (ms: number) => (ms < 3600_000 ? `${Math.max(1, Math.round(ms / 60_000))} min` : ms < 86400_000 ? `${Math.round(ms / 3600_000)} h` : `${Math.round(ms / 86400_000)} days`);
-const aliveLine = (v: Alive, now = Date.now()) =>
-  `#${v.id} (${v.asleep ? "asleep" : "open"}, last used ${ago(now - v.used)} ago${now - v.used > 86400_000 ? ", idle over a day" : ""}${v.pr ? `, pull request ${v.pr}` : ""}): ${v.goal.replace(/\s+/g, " ").slice(0, 160)}`;
 
 // The task tools for the main agent: start, list, tell and stop. `doing` says what a slot's task is in the middle
 // of, so a retry stops or waits on the run before it instead of racing it.
@@ -500,7 +493,6 @@ export async function gateTasks(
   local: Host | undefined,
   report: (goal: string, result: TaskResult, parent?: string) => void,
   file?: string,
-  ask?: (text: string) => void,
   agent?: TaskAgent,
 ) {
   const parents = new Map<number, string>();
@@ -612,16 +604,6 @@ export async function gateTasks(
   // The main agent's calls for a task are its VM's (gate.ts).
   gate.locate((task) => pool.slotOf(task));
 
-  // Once a day, from VM_CHECK_HOUR (10) local time: which of the VMs still around can go.
-  const checkedFile = file && `${file.replace(/\.json$/, "")}.checked`;
-  const day = () => new Date().toDateString();
-  setInterval(() => {
-    if (!ask || new Date().getHours() < Number(process.env.VM_CHECK_HOUR ?? 10)) return;
-    if (checkedFile && existsSync(checkedFile) && readFileSync(checkedFile, "utf8") === day()) return;
-    if (checkedFile) writeFileSync(checkedFile, day());
-    const text = vmCheck(vms.alive());
-    if (text) ask(text);
-  }, 10 * 60_000).unref();
   const doing = (slot: number) => {
     const call = gate.busy(slot);
     return call && `in ${call.tool} for ${Math.round((Date.now() - call.since) / 60_000)} min${call.tool === "vault_fill" ? ", likely waiting on the owner's yes" : ""}`;
