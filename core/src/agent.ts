@@ -14,7 +14,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { createToolSearchExtension } from "@earendil-works/pi-durable/tool-search";
-import { durableAhp, inputFrom } from "pi-durable-acp-ahp";
+import { durableAhp, type Entry, inputFrom } from "pi-durable-acp-ahp";
 import { agentTasks, gateMcp, type Message, type TaskRun, textOf } from "./agent-tasks.ts";
 import { sandboxes } from "./sandboxes.ts";
 import { answer, jsonLines, listen, readBody } from "./http.ts";
@@ -160,26 +160,16 @@ export async function runAgent(sockets: string) {
   await tasks.settle();
 
   // What each session says, as it's committed, for memory (the gate's searchable transcript).
-  async function follow(session: string, handle: Conversation) {
-    const seen = new Set<string>();
-    const watch = await handle.watch(ctx);
-    const take = async (entries: readonly { id: string; kind: string; model?: readonly { role: string; content: unknown }[] }[]) => {
-      const rows: { id: string; entry: unknown; text: string | null }[] = [];
-      for (const entry of entries) {
-        if (seen.has(String(entry.id))) continue;
-        seen.add(String(entry.id));
-        const message = entry.model?.[0];
-        if (!message) continue;
-        const said = textOf(message as Message);
-        rows.push({ id: entry.id, entry, text: said && (message.role === "user" || message.role === "assistant") ? `${message.role}: ${said}` : null });
-      }
-      if (rows.length) await call("POST", `/transcript?session=${encodeURIComponent(session)}`, JSON.stringify(rows)).catch(() => {});
-    };
-    for (const entry of watch.value.entries) seen.add(String(entry.id));
-    watch.start(async (c) => {
-      if (c.kind === "value") await take(c.value.entries as never);
+  // What each session says, as it's committed (the package's watch of it), for memory: the gate's searchable transcript.
+  const transcribe = (session: string, entries: readonly Entry[]) => {
+    const rows = entries.flatMap((entry) => {
+      const message = entry.model?.[0];
+      if (!message) return [];
+      const said = textOf(message as Message);
+      return [{ id: String(entry.id), entry, text: said && (message.role === "user" || message.role === "assistant") ? `${message.role}: ${said}` : null }];
     });
-  }
+    if (rows.length) void call("POST", `/transcript?session=${encodeURIComponent(session)}`, JSON.stringify(rows)).catch(() => {});
+  };
 
   // One turn: the reply (everything said this run), or undefined when the message steered a run already going.
   // `origin`: who it's from (AHP's message kinds), the owner's ("user") or biscotti's own (a task report, a wake).
@@ -226,10 +216,9 @@ export async function runAgent(sockets: string) {
     agent: { provider: "biscotti", displayName: "biscotti", description: "biscotti's main agent" },
     create: (session) =>
       session === "main" ? harness.root(ctx, { agent: { model: MAIN_MODEL } }) : harness.createConversation({ ownership: { kind: "ownerless" }, agent: { model: MAIN_MODEL } }, ctx),
-    opened(session, handle) {
-      sessionOf.set(String(handle.id), session);
-      void follow(session, handle).catch((err) => console.error(`following ${session}: ${(err as Error).message}`));
-    },
+    opened: (session, handle) => void sessionOf.set(String(handle.id), session),
+    // A session's own conversation only: its tasks' and VMs' chats aren't the owner's.
+    committed: (session, entries, key) => key === undefined && transcribe(session, entries),
     title: (session) => (session === "main" ? "Texts" : undefined),
     meta: (session) => ({ biscotti: { kind: "main", model: names.main, size: CONTEXT_WINDOW, ...(session === "main" && { source: "imessage" }), chats: board.records(session) } }),
     chats: (session) => board.chats(session),
