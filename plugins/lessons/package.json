@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@biscotti/core": "workspace:*",
-    "drizzle-orm": "0.45.4"
+    "drizzle-orm": "0.45.4",
+    "@biscotti/tasks": "workspace:*"
   }
 }

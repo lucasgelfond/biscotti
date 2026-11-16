@@ -7,10 +7,19 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
-    "vitest": "5.0.3",
     "@biscotti/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.223.0",
     "@opentelemetry/sdk-trace-base": "2.12.0",
-    "@opentelemetry/exporter-trace-otlp-proto": "0.223.0"
+    "@types/ws": "8.18.1",
+    "vitest": "5.0.3"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "2.2.0",
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2",
+    "@earendil-works/pi-env": "1.5.2",
+    "@microsoft/agent-host-protocol": "1.1.0",
+    "ws": "8.18.3"
   }
 }

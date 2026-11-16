@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 .claude/
 __pycache__/
+apps/ios/biscotti.xcodeproj/
+apps/ios/Info.plist
+apps/ios/biscotti.entitlements

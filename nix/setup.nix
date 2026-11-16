@@ -6,11 +6,15 @@
   systemd.tmpfiles.rules = [
     "d /var/lib/biscotti 0700 root root -"
     "d /var/lib/biscotti/data 0700 root root -"
+    # Claude Code's login and settings, for the claude-code plugin.
+    "d /var/lib/biscotti/claude 0700 root root -"
     # The gate's and the agent's sockets: only the agent (uid 1000) and root get in.
     "d /run/biscotti 0700 1000 1000 -"
     # The gate's and the vms service's.
     "d /run/biscotti-vms 0700 root root -"
-  ];
+    # The task VMs' work disks: the snapshot's (readable by every slot's user), and one directory per slot, its own.
+    "d /var/lib/biscotti/work 0755 root root -"
+  ] ++ map (n: "d /var/lib/biscotti/work/${toString n} 0700 ${toString (1100 + n)} ${toString (1100 + n)} -") (pkgs.lib.range 1 vms.slots);
 
   systemd.services.biscotti-setup = {
     after = [ "network-online.target" "docker.service" "tailscaled.service" "biscotti-net.service" ];
@@ -57,13 +61,17 @@
       set_default TASK_MODEL "$(get MODEL)"
       set_default TZ America/New_York
       set_default DB_KEY "$(openssl rand -hex 32)"
+      # The main agent's own database's key (its conversations), and its directory, its user's.
+      set_default AGENT_DB_KEY "$(openssl rand -hex 32)"
+      install -d -o 1000 -g 1000 -m 700 "$STATE/agent"
       set_default FIRECRACKER_BIN ${firecracker}/bin/firecracker
       # The installer picks a free name, so it can show the Google redirect URI upfront.
       set_default TS_HOSTNAME biscotti
 
       # A Pi has no clock battery: until NTP sets the time, every TLS certificate looks invalid.
       until [ "$(timedatectl show -p NTPSynchronized --value)" = yes ]; do sleep 2; done
-      docker build -q -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
+      # With the read-only deploy key for private dependencies, as compose builds it (core/host/compose.yaml).
+      docker build -q --ssh default=/var/lib/biscotti/deploy-keys/pi-durable-ahp -t biscotti/agent -f ${repo}/core/Dockerfile ${repo} >/dev/null
       notify() { docker run --rm --network host --env-file "$ENV" biscotti/agent node plugins/channels/spectrum/notify.ts "$1" || true; }
 
       # Tailscale: text the owner the login link.
@@ -80,23 +88,29 @@
       plugins=$(jq -r '.plugins[]' "$STATE/biscotti.json")
       has() { grep -qx "$1" <<< "$plugins"; }
       for n in $(seq ${toString vms.slots}); do tailscale serve --bg --https=$((10440 + n)) "http://10.200.$n.2:6901"; done
+      # Each slot's preview of what a task made (its port 8000).
+      for n in $(seq ${toString vms.slots}); do tailscale serve --bg --https=$((10540 + n)) "http://10.200.$n.2:8000"; done
+      # Each slot's sshd, for boxes.
+      for n in $(seq ${toString vms.slots}); do tailscale serve --bg --tcp=$((2200 + n)) "tcp://10.200.$n.2:22"; done
       # The vault's one-time forms, and Google's and other services' sign-in callbacks.
       tailscale serve --bg --https=9443 http://127.0.0.1:4791
       if has google; then tailscale serve --bg --https=9443 --set-path=/oauth http://127.0.0.1:4792; fi
       if has mcp; then tailscale serve --bg --https=9443 --set-path=/mcp-oauth http://127.0.0.1:4793; fi
       if has mac-vnc; then tailscale serve --bg --https=9443 --set-path=/mac http://127.0.0.1:4794; fi
-      if has artifacts; then tailscale funnel --bg --https=443 http://127.0.0.1:8082; fi
+      if has artifacts; then tailscale funnel --https=443 off >/dev/null 2>&1 || true; tailscale serve --bg --https=443 http://127.0.0.1:8082; fi
       if has phoenix; then tailscale serve --bg --https=6006 http://127.0.0.1:6006; fi
+      # The owner's API (plugins/api, ACP at /acp) for Concourse: Tailscale names who's asking.
+      tailscale serve --bg --https=7443 http://127.0.0.1:7700
 
       # Huge pages reserved (the Mac): task VMs run on them.
       huge=$([ "$(cat /proc/sys/vm/nr_hugepages)" -gt 0 ] && echo 2M || true)
       # Rebuilt when the VM's source (the task agent or the desktop) or its memory changes.
-      vm_source=$({ cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum; echo ${toString vms.memMiB}; } | sha256sum | cut -d' ' -f1)
+      vm_source=$({ cd ${repo}/core/vm && find . -type f | sort | xargs sha256sum; echo ${toString vms.memMiB} ${toString vms.workGiB}; } | sha256sum | cut -d' ' -f1)
       if [ ! -f "$STATE/vm/desktop.snap" ] || [ "$(cat "$STATE/vm/source" 2>/dev/null)" != "$vm_source" ]; then
         rm -f "$STATE/vm/desktop.snap"
         # The warm VMs hold the slots' network devices the build boots on; compose starts them again below.
         docker stop biscotti-vms-1 2>/dev/null || true
-        VM_MEM_MIB=${toString vms.memMiB} HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
+        VM_MEM_MIB=${toString vms.memMiB} WORK_GIB=${toString vms.workGiB} HUGE_PAGES=$huge FC_BIN=${firecracker}/bin/firecracker ${repo}/core/vm/snapshots.sh "$STATE/vm"
         echo "$vm_source" > "$STATE/vm/source"
       fi
       # The gate, the agent and the vms service, plus the services of the plugins that bring one. Nix-built binaries
@@ -106,7 +120,10 @@
         for p in $plugins; do [ -f "${repo}/plugins/$p/compose.yaml" ] && echo "  - ${repo}/plugins/$p/compose.yaml"; done
         echo "services:"
         echo "  gate:"
-        echo "    environment: { VM_SLOTS: \"${toString vms.slots}\" }"
+        # Claude Code's login, for the claude-code plugin.
+        claude=$(has claude-code && echo yes || true)
+        echo "    environment: { VM_SLOTS: \"${toString vms.slots}\"''${claude:+, CLAUDE_CONFIG_DIR: /var/lib/biscotti/claude} }"
+        if [ -n "$claude" ]; then echo "    volumes: [ /var/lib/biscotti/claude:/var/lib/biscotti/claude ]"; fi
         echo "  vms:"
         echo "    volumes: [ /nix/store:/nix/store:ro ]"
         echo "    environment: { VM_SLOTS: \"${toString vms.slots}\"''${huge:+, UFFD_HANDLER: ${faultAll}/bin/fault-all} }"
@@ -118,8 +135,14 @@
         touch "$STATE/ready"
       elif [ "$(cat "$STATE/version" 2>/dev/null)" != ${version} ]; then
         echo "I updated myself to biscotti v${version}. Your memory and settings are as they were." > "$STATE/data/welcome"
+      # A new build of the same version (a deploy of a branch): said too, so the owner knows it's in.
+      elif [ "$(cat "$STATE/build" 2>/dev/null)" != ${repo} ]; then
+        echo "I'm back up after an update (v${version}, build $(basename ${repo} | cut -c1-7))." > "$STATE/data/welcome"
       fi
       echo ${version} > "$STATE/version"
+      echo ${repo} > "$STATE/build"
+      # TODO: this restarts the vms service, which stops every running VM, and VMs kept from before a VM image rebuild
+      # can't be woken.
       docker compose --env-file "$ENV" -f ${repo}/core/host/compose.yaml -f "$STATE/compose.plugins.yaml" up -d --build --remove-orphans
 
     '';

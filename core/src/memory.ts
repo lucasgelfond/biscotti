@@ -1,32 +1,25 @@
-import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import Database from "better-sqlite3-multiple-ciphers";
 import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { input, int, localTools, str, text, type Recall, type Tools } from "./plugin.ts";
-import { memories, transcripts } from "./schema.ts";
+import { memories } from "./schema.ts";
 
 // Keyword search (FTS5) over transcripts and saved facts; Recall plugins' rankings are fused in by reciprocal rank.
 
 // Encrypted at rest with `key` (SQLite3 Multiple Ciphers).
-export function openDb(path: string, key: string) {
+export function openEncrypted(path: string, key: string) {
   const sqlite = new Database(path);
   sqlite.pragma(`key='${key}'`);
-  const db = drizzle(sqlite);
+  return sqlite;
+}
+export function openDb(path: string, key: string) {
+  const db = drizzle(openEncrypted(path, key));
   migrate(db, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
   return db;
 }
 
 export type Db = ReturnType<typeof openDb>;
-
-export function searchableText(entry: FileEntry): string | null {
-  if (entry.type !== "message") return null;
-  const { role, content } = entry.message as { role: string; content: unknown };
-  if (role !== "user" && role !== "assistant") return null;
-  const parts = typeof content === "string" ? [content] : (content as { text?: string }[]).map((p) => p.text ?? "");
-  const joined = parts.join("\n").trim();
-  return joined ? `${role}: ${joined}` : null;
-}
 
 // Quoted terms, so user text is never parsed as FTS5 syntax.
 const ftsQuery = (s: string) => (s.match(/[\p{L}\p{N}]+/gu) ?? []).map((t) => `"${t}"`).join(" OR ");

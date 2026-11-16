@@ -21,6 +21,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       xdotool xclip wmctrl chrony socat xz-utils scrot \
     && rm -rf /var/lib/apt/lists/*
 
+# For coding tasks: compilers for native packages, Python's venv and pip, and the search and inspection tools coding
+# agents reach for (fd-find installs as fdfind).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential pkg-config python3-dev python3-venv python3-pip \
+      ripgrep fd-find jq unzip zip less file procps lsof sqlite3 openssh-client patch \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+    && rm -rf /var/lib/apt/lists/*
+
+# sshd for boxes (core/src/boxes.ts): keys only. Each box replaces the image's host keys with its own (biscotti-task's setUpBox).
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers cua\nX11Forwarding no\nAcceptEnv LANG LC_* COLORTERM TERM_PROGRAM\n' > /etc/ssh/sshd_config.d/biscotti.conf
+
+# jj, checked against GitHub's published digest.
+ARG JJ_VERSION=0.47.1
+RUN case "$TARGETARCH" in \
+      amd64) a=x86_64 sum=d4b657f622ee50929c8916466dfa3d6a6c17a0a32b50e7b2c793707ec9ebcad7 ;; \
+      arm64) a=aarch64 sum=0f300e1576de8dabe0a9dedf0b87ae44f8accea5cf54d9a342a51061c1fb1bcd ;; esac && \
+    curl -fsSL -o /tmp/jj.tgz "https://github.com/jj-vcs/jj/releases/download/v$JJ_VERSION/jj-v$JJ_VERSION-$a-unknown-linux-musl.tar.gz" && \
+    echo "$sum  /tmp/jj.tgz" | sha256sum -c - && mkdir /tmp/jj && tar -xzf /tmp/jj.tgz -C /tmp/jj && \
+    install -m 0755 "$(find /tmp/jj -type f -name jj | head -1)" /usr/local/bin/jj && rm -rf /tmp/jj /tmp/jj.tgz
+
+# Docker, for a task's own services (a database, a repo's docker compose). The guest kernel has no nftables masquerade,
+# so iptables is the legacy backend. Its data goes on the work disk (see rootfs.sh).
+RUN apt-get update && apt-get install -y --no-install-recommends docker.io docker-cli docker-compose iptables \
+    && update-alternatives --set iptables /usr/sbin/iptables-legacy \
+    && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy \
+    && rm -rf /var/lib/apt/lists/*
+
 ARG NOVNC_COMMIT=ad7012fc021ee785a2877067f5b69ee94c3948c6
 ARG WEBSOCKIFY_COMMIT=3dd228b81ade1ff76a27ad12eed6e78df8c6f8a6
 RUN for r in "trycua/noVNC $NOVNC_COMMIT /opt/noVNC" "novnc/websockify $WEBSOCKIFY_COMMIT /opt/noVNC/utils/websockify"; do \
@@ -55,9 +84,8 @@ RUN curl -fsSL -o /etc/hosts.block \
 # adds the key).
 COPY task/package.json task/package-lock.json /opt/pi/
 RUN cd /opt/pi && npm ci --omit=dev --ignore-scripts && ln -s /opt/pi/node_modules/.bin/pi /opt/pi/node_modules/.bin/playwright-mcp /usr/local/bin/
-COPY task/biscotti-task task/biscotti-start /usr/local/bin/
+COPY task/biscotti-task task/biscotti-start task/box-pi /usr/local/bin/
 COPY task/models.json task/mcp.json /home/cua/.pi/agent/
-COPY task/reload.ts task/lean.ts /home/cua/.pi/agent/extensions/
 COPY biscotti.html /opt/noVNC/
 
 # Wallpaper: "biscotti" by Geertje Caliguire on Unsplash (Unsplash License), kept here since Unsplash re-encodes it.
@@ -73,7 +101,7 @@ ADD ${CUA_SRC}/supervisor/supervisord.conf /tmp/cua/supervisor/
 ADD ${CUA_SRC}/xfce-config/helpers.rc ${CUA_SRC}/xfce-config/xfce4-session.xml \
     ${CUA_SRC}/xfce-config/xfce4-power-manager.xml /tmp/cua/xfce-config/
 
-RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+RUN useradd -m -s /bin/bash -G sudo,docker cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     cp /tmp/cua/supervisor/* /etc/supervisor/conf.d/ && \
     install -m 0755 /tmp/cua/scripts/* /usr/local/bin/ && \
     install -d -o cua -g cua -m 0700 /run/cua && \
@@ -85,7 +113,7 @@ RUN useradd -m -s /bin/bash -G sudo cua && echo "cua ALL=(ALL) NOPASSWD:ALL" >> 
     # TigerVNC 1.15 moved ~/.vnc here; the link keeps it from moving the folder (which fails on overlay filesystems).
     ln -s .config/tigervnc $HOME/.vnc && \
     chown -R cua:cua $HOME && rm -rf /tmp/cua && \
-    # The task agent runs as cua (uid 1000); a runner that installs into /opt/pi would fail EPERM on root's files.
+    # Tasks run as cua (uid 1000); a runner that installs into /opt/pi would fail EPERM on root's files.
     chown -R cua:cua /opt/pi && \
     # Replace Cua's fixed startup waits with readiness polls.
     sed -i 's|^sleep 5$|until (exec 3<>/dev/tcp/127.0.0.1/5901) 2>/dev/null; do sleep 0.1; done|' /usr/local/bin/start-novnc.sh && \

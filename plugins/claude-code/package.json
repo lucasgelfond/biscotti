@@ -1,0 +1,12 @@
+{
+  "name": "@biscotti/claude-code",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.325",
+    "@biscotti/core": "workspace:*",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-claude-code": "github:earendil-works/pi-claude-code#d5b5e04c314d3452d357174d16d10dda34daa2d2",
+    "jiti": "2.7.0"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@biscotti/push",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*",
+    "apns2": "12.2.0",
+    "@biscotti/tasks": "workspace:*"
+  }
+}

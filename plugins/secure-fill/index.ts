@@ -1,5 +1,6 @@
 import { createHmac, randomInt } from "node:crypto";
 import { bool, declined, input, list, localTools, optional, saveSecret, secret, str, text, type LocalTool, type Plugin } from "@biscotti/core";
+import { vmEndpoint } from "@biscotti/tasks";
 
 // Types vault values into a task VM's page, over Chrome DevTools: no model ever sees them. Asks the owner first, naming
 // the site the typing would go to.
@@ -30,7 +31,11 @@ const APPROVAL_MS = 15 * 60_000;
 const FRAMED = ", in a frame from ";
 
 // The slot's VM's Chromium, over DevTools (also the screenshots plugin's).
-export const browser = (slot?: number) => process.env.TASK_BROWSER ?? `http://10.200.${slot}.2:9223`;
+export const browser = (slot?: number) => {
+  if (process.env.TASK_BROWSER) return process.env.TASK_BROWSER;
+  const { host, port } = vmEndpoint(slot ?? 1, 9223);
+  return `http://${host}:${port}`;
+};
 
 type Target = { id: string; type: string; url: string; webSocketDebuggerUrl: string };
 export const targets = async (browser: string) => (await (await fetch(`${browser}/json/list`)).json()) as Target[];

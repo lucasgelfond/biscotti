@@ -1,14 +1,16 @@
-import type { ServerResponse } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { eq } from "drizzle-orm";
+import type { AgentLink } from "./connect.ts";
+import type { Slots } from "./gate.ts";
 import type { Db } from "./memory.ts";
 import { vault } from "./schema.ts";
 
 // The plugin API. A plugin is plugins/<name>/index.ts default-exporting a Plugin; biscotti.json picks them.
 
-export type { CallToolResult, Tool };
+export type { CallToolResult, Db, Tool };
 
 export interface Context {
   db: Db;
@@ -17,29 +19,26 @@ export interface Context {
   env(name: string): string;
   // A yes-or-no question for the owner (no answer in 10 minutes is no).
   ask(question: string): Promise<boolean>;
-  // A message into the conversation (a wake, a task report); the reply goes to the owner.
-  deliver(text: string, image?: Buffer): Promise<void>;
+  // A message into one of the main agent's sessions (a wake, a task report; "main", the owner's texts, unless said):
+  // the reply goes to the owner there.
+  deliver(text: string, image?: Buffer, session?: string): Promise<void>;
   // A text (and an image) straight to the owner, outside the conversation.
   send(text: string, image?: Buffer): Promise<void>;
-  // A goal for a task VM, where this machine has them. With `repo` (a git bundle), the VM works on it in ~/repo and
-  // its new commits come back as `bundle`; `model` names one of the gate's models.
-  task?(goal: string, opts?: TaskOptions): Promise<TaskResult>;
+  // The gate's task VM slots, for the plugin that runs them (tasks): each one's listener, its task and model, and what
+  // that task proposed or is in the middle of.
+  gate: Slots;
+  // The main agent's process: a plugin's requests of its own agent side (plugins/<name>/agent.ts), and theirs of it.
+  agent: AgentLink;
+  // An HTTP route on the owner's API (API_PORT, published on the tailnet): `prefix` and everything under it, for the
+  // owner only (Tailscale-User-Login, API_OWNER).
+  route(prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => unknown): void;
 }
 
-export interface TaskOptions {
-  repo?: Buffer;
-  // A plugin's own agent instead of pi: file name -> source, run in the VM as `node main.ts` with the goal on stdin
-  // (what it prints is the report). It reaches the gate at http://gate like pi does.
-  runner?: Record<string, string>;
-  model?: string;
-  timeoutMs?: number;
-}
-
-export interface TaskResult {
-  report: string;
-  screenshot?: Buffer;
-  bundle?: Buffer;
-}
+// Methods the owner's apps call (x-biscotti/<name> over AHP, passed to the gate as they come), each answered with what
+// it's sent; plugins add theirs. `signal` aborts when the app goes away first.
+export type AppMethod = (params: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
+export const appMethods = new Map<string, AppMethod>();
+export const appMethod = (name: string, handler: AppMethod) => void appMethods.set(name, handler);
 
 export interface Channel {
   messages: AsyncIterable<{ text: string }>;
@@ -49,6 +48,8 @@ export interface Channel {
 // Who's calling a tool: the main agent, or the task VM in `slot`, running task number `task` (one per run, so what a
 // plugin keeps for a task, like an approval, ends with it).
 export interface Caller {
+  // For the main agent: which of its sessions ("main": the owner's texts; otherwise its number).
+  session?: string;
   slot?: number;
   task?: number;
   // What that task was asked: its goal, then the owner's later messages (tell_task).
@@ -75,8 +76,20 @@ export interface Observer {
   tool?(call: { name: string; args: Record<string, unknown>; slot?: number }): (result?: CallToolResult, error?: unknown) => void;
 }
 
+// A model backend in place of LLM_BASE_URL for some of the gate's models (`models`: main, task, code -> the backend's
+// model id). The gate scrubs, maps and observes the call as for any other; `complete` gets the OpenAI chat completions
+// request with `model` already mapped, and answers as an OpenAI-compatible API would (SSE when `stream` is set).
+// A backend that answers 402, 429 or 503 is skipped for a while, for LLM_BASE_URL.
+export interface Llm {
+  models: Record<string, string>;
+  complete(body: Record<string, unknown>, signal: AbortSignal): Promise<Response>;
+}
+
 export interface Plugin {
   prompt?: string;
+  // Its side in the main agent's process (agent.ts's AgentApi -> AgentPart), as a module's URL.
+  agent?: string;
+  llm?(ctx: Context): Promise<Llm>;
   channel?(ctx: Context): Promise<Channel>;
   tools?(ctx: Context): Promise<Tools>;
   recall?(ctx: Context): Promise<Recall>;
@@ -126,7 +139,12 @@ export function merge(...sets: Tools[]): Tools {
   };
 }
 
-// A session per call, so a paused call resumes in its own session.
+// A tool the main agent loads only when it looks for one like it (pi's tool_search), so a remote service's many
+// tools aren't in every model call: GitHub's and Notion's are ~350 KB of definitions.
+export const DEFERRED = "biscotti/deferred";
+export const deferred = (tool: Tool): Tool => ({ ...tool, _meta: { ...tool._meta, [DEFERRED]: true } });
+
+// A session per call, so a paused call resumes in its own session. Its tools are deferred.
 export function mcpTools(url: string, headers: Record<string, string>, call?: (client: Client, name: string, args: Record<string, unknown>) => Promise<CallToolResult>): Tools {
   async function withClient<T>(fn: (client: Client) => Promise<T>) {
     const client = new Client({ name: "biscotti", version: "1" });
@@ -138,7 +156,7 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
     }
   }
   return {
-    list: () => withClient(async (client) => (await client.listTools()).tools),
+    list: () => withClient(async (client) => (await client.listTools()).tools.map(deferred)),
     call: (name, args) =>
       withClient((client) => (call ? call(client, name, args) : (client.callTool({ name, arguments: args }) as Promise<CallToolResult>))),
   };
@@ -146,7 +164,6 @@ export function mcpTools(url: string, headers: Record<string, string>, call?: (c
 
 // A vault entry's values, and saving one, for plugins that keep keys there or type them in.
 export { secrets } from "./vault.ts";
-export { previewPng } from "./preview.ts";
 export const secret = (db: Db, name: string) => db.select().from(vault).where(eq(vault.name, name)).get()?.value;
 export function saveSecret(db: Db, name: string, value: Record<string, string>) {
   const row = { name, fields: Object.keys(value), value };

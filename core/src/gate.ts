@@ -3,7 +3,7 @@ import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { readBody } from "./http.ts";
-import { input, localTools, str, text, type Caller, type Observer, type Tools } from "./plugin.ts";
+import { input, localTools, str, text, type Caller, type Llm, type Observer, type Tools } from "./plugin.ts";
 
 // The gate holds every key: the model at /llm, every plugin's tools at /mcp, and the owner's approvals. Saved secrets
 // never reach the model provider: any in a model call becomes a placeholder.
@@ -53,6 +53,11 @@ export function scrub(node: unknown, secrets: { label: string; value: string }[]
   return walk(node);
 }
 
+// A plugin backend's answers that send a call to LLM_BASE_URL instead: usage credits needed, rate or usage limit,
+// unavailable (not logged in, not installed).
+const FALLBACK_STATUSES = new Set([402, 429, 503]);
+const FALLBACK_MS = Number(process.env.LLM_FALLBACK_MIN ?? 10) * 60_000;
+
 export function createGate(opts: {
   // Any OpenAI-compatible API (AI Gateway, OpenRouter, OpenAI, a local server, …).
   // extra: fields every model call carries, for the API's own options (LLM_EXTRA, e.g. a gateway's caching or region).
@@ -68,6 +73,8 @@ export function createGate(opts: {
   const byTool = { main: new Map<string, Tools>(), tasks: new Map<string, Tools>() };
   const proposals = new Map<number, string[]>();
   const observers: Observer[] = [];
+  // Plugins' backends (Plugin.llm), by the model names they answer.
+  const backends = new Map<string, Llm>();
   const propose = localTools([
     {
       name: "propose",
@@ -153,25 +160,43 @@ export function createGate(opts: {
     }
   }
 
-  // The owner's messages for a slot's running task (tell_task), until its VM asks for them.
-  const told = new Map<number, string[]>();
   // A task VM gets the task model, or the one its task was started with (a coding task), whatever model it names.
   const slotModels = new Map<number, string>();
   // The task each slot is running, and what it was asked, for its tool calls' `Caller`.
   const slotTasks = new Map<number, number>();
   const slotAsked = new Map<number, string>();
 
+  // The models whose plugin backend failed recently, until when (see FALLBACK_STATUSES).
+  const benched = new Map<string, number>();
   async function llm(req: IncomingMessage, res: ServerResponse, slot?: number) {
     if (req.method !== "POST" || req.url !== "/llm/chat/completions") return void res.writeHead(404).end();
     const body = scrub(JSON.parse(await readBody(req)), opts.secrets?.() ?? []) as { model: string; tools?: unknown[] };
-    const model = opts.models[slot ? (slotModels.get(slot) ?? "task") : body.model];
-    if (!model) return void res.writeHead(400).end(`unknown model ${body.model}`);
-    const done = observers.map((o) => o.llm?.({ slot, model, request: body }));
-    const upstream = await fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
-      body: JSON.stringify({ ...body, model, tools: body.tools?.map(strict), ...opts.llm.extra }),
-    });
+    const name = slot ? (slotModels.get(slot) ?? "task") : body.model;
+    // A plugin's backend for the model, unless it failed recently and LLM_BASE_URL has the model too.
+    const backend = backends.get(name);
+    const fallback = opts.models[name];
+    if (!backend && !fallback) return void res.writeHead(400).end(`unknown model ${body.model}`);
+    const viaBackend = backend && (!fallback || Date.now() >= (benched.get(name) ?? 0));
+    const done = observers.map((o) => o.llm?.({ slot, model: viaBackend ? backend.models[name] : fallback, request: body }));
+    const abort = new AbortController();
+    res.on("close", () => abort.abort());
+    const toUrl = () =>
+      fetch(`${opts.llm.url.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.llm.key}` },
+        body: JSON.stringify({ ...body, model: fallback, tools: body.tools?.map(strict), ...opts.llm.extra }),
+      });
+    let upstream = viaBackend
+      ? await backend.complete({ ...body, model: backend.models[name], tools: body.tools?.map(strict) }, abort.signal).catch((err) => new Response(String((err as Error).message ?? err), { status: 503 }))
+      : await toUrl();
+    // A plugin's backend that's out of usage, logged out or unavailable: the call goes to LLM_BASE_URL instead, and so
+    // do this model's next calls for a while.
+    if (viaBackend && fallback && FALLBACK_STATUSES.has(upstream.status)) {
+      const why = (await upstream.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 300);
+      console.error(`model ${name}: the plugin's backend answered ${upstream.status}${why ? ` (${why})` : ""}; using ${fallback} for ${FALLBACK_MS / 60_000} min`);
+      benched.set(name, Date.now() + FALLBACK_MS);
+      upstream = await toUrl();
+    }
     res.writeHead(upstream.status, { "Content-Type": upstream.headers.get("content-type") ?? "application/json" });
     const chunks: Uint8Array[] = [];
     for await (const chunk of upstream.body ?? []) {
@@ -186,7 +211,8 @@ export function createGate(opts: {
     const server = new McpServer({ name: "biscotti", version: "1" }, { capabilities: { tools: {} } });
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: await listTools(set) }));
     server.setRequestHandler(CallToolRequestSchema, ({ params }) => callTool(set, params.name, params.arguments ?? {}, caller));
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    // In JSON, not an event stream: every answer is one message.
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => void transport.close());
     await server.connect(transport);
     await transport.handleRequest(req, res);
@@ -194,17 +220,21 @@ export function createGate(opts: {
 
   // A task VM slot's listener gets the task set, only from that slot's VM (`peer`), and only requests addressed to the
   // gate (no DNS rebinding from a page).
-  const handler = (slot?: number, peer?: string) => (req: IncomingMessage, res: ServerResponse) => {
+  // `peer` may be a function, for a machine whose address is known only once it's up (external-vm-node's).
+  // The main agent runs tasks too (the tasks plugin): its calls for one (?task=<id>) are that task's VM's, in the slot
+  // `locate` finds it in.
+  let locate: ((task: number) => number | undefined) | undefined;
+  const handler = (vmSlot?: number, peer?: string | (() => string | undefined)) => (req: IncomingMessage, res: ServerResponse) => {
+    const url = new URL(req.url ?? "/", "http://gate");
+    const task = vmSlot ? undefined : Number(url.searchParams.get("task")) || undefined;
+    const slot = vmSlot ?? (task ? locate?.(task) : undefined);
+    if (task && !slot) return void res.writeHead(404).end(`no task #${task} is running`);
     const set = slot ? "tasks" : "main";
-    if (peer && req.socket.remoteAddress?.replace(/^::ffff:/, "") !== peer) return void res.writeHead(403).end();
+    const allowed = typeof peer === "function" ? (peer() ?? "") : peer;
+    if (allowed !== undefined && req.socket.remoteAddress?.replace(/^::ffff:/, "") !== allowed) return void res.writeHead(403).end();
     if (set === "tasks" && !TASK_HOSTS.test(req.headers.host ?? "")) return void res.writeHead(403).end();
-    // A task VM asks for what the owner said since its task started, each message once.
-    if (slot && req.method === "GET" && req.url === "/messages") {
-      const said = told.get(slot) ?? [];
-      told.delete(slot);
-      return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(said));
-    }
-    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, { slot, task: slot && slotTasks.get(slot), asked: slot ? slotAsked.get(slot) : undefined })).catch((err) => {
+    const caller = slot ? { slot, task: slotTasks.get(slot), asked: slotAsked.get(slot) } : { session: url.searchParams.get("session") ?? "main" };
+    (req.url?.startsWith("/llm/") ? llm(req, res, slot) : mcp(req, res, set, caller)).catch((err) => {
       console.error(err);
       if (!res.headersSent) res.writeHead(502).end(String(err));
     });
@@ -214,38 +244,43 @@ export function createGate(opts: {
     ask,
     answer,
     route: (slot: number, model?: string) => (model ? slotModels.set(slot, model) : slotModels.delete(slot)),
-    // A new task in the slot (or none) starts with nothing told.
+    // The task in the slot now (or none), and what it was asked.
     assign(slot: number, task?: number, goal?: string) {
-      told.delete(slot);
       if (task) slotTasks.set(slot, task);
       else slotTasks.delete(slot);
       if (task && goal) slotAsked.set(slot, goal);
       else slotAsked.delete(slot);
     },
-    // Passes the owner's message to the slot's running task, with saved secrets scrubbed as everywhere else.
+    // The owner's message for the slot's running task, with saved secrets scrubbed as everywhere else, and added to
+    // what it was asked.
     tell(slot: number, message: string) {
-      told.set(slot, [...(told.get(slot) ?? []), scrub(message, opts.secrets?.() ?? []) as string]);
       if (slotAsked.has(slot)) slotAsked.set(slot, `${slotAsked.get(slot)}\n${message}`);
+      return scrub(message, opts.secrets?.() ?? []) as string;
     },
     // The slot's oldest tool call in progress, if any.
     busy: (slot: number) => calls.get(slot)?.[0],
     // The main agent's requests (the model, its tools), for a listener of the caller's choosing.
     handle: handler(),
+    locate: (find: (task: number) => number | undefined) => void (locate = find),
     add(tools: Tools) {
       sets.main.push(tools);
       if (tools.tasks) sets.tasks.push(tools.tasks);
     },
     observe: (observer: Observer) => void observers.push(observer),
+    serve: (llm: Llm) => Object.keys(llm.models).forEach((name) => backends.set(name, llm)),
     // What a task VM in `slot` proposed for the main agent, cleared as it's read.
     proposed(slot: number) {
       const said = proposals.get(slot) ?? [];
       proposals.delete(slot);
       return said;
     },
-    listen: (host: string, port: number, opts: { slot?: number; peer?: string } = {}) =>
+    listen: (host: string, port: number, opts: { slot?: number; peer?: string | (() => string | undefined) } = {}) =>
       new Promise<Server>((resolve, reject) => {
-        const server = createServer(handler(opts.slot, opts.peer)).once("error", reject);
+        const server = createServer({ requestTimeout: 0 }, handler(opts.slot, opts.peer)).once("error", reject);
         server.listen(port, host, () => resolve(server));
       }),
   };
 }
+
+// What the plugin that runs task VMs (tasks) uses of the gate.
+export type Slots = Pick<ReturnType<typeof createGate>, "listen" | "assign" | "route" | "proposed" | "busy" | "tell" | "locate">;

@@ -1,3 +1,3 @@
 {
-  "plugins": ["channels/spectrum", "secure-fill", "screenshots", "vision", "lessons", "exa", "google", "github", "mcp", "artifacts", "embedding"]
+  "plugins": ["channels/spectrum", "tasks", "firecracker", "vm-check", "secure-fill", "screenshots", "vision", "lessons", "exa", "google", "github", "mcp", "artifacts", "embedding"]
 }

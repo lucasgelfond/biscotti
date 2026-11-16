@@ -1,0 +1,4 @@
+#!/bin/sh
+# A box's pi, run over `ssh -t <box> box-pi [pi args]`.
+cd /home/cua/repo 2>/dev/null || cd /home/cua
+exec pi --model biscotti/task "$@"

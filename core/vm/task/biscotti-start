@@ -1,6 +1,6 @@
 #!/bin/sh
 # Starts the task desktop (after biscotti-init in the VM, or as the image's command): Chromium open and maximized once X
-# is up, for the browser tools to drive over CDP; the task agent on port 4000 (goal in, JSON events out); then Cua's
+# is up, for the browser tools to drive over CDP; the VM's setup on port 4000 (biscotti-task); then Cua's
 # desktop. everydaybench.test (the benchmark's sites, a reserved name nothing real uses) is the VM's gateway, where the
 # bench forwards it to EverydayBench.
 install -d -o cua -g cua -m 0700 /run/cua

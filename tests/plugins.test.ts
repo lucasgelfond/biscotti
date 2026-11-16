@@ -9,8 +9,8 @@ import { localTools, text, type Plugin } from "../core/src/plugin.ts";
 import { boot } from "./support.ts";
 
 // Core stands on its own: no plugin is needed but a channel, and a plugin from outside the repo plugs in the same way.
-// No model is called, so stand-in settings will do.
-for (const [name, value] of Object.entries({ LLM_BASE_URL: "http://127.0.0.1:9", LLM_API_KEY: "unused", MODEL: "m", TASK_MODEL: "m", DB_KEY: "k" })) process.env[name] ??= value;
+// No model is called, so stand-in settings will do; no owner API on a port (each boot would take the same one).
+for (const [name, value] of Object.entries({ LLM_BASE_URL: "http://127.0.0.1:9", LLM_API_KEY: "unused", MODEL: "m", TASK_MODEL: "m", DB_KEY: "k", API_PORT: "0" })) process.env[name] ??= value;
 
 const root = new URL("..", import.meta.url).pathname;
 

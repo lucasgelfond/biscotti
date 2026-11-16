@@ -9,6 +9,8 @@ services:
     build:
       context: ../..
       dockerfile: core/Dockerfile
+      # The read-only deploy key for private dependencies (core/Dockerfile).
+      ssh: ["default=/var/lib/biscotti/deploy-keys/pi-durable-ahp"]
     image: biscotti/agent
     network_mode: host
     env_file: /var/lib/biscotti/.env
@@ -30,7 +32,7 @@ services:
   # broke out would find nothing worth having, and couldn't reach another slot's VM.
   vms:
     image: biscotti/agent
-    command: ["node", "core/src/vms-main.ts"]
+    command: ["node", "plugins/firecracker/vms-main.ts"]
     network_mode: none
     # An init process reaps exited Firecracker processes.
     init: true
@@ -45,6 +47,7 @@ services:
     devices: [/dev/kvm, /dev/net/tun]
     environment:
       VM_DIR: /var/lib/biscotti/vm
+      WORK_DIR: /var/lib/biscotti/work
       FIRECRACKER: /usr/local/bin/firecracker
       TASK_UID_BASE: "1100"
     volumes:
@@ -54,12 +57,15 @@ services:
         read_only: true
         bind: { propagation: rslave }
       - /var/lib/biscotti/vm:/var/lib/biscotti/vm:ro
+      # The VMs' work disks: the snapshot's, and one per slot, each its slot user's.
+      - /var/lib/biscotti/work:/var/lib/biscotti/work
       - ${FIRECRACKER_BIN:?}:/usr/local/bin/firecracker:ro
       - /run/biscotti-vms:/run/biscotti-vms
     restart: unless-stopped
 
-  # The main agent: no keys, no data and no network. It reaches the gate only through the socket in /run/biscotti, so
-  # whatever steers it can't read a secret or approve anything.
+  # The main agent: no network, and none of the gate's keys or data: its own database (its conversations) under a key
+  # of its own. It reaches the gate only through the sockets in /run/biscotti, so whatever steers it can't read a
+  # secret or approve anything.
   agent:
     image: biscotti/agent
     command: ["node", "core/src/agent-main.ts"]
@@ -72,7 +78,10 @@ services:
     environment:
       HOME: /tmp
       TZ: ${TZ:-America/New_York}
+      DATA_DIR: /data
+      AGENT_DB_KEY: ${AGENT_DB_KEY:?}
     volumes:
       - /run/biscotti:/run/biscotti
+      - /var/lib/biscotti/agent:/data
     depends_on: [gate]
     restart: unless-stopped

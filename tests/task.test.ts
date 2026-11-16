@@ -3,19 +3,23 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { createGate } from "../core/src/gate.ts";
-import { restore, SLOTS, taskVms } from "../core/src/tasks.ts";
+import { restore } from "../plugins/firecracker/firecracker.ts";
+import { COMMITS } from "../plugins/github/code.ts";
+import { taskEvents, type Host } from "../plugins/tasks/types.ts";
+import { SLOTS } from "../plugins/firecracker/firecracker.ts";
+import { endpoint, gateAt } from "../plugins/firecracker/index.ts";
 
-// Runs on the Pi, with the live agent stopped (it holds the slots and the gate's ports).
+// Runs on the Pi, with the live service stopped (it holds the slots and the gate's ports): the real gate and agent
+// (its settings from the environment, as the service's), tasks in Firecracker VMs, their tools through pi-env.
 const VM_DIR = process.env.VM_DIR ?? "/var/lib/biscotti/vm";
 const FIRECRACKER = process.env.FIRECRACKER ?? "/usr/local/bin/firecracker";
 const onThePi = existsSync("/dev/kvm") && existsSync(`${VM_DIR}/desktop.snap`);
-const vms = onThePi ? taskVms((slot) => restore(VM_DIR, FIRECRACKER, slot, 1100 + slot)) : undefined;
-
-if (onThePi) {
-  const gate = createGate({ llm: { url: process.env.LLM_BASE_URL!, key: process.env.LLM_API_KEY! }, models: { task: process.env.TASK_MODEL! }, send: async () => {} });
-  for (const slot of SLOTS) await gate.listen(`10.200.${slot}.1`, 80, { slot });
-}
+process.env.API_PORT = "0";
+const host: Host = { slots: SLOTS, endpoint, gate: gateAt, restore: (slot) => restore(VM_DIR, FIRECRACKER, slot, 1100 + slot) };
+const { boot } = await import("./support.ts");
+const vms = onThePi ? (await boot([], { vms: host })).vms : undefined;
+const started: number[] = [];
+taskEvents.on("event", (e) => void (e.type === "started" && e.slot !== undefined && started.push(e.slot)));
 
 test.skipIf(!onThePi)("runs a task in a fresh VM and returns its report and final screen", async () => {
   const goal = "Run `uname -m` and `cat /etc/os-release` in a shell. Report the machine architecture and the distro's ID.";
@@ -36,14 +40,14 @@ test.skipIf(!onThePi)("starts every task from a clean VM", async () => {
 });
 
 test.skipIf(!onThePi)("runs three tasks at once, each in its own slot", async () => {
-  const slots: number[] = [];
+  started.length = 0;
   const goal = (n: number) => `Run \`echo task-${n}\` in a shell and report exactly what it printed.`;
 
-  const started = Date.now();
-  const reports = await Promise.all([1, 2, 3].map((n) => vms!.run(goal(n), (slot) => slots.push(slot))));
-  const seconds = (Date.now() - started) / 1000;
+  const began = Date.now();
+  const reports = await Promise.all([1, 2, 3].map((n) => vms!.run(goal(n))));
+  const seconds = (Date.now() - began) / 1000;
 
-  expect([...slots].sort()).toEqual([1, 2, 3]);
+  expect([...started].sort()).toEqual([1, 2, 3]);
   reports.forEach(({ report }, i) => expect(report).toContain(`task-${i + 1}`));
   expect(seconds).toBeLessThan(90);
 });
@@ -52,12 +56,14 @@ test.skipIf(!onThePi)("keeps a VM restored ahead of time, so a short task finish
   // Let the VM the last test freed be restored again.
   await new Promise((r) => setTimeout(r, 2000));
 
-  const started = Date.now();
+  const began = Date.now();
   const { report } = await vms!.run("Reply with just the word ready. Use no tools.");
-  const seconds = (Date.now() - started) / 1000;
+  const seconds = (Date.now() - began) / 1000;
 
   expect(report.toLowerCase()).toContain("ready");
-  expect(seconds).toBeLessThan(3);
+  // The VM's setup for pi-env (the gate's key, pi-env's daemon sent to it) and the check of its final screen come on
+  // top of the model's answer.
+  expect(seconds).toBeLessThan(20);
 });
 
 // A repo with a function that has a bug and a test that shows it, as a git bundle.
@@ -78,10 +84,11 @@ test.skipIf(!onThePi)("fixes a bug in a repo it's given and returns the commits"
   const repo = buggyRepo();
   const goal = "greet() in greet.js should greet with a comma and an exclamation mark: greet('Ada') is 'Hello, Ada!'. Fix it, and check with npm test.";
 
-  const { bundle } = await vms!.run(goal, undefined, { repo: repo.bundle });
+  const base = execFileSync("git", ["-C", repo.dir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const { collected } = await vms!.run(goal, { repo: repo.bundle, model: "code", check: false, collect: { command: COMMITS(base), file: "/tmp/out.bundle" } });
 
-  expect(bundle).toBeDefined();
-  writeFileSync(`${repo.dir}.out.bundle`, bundle!);
+  expect(collected).toBeDefined();
+  writeFileSync(`${repo.dir}.out.bundle`, collected!);
   execFileSync("git", ["-C", repo.dir, "pull", "-q", "--ff-only", `${repo.dir}.out.bundle`, "HEAD"]);
   expect(execFileSync("node", ["test.js"], { cwd: repo.dir, encoding: "utf8" })).toContain("ok");
 });

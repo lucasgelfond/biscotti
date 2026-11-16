@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import { declined, escapeHtml, input, localTools, merge, secret, sendPage, str, text, type Plugin, type Tool, type Tools } from "@biscotti/core";
+import { declined, deferred, escapeHtml, input, localTools, merge, secret, sendPage, str, text, type Plugin, type Tool, type Tools } from "@biscotti/core";
 import { auth, type OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -23,7 +23,7 @@ const restart = () => void setTimeout(() => process.exit(0), 1000);
 
 export default {
   prompt: `Other services: \`mcp_connect\` adds any service with a remote MCP server (e.g. Notion at
-https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>. Text the user the sign-in link it gives.`,
+https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>, loaded with \`tool_search\`. Text the user the sign-in link it gives.`,
 
   async tools(ctx) {
     const { db } = ctx;
@@ -90,7 +90,7 @@ https://mcp.notion.com/mcp), and its tools then appear as <name>_<tool>. Text th
             return tools.map((t): Tool => {
               loosen(`${row.name}_${t.name}`, t.inputSchema);
               asks.set(`${row.name}_${t.name}`, !t.annotations?.readOnlyHint && !(ADDS.test(t.name) && t.annotations?.destructiveHint !== true));
-              return { ...t, name: `${row.name}_${t.name}`, description: `${row.name}: ${t.description ?? ""}` };
+              return deferred({ ...t, name: `${row.name}_${t.name}`, description: `${row.name}: ${t.description ?? ""}` });
             });
           }),
         );

@@ -1,0 +1,17 @@
+{
+  "name": "@biscotti/tasks",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@biscotti/core": "workspace:*",
+    "@earendil-works/pi-durable": "1.5.2",
+    "@earendil-works/pi-env": "1.5.2",
+    "@earendil-works/pi-mcp": "1.5.2",
+    "drizzle-orm": "0.45.4",
+    "pi-durable-ahp": "github:lucasgelfond/pi-durable-ahp#9fc0d72999fd82d37de5d04d07b6863ab3626cd2"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./agent": "./agent.ts"
+  }
+}

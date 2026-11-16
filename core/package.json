@@ -9,17 +9,24 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/chord": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-durable": "1.5.2",
+    "@earendil-works/pi-env": "1.5.2",
+    "@earendil-works/pi-mcp": "1.5.2",
     "@modelcontextprotocol/sdk": "1.32.1",
     "better-sqlite3-multiple-ciphers": "13.0.3",
     "croner": "10.0.1",
     "drizzle-orm": "0.45.4",
-    "typebox": "^1.3.27"
+    "pi-durable-ahp": "github:lucasgelfond/pi-durable-ahp#9fc0d72999fd82d37de5d04d07b6863ab3626cd2",
+    "vscode-jsonrpc": "8.2.1"
   },
   "devDependencies": {
     "drizzle-kit": "0.31.11"
   },
   "exports": {
-    ".": "./src/plugin.ts"
+    ".": "./src/plugin.ts",
+    "./http": "./src/http.ts",
+    "./agent": "./src/agent.ts"
   }
 }

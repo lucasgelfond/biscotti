@@ -36,6 +36,13 @@
       "when": 1792452791232,
       "tag": "0004_vault-without-confirm",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794690600000,
+      "tag": "0006_sessions",
+      "breakpoints": true
     }
   ]
 }

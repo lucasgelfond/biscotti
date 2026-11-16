@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { input, localTools, optional, secrets, str, text, type Plugin } from "@biscotti/core";
+import { vms } from "@biscotti/tasks";
 import { browser } from "../secure-fill/index.ts";
 import { browse } from "./loop.ts";
 
@@ -62,7 +63,7 @@ a saved login and check something) fast and cheaply. Use \`task\` for anything t
 comparing options across pages, several sites, or when browse comes back unsure. Browse can pick seats on a seat map.`,
 
   async tools(ctx) {
-    if (!ctx.task || !process.env.TYPESAFE_API_KEY) return localTools([]);
+    if (!process.env.TYPESAFE_API_KEY) return localTools([]);
     const decide = jev(process.env.TYPESAFE_API_KEY);
     return {
       ...localTools([
@@ -75,12 +76,12 @@ comparing options across pages, several sites, or when browse comes back unsure.
             url: optional(str("Where to start, if known.")),
             values: optional(VALUES),
           }),
-          async run({ goal, url, values }) {
+          async run({ goal, url, values }, caller) {
             const errand = String(goal);
-            void ctx
-              .task!(JSON.stringify({ goal: errand, url, values }), { runner: RUNNER, timeoutMs: 10 * 60_000 })
-              .then(({ report, screenshot }) => ctx.deliver(`Browse report (${errand}): ${report}`, screenshot))
-              .catch((err: Error) => ctx.deliver(`Browse report (${errand}): browsing failed: ${err.message}`));
+            void vms(ctx)
+              .run(JSON.stringify({ goal: errand, url, values }), { runner: RUNNER, timeoutMs: 10 * 60_000, parent: caller.session })
+              .then(({ report, screenshot }) => ctx.deliver(`Browse report (${errand}): ${report}`, screenshot, caller.session))
+              .catch((err: Error) => ctx.deliver(`Browse report (${errand}): browsing failed: ${err.message}`, undefined, caller.session));
             return text("Browsing.");
           },
         },
